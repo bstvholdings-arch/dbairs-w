@@ -75,26 +75,30 @@ export function ProviderWall({
           aria-hidden="true"
           className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-gradient-to-l from-[#070707] to-transparent"
         />
-        <ul className="flex snap-x snap-mandatory gap-2 overflow-x-auto pb-1.5 [scrollbar-width:none] sm:gap-2.5 [&::-webkit-scrollbar]:hidden">
+        {/*
+          品牌墙固定「一屏 4~5 张」的节奏：
+          - 卡片固定 240px 且不伸缩，品牌变多时自然转为横向滑动；
+          - 手机端可视区约 1.5 张，右侧露出半张作为「可以继续滑」的暗示；
+          - scrollbar-hide 在 globals.css 里手写，同时兼容 Firefox / WebKit。
+        */}
+        <ul className="scrollbar-hide flex snap-x snap-mandatory gap-3 overflow-x-auto scroll-smooth overscroll-x-contain pb-1.5 sm:gap-4">
           {showcaseProviders.map((provider) => {
             const brand = providerBrand(provider.name);
             const online = onlineByProvider.get(provider.id) ?? 0;
             const active = activeProviderId === provider.id;
 
             return (
-              // flex-1 + min-w：品牌少时卡片自动撑满整行（右侧不留空白），
-              // 品牌多时退回最小宽度并转为横向滑动。
               <li
                 key={provider.id}
                 data-showcase-provider={provider.name}
                 data-showcase-sort-order={provider.sortOrder ?? 0}
-                className="flex min-w-[232px] flex-1 snap-start sm:min-w-[272px]"
+                className="flex w-[240px] min-w-[240px] shrink-0 snap-start"
               >
                 <button
                   type="button"
                   onClick={() => router.push(providerHallHref(provider.name))}
                   aria-label={`${provider.name} · ${t("lobby.providers.open")}`}
-                  className={`group relative flex h-[92px] w-full items-center gap-3 overflow-hidden rounded-2xl border px-3.5 text-left transition-all duration-300 hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-soft/70 sm:h-[108px] sm:gap-4 sm:px-4 lg:h-[116px] ${
+                  className={`group relative flex h-[92px] w-full items-center gap-3 overflow-hidden rounded-2xl border px-3.5 text-left transition-all duration-300 hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-soft/70 sm:h-[108px] lg:h-[116px] ${
                     active
                       ? "border-brand-soft/60 bg-brand-soft/10"
                       : "border-white/[0.07] bg-white/[0.02] hover:border-brand/40"
@@ -118,26 +122,13 @@ export function ProviderWall({
                     <span className="block truncate text-[14px] font-black uppercase italic leading-tight tracking-[0.02em] text-neutral-100 sm:text-[16px] lg:text-[18px]">
                       {provider.name}
                     </span>
-                    <span className="mt-1 block truncate text-[10px] tracking-wide text-neutral-500 sm:text-[11px] lg:text-[12px]">
+                    <span className="mt-1 block truncate text-[10px] tracking-wide text-neutral-500 sm:text-[11px]">
                       {t("lobby.providers.stats", {
                         games: provider.gameCount ?? 0,
                         online: formatInteger(online),
                       })}
                     </span>
                   </span>
-
-                  <svg
-                    viewBox="0 0 24 24"
-                    className="relative h-4 w-4 shrink-0 text-neutral-600 transition-all duration-300 group-hover:translate-x-0.5 group-hover:text-brand-soft sm:h-5 sm:w-5"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth={2}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="m9 5 7 7-7 7" />
-                  </svg>
                 </button>
               </li>
             );

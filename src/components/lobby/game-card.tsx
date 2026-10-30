@@ -34,7 +34,7 @@ export function GameCard({
       type="button"
       onClick={onPlay}
       aria-label={`${title} · ${card.providerLabel}`}
-      className="group relative block aspect-[3/4] w-full overflow-hidden rounded-xl border border-white/[0.08] bg-[#080808] text-left transition-all duration-300 hover:-translate-y-1 hover:border-brand-soft/50 hover:shadow-[0_24px_50px_-20px_var(--sf-a65)] focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-soft/70"
+      className="group relative block aspect-[3/4] w-full overflow-hidden rounded-xl border border-white/[0.08] bg-[#080808] text-left transition-all duration-300 hover:z-10 hover:-translate-y-2 hover:scale-[1.01] hover:border-brand-soft/60 hover:shadow-[0_28px_55px_-18px_var(--sf-a65)] focus:outline-none focus-visible:z-10 focus-visible:-translate-y-2 focus-visible:ring-2 focus-visible:ring-brand-soft/70"
     >
       {/* 高饱和渐变底 */}
       <span
@@ -93,6 +93,11 @@ export function GameCard({
         aria-hidden="true"
         className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/50 to-transparent"
       />
+      {/* 玻璃质感：悬停时叠一层斜向反光 */}
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 rounded-[inherit] bg-[linear-gradient(135deg,rgba(255,255,255,0.18)_0%,rgba(255,255,255,0.05)_26%,transparent_46%,transparent_72%,rgba(255,255,255,0.1)_100%)] opacity-0 transition-opacity duration-300 group-hover:opacity-100 group-focus-visible:opacity-100"
+      />
 
       {/* 左上角 HOT 标 */}
       {isHot ? (
@@ -141,7 +146,7 @@ export function GameCard({
         aria-hidden="true"
         className="pointer-events-none absolute inset-0 overflow-hidden"
       >
-        <span className="absolute -left-1/3 top-0 h-full w-1/3 -translate-x-full skew-x-[-18deg] bg-white/25 blur-[3px] transition-transform duration-700 group-hover:translate-x-[420%]" />
+        <span className="absolute -left-1/2 top-0 h-full w-2/5 -translate-x-[160%] skew-x-[-18deg] bg-gradient-to-r from-transparent via-white/65 to-transparent blur-[2px] transition-transform duration-700 ease-out group-hover:translate-x-[420%] group-focus-visible:translate-x-[420%]" />
       </span>
       <span
         aria-hidden="true"

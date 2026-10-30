@@ -23,6 +23,7 @@ type NavIconName =
   | "gateways"
   | "finance"
   | "players"
+  | "ai"
   | "staff"
   | "preview";
 
@@ -84,6 +85,13 @@ const PLATFORM_NAV: NavItem[] = [
     href: "/finance",
     icon: "finance",
     permission: "finance",
+  },
+  // AI 中控台：销售对话 + 战败分析，线索联系方式敏感，只有 super_admin 拥有 aiConsole 权限
+  {
+    labelKey: "nav.aiConsole",
+    href: "/admin/ai-console",
+    icon: "ai",
+    permission: "aiConsole",
   },
   // 员工管理：只有 super_admin 拥有 staff 权限
   {
@@ -194,6 +202,18 @@ function NavIcon({ name }: { name: NavIconName }) {
           <path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6" />
           <path d="M16 4.5a3.5 3.5 0 0 1 0 7" />
           <path d="M18 14.5c2 .8 3 2.8 3 5.5" />
+        </svg>
+      );
+    case "ai":
+      return (
+        <svg {...common}>
+          <path d="M12 3v3" />
+          <path d="M12 18v3" />
+          <path d="M4.2 7.2l2.1 2.1" />
+          <path d="M17.7 14.7l2.1 2.1" />
+          <path d="M3 12h3" />
+          <path d="M18 12h3" />
+          <circle cx="12" cy="12" r="3.6" />
         </svg>
       );
     case "staff":

@@ -95,6 +95,23 @@ body {
 }
 
 /*
+ * 横向滚动容器（大厅品牌墙等）隐藏原生滚动条。
+ * Tailwind 默认没有 scrollbar-hide 插件，这里手写一份：
+ * - Firefox：scrollbar-width: none
+ * - IE / 旧 Edge：-ms-overflow-style: none
+ * - Chrome / Safari / 新 Edge：::-webkit-scrollbar
+ * 滚动能力本身保留，touch / 触控板 / Shift + 滚轮仍可左右滑动。
+ */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/*
  * 大厅 Live Jackpot 数字跳动。
  * 每次奖池上涨时重挂载数字节点（key = tick）触发一次：
  * jackpot-pop 让数字「翻上来 + 高光闪一下」，jackpot-rise 让增量胶囊滑入。
@@ -193,7 +210,67 @@ body {
   }
 }
 
+/*
+ * 中奖播报跑马灯。
+ * 组件里渲染两份完全相同的事件列表，轨道整体左移 50% 后正好接上第二份，
+ * 因此循环点没有跳变。悬停 / 聚焦时暂停，方便玩家看清内容。
+ */
+.winner-ticker-track {
+  animation: winner-marquee 42s linear infinite;
+  will-change: transform;
+}
+
+.winner-ticker:hover .winner-ticker-track,
+.winner-ticker:focus-within .winner-ticker-track {
+  animation-play-state: paused;
+}
+
+@keyframes winner-marquee {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+/*
+ * Mission 金牌每 3 秒扫过一道白色流光，模拟纯金表面的高光反射。
+ * 奖牌本体已设置 overflow-hidden，光带不会溢出圆形边界。
+ */
+@keyframes medal-shimmer {
+  0%,
+  52% {
+    transform: translateX(-180%) skewX(-18deg);
+    opacity: 0;
+  }
+  58% {
+    opacity: 0.9;
+  }
+  70%,
+  100% {
+    transform: translateX(280%) skewX(-18deg);
+    opacity: 0;
+  }
+}
+
+/* Referral 礼盒的柔和悬浮：比 animate-bounce 幅度小，不抢主视觉。 */
+@keyframes gift-float {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-2px) rotate(-1.5deg);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .winner-ticker-track {
+    animation: none;
+    transform: none;
+  }
+
   @keyframes jackpot-pop {
     from,
     to {
@@ -231,6 +308,21 @@ body {
     from,
     to {
       opacity: 1;
+    }
+  }
+
+  @keyframes medal-shimmer {
+    from,
+    to {
+      transform: translateX(-180%) skewX(-18deg);
+      opacity: 0;
+    }
+  }
+
+  @keyframes gift-float {
+    from,
+    to {
+      transform: none;
     }
   }
 

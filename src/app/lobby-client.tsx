@@ -1,14 +1,24 @@
 "use client";
 
-import { useEffect, useId, useMemo, useState, type CSSProperties } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { LobbyActionBar, type LobbyActionId } from "@/components/lobby/action-bar";
+import { PlayerDepositFlow } from "@/components/player-deposit-button";
 import {
   ComingSoonDialog,
   ConnectingDialog,
-  DepositDialog,
 } from "@/components/lobby/game-dialogs";
 import { GameCard } from "@/components/lobby/game-card";
 import {
@@ -18,6 +28,7 @@ import {
 } from "@/components/lobby/hall-actions";
 import { HeroCarousel, type HeroBannerMetric } from "@/components/lobby/hero-carousel";
 import { ProviderWall } from "@/components/lobby/provider-wall";
+import { WinnerTicker } from "@/components/lobby/winner-ticker";
 import { formatAmount, formatInteger } from "@/lib/format";
 import { LOBBY_CATEGORY_LABEL_KEYS } from "@/lib/i18n-keys";
 import { LOBBY_BANNERS, type LobbyBanner } from "@/lib/lobby-banners";
@@ -37,12 +48,24 @@ import {
   type LobbyGameRecord,
   type LobbyProviderOption,
 } from "@/lib/lobby-games";
-import { DEPOSIT_PRESETS, INITIAL_BALANCE } from "@/lib/lobby-wallet";
 import {
   buildStorefrontTheme,
   type StorefrontModuleId,
   type StorefrontSettings,
 } from "@/lib/storefront";
+
+/** 大厅顶栏需要的玩家摘要；余额已由服务端序列化成字符串。 */
+export type LobbyPlayerSummary = {
+  id: string;
+  username: string;
+  balance: string;
+  referralCode: string;
+};
+
+type PlayerMeResponse = {
+  player?: LobbyPlayerSummary;
+  error?: string;
+};
 
 
 /** 顶部占位功能：点击后统一弹「即将上线」提示 */
@@ -78,13 +101,17 @@ export function LobbyClient({
   initialProviders,
   initialGames,
   storefront,
+  initialPlayer = null,
 }: {
   initialProviders: LobbyProviderOption[];
   initialGames: LobbyGameRecord[];
   /** 后台装修配置：主色 + 三大模块的开关与顺序 */
   storefront: StorefrontSettings;
+  /** 服务端预取的当前玩家，避免首屏先显示「登录 / 注册」再跳成头像 */
+  initialPlayer?: LobbyPlayerSummary | null;
 }) {
   const { t } = useLanguage();
+  const router = useRouter();
 
   // 后台装修：主色 + 深浅调节派生出一整套配色与 CSS 变量，直接挂在根节点上。
   // buildStorefrontTheme 会算出 --primary / --primary-soft / --primary-dark（hsl）
@@ -115,11 +142,8 @@ export function LobbyClient({
   const [connectingGame, setConnectingGame] = useState<LobbyGameCard | null>(
     null,
   );
-  const [depositOpen, setDepositOpen] = useState(false);
-  const [depositAmount, setDepositAmount] = useState(DEPOSIT_PRESETS[1]);
-  const [balance, setBalance] = useState(INITIAL_BALANCE);
   const [noticeVisible, setNoticeVisible] = useState(false);
-  // Mission / Referral / Login / Register 目前是占位入口，点击只弹「即将上线」。
+  // Mission / Withdraw 仍是占位入口；Deposit / Referral / Auth 已接真实玩家账户。
   const [comingSoon, setComingSoon] = useState<ComingSoonFeature | null>(null);
   // Live Jackpot：amount 当前奖池，gain 本次增量（0 表示还没涨过），tick 用来重播跳动动画。
   const [jackpot, setJackpot] = useState({
@@ -128,9 +152,77 @@ export function LobbyClient({
     tick: 0,
   });
 
+  // 玩家账户：服务端先给一份 initialPlayer，挂载后再用 /api/player/me 校准余额与登录态。
+  const [player, setPlayer] = useState<LobbyPlayerSummary | null>(initialPlayer);
+  const [playerLoading, setPlayerLoading] = useState(!initialPlayer);
+  const [playerDepositOpen, setPlayerDepositOpen] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const accountMenuRef = useRef<HTMLDivElement | null>(null);
+
   const connectingTitleId = useId();
-  const depositTitleId = useId();
   const comingSoonTitleId = useId();
+
+  const refreshPlayer = useCallback(async () => {
+    try {
+      const response = await fetch("/api/player/me", {
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      const data: PlayerMeResponse = await response
+        .json()
+        .catch(() => ({}) as PlayerMeResponse);
+
+      if (!response.ok || !data.player) {
+        setPlayer(null);
+        return;
+      }
+
+      setPlayer({
+        id: data.player.id,
+        username: data.player.username,
+        balance: data.player.balance,
+        referralCode: data.player.referralCode,
+      });
+    } catch {
+      // 网络异常时保留当前画面，避免把已登录玩家误判成游客。
+    } finally {
+      setPlayerLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    // refreshPlayer 内部先 await 再 setState，属于异步回填而非同步级联渲染。
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void refreshPlayer();
+  }, [refreshPlayer]);
+
+  // 头像下拉：点击外部或按 Esc 关闭。
+  useEffect(() => {
+    if (!accountMenuOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: MouseEvent) {
+      if (!accountMenuRef.current?.contains(event.target as Node)) {
+        setAccountMenuOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setAccountMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [accountMenuOpen]);
 
 
   // 数据库还没有同步任何游戏时（新部署 / 清库），回退到内置目录，保证大厅不空。
@@ -276,7 +368,7 @@ export function LobbyClient({
     category !== "all" && (categoryCounts.get(category) ?? 0) === 0;
 
   const modalOpen =
-    connectingGame !== null || depositOpen || comingSoon !== null;
+    connectingGame !== null || playerDepositOpen || comingSoon !== null;
 
   // 弹窗打开时锁背景滚动，避免大厅在弹窗后面继续滚动。
   useEffect(() => {
@@ -304,7 +396,6 @@ export function LobbyClient({
       }
 
       setConnectingGame(null);
-      setDepositOpen(false);
       setComingSoon(null);
     }
 
@@ -346,19 +437,75 @@ export function LobbyClient({
       return;
     }
 
-    setDepositOpen(false);
+    setPlayerDepositOpen(false);
     setConnectingGame(target);
+  }
+
+  /** 未登录先去登录 / 注册，登录后回到大厅原地址（保留 tenant / 筛选参数）。 */
+  function redirectToPlayerAuth(mode: "login" | "register", nextPath?: string) {
+    const here = `${window.location.pathname}${window.location.search}`;
+    const next = nextPath ?? (here.startsWith("/") ? here : "/");
+    const query = new URLSearchParams({ next });
+    // 多租户：把当前 ?tenant= 原样传给登录 / 注册，避免回落到第一个站点。
+    const site = new URLSearchParams(window.location.search).get("tenant");
+
+    if (site?.trim()) {
+      query.set("site", site.trim());
+    }
+
+    router.push(`/player/${mode}?${query.toString()}`);
   }
 
   function openDeposit() {
     setConnectingGame(null);
-    setDepositOpen(true);
+
+    if (!player) {
+      redirectToPlayerAuth("login");
+      return;
+    }
+
+    setPlayerDepositOpen(true);
   }
 
-  function confirmDeposit() {
-    setBalance((current) => current + depositAmount);
-    setDepositOpen(false);
+  function handleDepositSuccess(balance?: string | null) {
+    if (balance) {
+      setPlayer((current) =>
+        current ? { ...current, balance } : current,
+      );
+    } else {
+      void refreshPlayer();
+    }
+
     setNoticeVisible(true);
+  }
+
+  function closePlayerDeposit() {
+    setPlayerDepositOpen(false);
+    void refreshPlayer();
+  }
+
+  async function handlePlayerLogout() {
+    if (loggingOut) {
+      return;
+    }
+
+    setLoggingOut(true);
+
+    try {
+      await fetch("/api/player/logout", {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+    } catch {
+      // 即使接口失败也先把本地界面切成游客态，Cookie 过期后会自动失效。
+    } finally {
+      setPlayer(null);
+      setAccountMenuOpen(false);
+      setPlayerDepositOpen(false);
+      setLoggingOut(false);
+      router.refresh();
+    }
   }
 
   // Hero 轮播上的实时数据：奖池、全站在线人数、游戏总数。
@@ -411,16 +558,38 @@ export function LobbyClient({
     anchor?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
-  // 核心功能岛：只有充值走真实流程，其余都是「即将上线」占位弹窗。
+  // 核心功能岛：Deposit / Referral / Withdraw / Auth 已接真实玩家账户，
+  // Mission 仍是「即将上线」占位弹窗。
   function handleLobbyAction(action: LobbyActionId) {
     if (action === "deposit") {
       openDeposit();
       return;
     }
 
-    // 登录 / 注册在演示环境共用一个「即将上线」提示
     if (action === "auth") {
-      setComingSoon("login");
+      if (player) {
+        router.push("/player/profile");
+      } else {
+        redirectToPlayerAuth("login");
+      }
+      return;
+    }
+
+    if (action === "referral") {
+      if (player) {
+        router.push("/player/profile?tab=referral");
+      } else {
+        redirectToPlayerAuth("login", "/player/profile?tab=referral");
+      }
+      return;
+    }
+
+    if (action === "withdraw") {
+      if (player) {
+        router.push("/player/profile?tab=wallet");
+      } else {
+        redirectToPlayerAuth("login", "/player/profile?tab=wallet");
+      }
       return;
     }
 
@@ -446,8 +615,16 @@ export function LobbyClient({
         );
       case "action":
         return (
-          <div key="action" data-module="action">
-            <LobbyActionBar onAction={handleLobbyAction} />
+          <div
+            key="action"
+            data-module="action"
+            className="flex flex-col gap-3"
+          >
+            <WinnerTicker />
+            <LobbyActionBar
+              onAction={handleLobbyAction}
+              loggedIn={Boolean(player)}
+            />
           </div>
         );
       case "provider":
@@ -534,11 +711,17 @@ export function LobbyClient({
                 {t("lobby.balance")}
               </span>
               <span className="font-mono text-[11px] font-semibold tabular-nums text-brand-pale sm:text-xs">
-                ${formatAmount(balance)}
+                {playerLoading && !player
+                  ? "…"
+                  : player
+                    ? `$${formatAmount(player.balance)}`
+                    : "—"}
               </span>
-              <span className="hidden rounded-full border border-white/10 px-1.5 py-px text-[8px] uppercase tracking-[0.14em] text-neutral-500 md:inline">
-                {t("lobby.demo")}
-              </span>
+              {player ? null : (
+                <span className="hidden rounded-full border border-white/10 px-1.5 py-px text-[8px] uppercase tracking-[0.14em] text-neutral-500 md:inline">
+                  {t("lobby.guest")}
+                </span>
+              )}
             </div>
 
             <label className="relative flex min-w-0 flex-1 items-center">
@@ -565,9 +748,117 @@ export function LobbyClient({
             </label>
           </div>
 
-          {/* Header 只保留 Logo / Balance / Search / Language；其余功能已搬到下方核心功能岛 */}
-          <div className="order-2 ml-auto flex shrink-0 items-center sm:order-3 sm:ml-0">
+          {/* Header 固定显示 Logo / Balance / Search / Language / 玩家入口 */}
+          <div className="order-2 ml-auto flex shrink-0 items-center gap-2 sm:order-3 sm:ml-0">
             <LanguageSwitcher />
+
+            <div ref={accountMenuRef} className="relative">
+              {playerLoading && !player ? (
+                <span
+                  aria-hidden="true"
+                  className="block h-9 w-20 animate-pulse rounded-full border border-white/[0.06] bg-white/[0.04]"
+                />
+              ) : player ? (
+                <button
+                  type="button"
+                  onClick={() => setAccountMenuOpen((open) => !open)}
+                  aria-haspopup="menu"
+                  aria-expanded={accountMenuOpen}
+                  className="flex h-9 items-center gap-1.5 rounded-full border border-brand/30 bg-white/[0.03] pl-1 pr-2.5 transition-colors hover:border-brand/55 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/50"
+                >
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-brand-pale via-brand to-brand-deep text-[11px] font-black text-brand-ink">
+                    {player.username.slice(0, 1).toUpperCase()}
+                  </span>
+                  <span className="hidden max-w-[92px] truncate text-[11px] font-semibold text-neutral-200 sm:inline">
+                    {player.username}
+                  </span>
+                  <svg
+                    viewBox="0 0 24 24"
+                    className={`h-3 w-3 text-neutral-500 transition-transform ${accountMenuOpen ? "rotate-180" : ""}`}
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="m6 9 6 6 6-6" />
+                  </svg>
+                </button>
+              ) : (
+                <div className="flex items-center gap-1.5">
+                  <Link
+                    href="/player/login?next=%2F"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      redirectToPlayerAuth("login");
+                    }}
+                    className="inline-flex h-8 items-center justify-center rounded-full border border-white/10 px-2.5 text-[10px] font-semibold text-neutral-300 transition-colors hover:border-brand/45 hover:text-brand-pale sm:px-3"
+                  >
+                    {t("lobby.login")}
+                  </Link>
+                  <Link
+                    href="/player/register?next=%2F"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      redirectToPlayerAuth("register");
+                    }}
+                    className="inline-flex h-8 items-center justify-center rounded-full bg-gradient-to-r from-brand-deep via-brand to-brand-pale px-2.5 text-[10px] font-bold text-brand-ink transition-opacity hover:opacity-90 sm:px-3"
+                  >
+                    {t("lobby.register")}
+                  </Link>
+                </div>
+              )}
+
+              {player && accountMenuOpen ? (
+                <div
+                  role="menu"
+                  className="absolute right-0 top-full z-50 mt-2 w-56 overflow-hidden rounded-xl border border-brand/25 bg-[#0a0a0a] p-1 shadow-[0_24px_70px_-20px_rgba(0,0,0,0.95)]"
+                >
+                  <div className="border-b border-white/[0.06] px-3 py-2.5">
+                    <p className="text-[8px] uppercase tracking-[0.2em] text-neutral-500">
+                      {t("lobby.account.signedInAs")}
+                    </p>
+                    <p className="mt-1 truncate text-xs font-semibold text-neutral-100">
+                      {player.username}
+                    </p>
+                    <p className="mt-0.5 truncate font-mono text-[9px] uppercase tracking-[0.14em] text-brand-soft/80">
+                      {t("lobby.account.code")}: {player.referralCode}
+                    </p>
+                  </div>
+
+                  <Link
+                    role="menuitem"
+                    href="/player/profile"
+                    onClick={() => setAccountMenuOpen(false)}
+                    className="mt-1 flex items-center justify-between rounded-lg px-3 py-2 text-[11px] text-neutral-300 transition-colors hover:bg-brand/10 hover:text-brand-pale"
+                  >
+                    {t("lobby.account.profile")}
+                    <span aria-hidden="true">›</span>
+                  </Link>
+                  <Link
+                    role="menuitem"
+                    href="/player/profile?tab=referral"
+                    onClick={() => setAccountMenuOpen(false)}
+                    className="flex items-center justify-between rounded-lg px-3 py-2 text-[11px] text-neutral-300 transition-colors hover:bg-brand/10 hover:text-brand-pale"
+                  >
+                    {t("lobby.account.referral")}
+                    <span aria-hidden="true">›</span>
+                  </Link>
+                  <button
+                    role="menuitem"
+                    type="button"
+                    onClick={() => void handlePlayerLogout()}
+                    disabled={loggingOut}
+                    className="mt-1 flex w-full items-center justify-between rounded-lg border-t border-white/[0.06] px-3 py-2 text-left text-[11px] text-red-300/90 transition-colors hover:bg-red-400/10 hover:text-red-200 disabled:opacity-60"
+                  >
+                    {loggingOut
+                      ? t("player.profile.loggingOut")
+                      : t("player.profile.logout")}
+                  </button>
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
       </header>
@@ -708,14 +999,12 @@ export function LobbyClient({
         />
       ) : null}
 
-      {depositOpen ? (
-        <DepositDialog
-          titleId={depositTitleId}
-          balance={balance}
-          amount={depositAmount}
-          onSelectAmount={setDepositAmount}
-          onConfirm={confirmDeposit}
-          onClose={() => setDepositOpen(false)}
+      {playerDepositOpen && player ? (
+        <PlayerDepositFlow
+          open
+          playerName={player.username}
+          onClose={closePlayerDeposit}
+          onDeposited={handleDepositSuccess}
         />
       ) : null}
 

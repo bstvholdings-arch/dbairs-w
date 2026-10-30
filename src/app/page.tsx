@@ -1,9 +1,10 @@
 import { connection } from "next/server";
 
 import { loadLobbyData } from "@/lib/lobby-data";
+import { getPlayerSessionFromCookies } from "@/lib/player-session";
 import { loadStorefront } from "@/lib/storefront-data";
 
-import { LobbyClient } from "./lobby-client";
+import { LobbyClient, type LobbyPlayerSummary } from "./lobby-client";
 
 export const metadata = {
   title: "DB AIRS | Player Lobby",
@@ -33,16 +34,27 @@ export default async function PlayerLobbyPage({
   // - games：上架中的游戏，按 sortOrder 降序
   // - storefront：租户的 themeColor + layoutConfig（见 lib/storefront-data.ts）
   // 数据库不可用时返回空数组 / 默认金色主题，LobbyClient 会回退到内置游戏目录。
-  const [{ providers, games }, storefront] = await Promise.all([
+  const [{ providers, games }, storefront, playerSession] = await Promise.all([
     loadLobbyData(),
     loadStorefront(tenantKey),
+    getPlayerSessionFromCookies(),
   ]);
+
+  const initialPlayer: LobbyPlayerSummary | null = playerSession
+    ? {
+        id: playerSession.id,
+        username: playerSession.username,
+        balance: playerSession.balance,
+        referralCode: playerSession.referralCode,
+      }
+    : null;
 
   return (
     <LobbyClient
       initialProviders={providers}
       initialGames={games}
       storefront={storefront}
+      initialPlayer={initialPlayer}
     />
   );
 }

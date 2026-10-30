@@ -168,11 +168,13 @@ export function DepositPaymentModal({
   playerName,
   gateways,
   onClose,
+  onDepositSuccess,
 }: {
-  playerId: string;
+  playerId?: string;
   playerName: string;
   gateways: DepositGatewayOption[];
   onClose: () => void;
+  onDepositSuccess?: (balance?: string | null) => void;
 }) {
   const { t } = useLanguage();
   const titleId = useId();
@@ -255,7 +257,7 @@ export function DepositPaymentModal({
         body: JSON.stringify({
           gatewayId: selectedGateway.id,
           amount: amount.trim(),
-          playerId,
+          ...(playerId ? { playerId } : {}),
         }),
       });
       const data: CreateDepositResponse = await response
@@ -399,6 +401,7 @@ export function DepositPaymentModal({
             })
           : t("deposit.success.testCallback"),
       );
+      onDepositSuccess?.(data.balance);
     } catch {
       setError(t("common.networkError"));
     } finally {
@@ -728,9 +731,11 @@ export function DepositPaymentModal({
                   {t("deposit.form.player")}
                 </p>
                 <p className="mt-1 text-sm text-neutral-200">{playerName}</p>
-                <p className="mt-0.5 font-mono text-[10px] text-neutral-600">
-                  {playerId}
-                </p>
+                {playerId ? (
+                  <p className="mt-0.5 font-mono text-[10px] text-neutral-600">
+                    {playerId}
+                  </p>
+                ) : null}
               </div>
 
               <label className="mt-4 block">

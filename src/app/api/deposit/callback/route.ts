@@ -31,6 +31,20 @@ function readTxHash(value: unknown) {
   return txHash;
 }
 
+function readReferralRewardRate() {
+  try {
+    const rate = new Prisma.Decimal(process.env.REFERRAL_REWARD_RATE ?? "0.05");
+
+    if (rate.lessThanOrEqualTo(0) || rate.greaterThan(0.5)) {
+      return null;
+    }
+
+    return rate;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * 支付商回调。
  * POST /api/deposit/callback
@@ -100,6 +114,12 @@ export async function POST(request: NextRequest) {
         currency: true,
         status: true,
         gateway: { select: { name: true, apiKey: true } },
+        player: {
+          select: {
+            referredById: true,
+            referredBy: { select: { id: true, tenantId: true, status: true } },
+          },
+        },
       },
     });
 
@@ -206,6 +226,63 @@ export async function POST(request: NextRequest) {
         data: { balance: { increment: order.amount } },
         select: { balance: true },
       });
+
+      /**
+       * 推广返佣：仅对「被邀请人的首笔成功充值」发放，防止刷返佣。
+       * - 必须在写入本笔 deposit 流水之前统计历史成功充值；
+       * - depositOrderId 唯一 + 事务回滚，保证回调重试不会重复返佣；
+       * - 邀请人余额与返佣流水、奖励记录在同一个事务里落库。
+       */
+      const inviter = order.player.referredBy;
+      const rewardRate = readReferralRewardRate();
+
+      if (inviter && inviter.status === "active" && rewardRate) {
+        const previousDeposits = await tx.transaction.count({
+          where: {
+            playerId: order.playerId,
+            type: "deposit",
+            status: "success",
+          },
+        });
+
+        if (previousDeposits === 0) {
+          const rewardAmount = order.amount
+            .mul(rewardRate)
+            .toDecimalPlaces(6, Prisma.Decimal.ROUND_DOWN);
+
+          if (rewardAmount.greaterThan(0)) {
+            await tx.player.update({
+              where: { id: inviter.id },
+              data: { balance: { increment: rewardAmount } },
+            });
+
+            await tx.transaction.create({
+              data: {
+                tenantId: order.tenantId,
+                playerId: inviter.id,
+                type: "referral",
+                amount: rewardAmount,
+                currency: order.currency,
+                status: "success",
+                txHash: `referral-${order.id}`,
+              },
+            });
+
+            await tx.referralReward.create({
+              data: {
+                tenantId: order.tenantId,
+                inviterId: inviter.id,
+                referredPlayerId: order.playerId,
+                depositOrderId: order.id,
+                depositAmount: order.amount,
+                rewardRate,
+                rewardAmount,
+                currency: order.currency,
+              },
+            });
+          }
+        }
+      }
 
       const transaction = await tx.transaction.create({
         data: {

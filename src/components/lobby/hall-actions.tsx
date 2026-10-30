@@ -29,9 +29,16 @@ export function MissionMedalIcon({ className = "" }: { className?: string }) {
       {/* 金牌本体 */}
       <span
         aria-hidden="true"
-        className="relative flex h-[26px] w-[26px] items-center justify-center rounded-full bg-[conic-gradient(from_200deg,#fdf3c8,var(--sf-soft),#a97b1c,#fff6cf,#e3bd55,var(--sf-soft))] shadow-[0_0_12px_var(--sf-soft-a55)] ring-1 ring-inset ring-white/70"
+        className="relative flex h-[26px] w-[26px] items-center justify-center overflow-hidden rounded-full bg-[conic-gradient(from_200deg,#fdf3c8,var(--sf-soft),#a97b1c,#fff6cf,#e3bd55,var(--sf-soft))] shadow-[0_0_12px_var(--sf-soft-a55)] ring-1 ring-inset ring-white/70"
       >
-        <span className="flex h-[18px] w-[18px] items-center justify-center rounded-full bg-[radial-gradient(circle_at_34%_24%,#fff8da,#e5c163_58%,#a97b1c_100%)]">
+        {/* 每 3 秒横穿金牌表面的流光 */}
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 overflow-hidden rounded-full"
+        >
+          <span className="absolute inset-y-[-30%] left-0 w-[38%] animate-[medal-shimmer_3s_ease-in-out_infinite] bg-white/80 blur-[1.5px] mix-blend-screen motion-reduce:animate-none" />
+        </span>
+        <span className="relative flex h-[18px] w-[18px] items-center justify-center rounded-full bg-[radial-gradient(circle_at_34%_24%,#fff8da,#e5c163_58%,#a97b1c_100%)]">
           <svg
             viewBox="0 0 24 24"
             className="h-2.5 w-2.5 text-[#5c430f]"
@@ -57,7 +64,7 @@ export function ReferralGiftIcon({ className = "" }: { className?: string }) {
       />
       <svg
         viewBox="0 0 24 24"
-        className="relative h-[19px] w-[19px]"
+        className="relative h-[19px] w-[19px] animate-[gift-float_3.4s_ease-in-out_infinite] motion-reduce:animate-none"
         aria-hidden="true"
       >
         {/* 盒身 */}

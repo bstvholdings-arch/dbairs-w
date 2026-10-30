@@ -31,6 +31,7 @@ export const PERMISSIONS = [
   "withdrawals",
   "aiSettings",
   "aiLogs",
+  "aiConsole",
   "staff",
 ] as const;
 
@@ -44,6 +45,9 @@ export type Permission = (typeof PERMISSIONS)[number];
  * - tech       ：游戏商 / 游戏库技术配置 + AI 日志（只读）
  * - support    ：客服，仅数据大盘
  * - tenant_admin：只有租户侧的财务对账，其余平台权限一律没有
+ *
+ * aiConsole 是「AI 中控台」（含战败分析看板），默认只有 super_admin 拥有；
+ * 看板里的线索联系方式属于敏感数据，不要下放给 finance / tech / support。
  */
 export const ROLE_PERMISSIONS: Record<AdminRole, readonly Permission[]> = {
   super_admin: PERMISSIONS,
@@ -73,6 +77,7 @@ export const PAGE_ACCESS_RULES: readonly { path: string; permission: Permission 
   { path: "/admin/finance", permission: "finance" },
   { path: "/admin/staff", permission: "staff" },
   { path: "/admin/ai-logs", permission: "aiLogs" },
+  { path: "/admin/ai-console", permission: "aiConsole" },
   { path: "/finance", permission: "finance" },
   // 旧路径（proxy 会 301 到 /admin/*，这里同样先做权限判断，避免先跳转再被拦）
   { path: "/providers", permission: "providers" },
@@ -94,6 +99,12 @@ export const API_ACCESS_RULES: readonly { path: string; permission: Permission }
   // AI 设置只有超管能改；AI 日志技术可读
   { path: "/api/admin/ai-settings", permission: "aiSettings" },
   { path: "/api/admin/ai-logs", permission: "aiLogs" },
+  // AI 中控台（销冠对话 + 战败分析）：/api/ai/log 例外，由 proxy 前置放行并在路由内
+  // 校验 AI_LOG_TOKEN / 超管 Cookie（外部销售机器人没有管理员 Cookie）。
+  { path: "/api/ai/chat", permission: "aiConsole" },
+  { path: "/api/ai/leads", permission: "aiConsole" },
+  { path: "/api/ai/tactics", permission: "aiConsole" },
+  { path: "/api/ai/prompt", permission: "aiConsole" },
 ];
 
 /** 租户侧接口前缀：只允许 tenant_admin 调用（在 proxy 里单独判断）。 */

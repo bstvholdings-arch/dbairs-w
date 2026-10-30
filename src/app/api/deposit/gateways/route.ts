@@ -5,6 +5,7 @@ import {
   isUsdtProviderType,
   validateGatewayCheckoutAvailability,
 } from "@/lib/payment-gateway";
+import { getPlayerSessionFromRequest } from "@/lib/player-session";
 import { prisma } from "@/lib/prisma";
 import { getSessionUserFromRequest } from "@/lib/session";
 
@@ -29,21 +30,25 @@ export async function GET(request: NextRequest) {
   await connection();
 
   try {
-    const session = await getSessionUserFromRequest(request);
+    // 玩家大厅与租户后台共用此接口：
+    // - 玩家 Cookie 优先（同一浏览器同时登录后台时，以大厅玩家为准）；
+    // - 否则要求租户管理员 Cookie。
+    const player = await getPlayerSessionFromRequest(request);
+    const session = player ? null : await getSessionUserFromRequest(request);
 
-    if (!session) {
-      return jsonError("未登录或登录已过期，请重新登录", 401);
-    }
+    const tenantId =
+      player?.tenantId ??
+      (session?.role === "tenant_admin" ? session.tenantId : null);
 
-    if (session.role !== "tenant_admin" || !session.tenantId) {
-      return jsonError("仅租户管理员可读取充值网关", 403);
+    if (!tenantId) {
+      return jsonError("仅登录玩家或租户管理员可读取充值网关", 403);
     }
 
     const gateways = await prisma.paymentGateway.findMany({
       where: {
         isActive: true,
         reviewStatus: "APPROVED",
-        OR: [{ ownerId: null }, { ownerId: session.tenantId }],
+        OR: [{ ownerId: null }, { ownerId: tenantId }],
       },
       orderBy: [{ createdAt: "desc" }],
       select: {

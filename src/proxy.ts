@@ -51,8 +51,23 @@ export function proxy(request: NextRequest) {
     pathname === "/login" ||
     pathname.startsWith("/login/") ||
     pathname === "/api/auth/login" ||
+    // 找回密码页与接口必须公开：用户此时通常没有有效登录态。
+    pathname === "/forgot-password" ||
+    pathname === "/reset-password" ||
+    pathname === "/api/auth/forgot-password" ||
+    pathname === "/api/auth/reset-password" ||
     // 登出必须公开：token 过期时也要能清掉 httpOnly cookie。
     pathname === "/api/auth/logout"
+  ) {
+    return NextResponse.next();
+  }
+
+  // 玩家前台登录 / 注册 / 个人中心：玩家 JWT 与后台管理员 token 是两套体系，
+  // 页面与 API 内部自行校验玩家 Cookie，不能在这里被后台登录页拦住。
+  if (
+    pathname === "/player" ||
+    pathname.startsWith("/player/") ||
+    pathname.startsWith("/api/player/")
   ) {
     return NextResponse.next();
   }
@@ -63,9 +78,18 @@ export function proxy(request: NextRequest) {
   if (
     pathname === "/api/deposit/create" ||
     pathname === "/api/deposit/callback" ||
+    pathname === "/api/deposit/gateways" ||
+    pathname === "/api/deposit/test-callback" ||
     pathname === "/api/withdrawal/create" ||
     pathname === "/api/withdrawal/callback"
   ) {
+    return NextResponse.next();
+  }
+
+  // AI 对话日志上报接口由外部销售机器人调用，同样没有管理员 Cookie。
+  // 路由内部会校验「超管 Cookie」或 x-ai-log-token（AI_LOG_TOKEN），
+  // 未配置 token 且非超管时直接 401，因此这里前置放行是安全的。
+  if (pathname === "/api/ai/log") {
     return NextResponse.next();
   }
 

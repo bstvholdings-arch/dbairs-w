@@ -160,6 +160,7 @@ export const PERMISSION_LABEL_KEYS = {
   withdrawals: "rbac.permission.withdrawals",
   aiSettings: "rbac.permission.aiSettings",
   aiLogs: "rbac.permission.aiLogs",
+  aiConsole: "rbac.permission.aiConsole",
   staff: "rbac.permission.staff",
 } as const satisfies Record<Permission, TranslationKey>;
 

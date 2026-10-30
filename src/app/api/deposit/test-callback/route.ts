@@ -6,6 +6,7 @@ import {
   depositTestCallbackAllowed,
 } from "@/lib/payment-gateway";
 import { prisma } from "@/lib/prisma";
+import { getPlayerSessionFromRequest } from "@/lib/player-session";
 import { getSessionUserFromRequest } from "@/lib/session";
 
 function jsonError(message: string, status: number) {
@@ -18,8 +19,8 @@ function jsonError(message: string, status: number) {
  *
  * 安全边界：
  * 1. 仅非生产环境开放，或显式设置 DEPOSIT_ALLOW_TEST_CALLBACK=true；
- * 2. 必须携带租户管理员 / 超管登录 Cookie；
- * 3. 租户管理员只能模拟自己租户的订单；
+ * 2. 必须携带玩家 Cookie（player_token）或租户管理员 / 超管登录 Cookie；
+ * 3. 玩家只能模拟自己的订单；租户管理员只能模拟自己租户的订单；
  * 4. 复用正式回调处理器，保证状态机与防重复入账逻辑完全一致。
  */
 export async function POST(request: NextRequest) {
@@ -28,9 +29,10 @@ export async function POST(request: NextRequest) {
       return jsonError("生产环境已禁用测试回调", 403);
     }
 
-    const session = await getSessionUserFromRequest(request);
+    const player = await getPlayerSessionFromRequest(request);
+    const session = player ? null : await getSessionUserFromRequest(request);
 
-    if (!session) {
+    if (!player && !session) {
       return jsonError("未登录或登录已过期，请重新登录", 401);
     }
 
@@ -55,6 +57,7 @@ export async function POST(request: NextRequest) {
       select: {
         id: true,
         tenantId: true,
+        playerId: true,
         status: true,
         gateway: { select: { apiKey: true } },
       },
@@ -64,7 +67,14 @@ export async function POST(request: NextRequest) {
       return jsonError("充值订单不存在", 404);
     }
 
-    if (session.role === "tenant_admin" && session.tenantId !== order.tenantId) {
+    if (player && order.playerId !== player.id) {
+      return jsonError("无权操作其他玩家的充值订单", 403);
+    }
+
+    if (
+      session?.role === "tenant_admin" &&
+      session.tenantId !== order.tenantId
+    ) {
       return jsonError("无权操作其他租户的充值订单", 403);
     }
 

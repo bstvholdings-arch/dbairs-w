@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 
 import { verifyToken } from "./auth";
+import { getPlayerSessionFromRequest } from "./player-session";
 import { getSessionUserFromRequest } from "./session";
 
 export type PaymentPlayerIdentity = {
@@ -17,12 +18,12 @@ export type PaymentPlayerEnvKey =
 /**
  * 解析充值 / 提现发起人身份。
  *
- * 1. 玩家端正式接入时使用 Authorization: Bearer <player JWT>，
- *    JWT 的 role 必须为 player，userId 即 Player.id。
- * 2. 当前项目的租户后台还没有玩家登录态，因此租户管理员可以用自己的
- *    登录 Cookie + body.playerId 代玩家创建订单；服务端会强制校验
- *    该玩家必须属于当前租户。
- * 3. 本地开发仍允许直接传 playerId 便于联调；生产环境默认关闭该兜底，
+ * 1. 玩家正式登录态：httpOnly Cookie（player_token）；玩家中心 / 大厅的所有
+ *    充值、提现请求都走这里，服务端从库里复核租户与状态。
+ * 2. 外部游戏商回调场景仍支持 Authorization: Bearer <player JWT>。
+ * 3. 租户后台客服可用管理员 Cookie + body.playerId 代玩家创建订单；
+ *    服务端会强制校验该玩家必须属于当前租户。
+ * 4. 本地开发仍允许直接传 playerId 便于联调；生产环境默认关闭该兜底，
  *    必须显式设置对应 envKey=true 才会开启。
  */
 export async function resolvePaymentPlayerIdentity(
@@ -43,6 +44,19 @@ export async function resolvePaymentPlayerIdentity(
         fromAdmin: false,
       };
     }
+  }
+
+  // 优先使用玩家 Cookie：即使同一浏览器同时登录了超管 / 租户后台，
+  // 大厅里的充值也必须算在当前玩家头上。
+  const playerSession = await getPlayerSessionFromRequest(request);
+
+  if (playerSession) {
+    return {
+      playerId: playerSession.id,
+      tenantId: playerSession.tenantId,
+      fromToken: true,
+      fromAdmin: false,
+    };
   }
 
   const playerId =

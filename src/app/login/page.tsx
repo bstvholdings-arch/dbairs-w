@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, type FormEvent } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
@@ -381,6 +382,15 @@ export default function LoginPage() {
               </button>
 
             </form>
+
+            <div className="mt-4 text-center">
+              <Link
+                href="/forgot-password"
+                className="text-[11px] font-semibold text-[#d4af37]/80 transition-colors hover:text-[#f0d27c]"
+              >
+                {t("login.forgotPassword")}
+              </Link>
+            </div>
 
             <p className="mt-5 text-center text-[11px] leading-5 text-neutral-600">
               {t("login.notice")}

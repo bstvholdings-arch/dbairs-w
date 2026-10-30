@@ -72,8 +72,11 @@ const ACTIONS: LobbyAction[] = [
  */
 export function LobbyActionBar({
   onAction,
+  loggedIn = false,
 }: {
   onAction: (action: LobbyActionId) => void;
+  /** 已登录时 auth 卡改成「我的账户」，点击直接进玩家中心 */
+  loggedIn?: boolean;
 }) {
   const { t } = useLanguage();
 
@@ -140,7 +143,9 @@ export function LobbyActionBar({
                   : "text-neutral-300 group-hover/action:text-brand-pale"
               }`}
             >
-              {t(action.labelKey)}
+              {action.id === "auth" && loggedIn
+                ? t("lobby.action.account")
+                : t(action.labelKey)}
             </span>
           </button>
         ))}
