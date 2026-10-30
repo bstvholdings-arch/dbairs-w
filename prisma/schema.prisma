@@ -1,0 +1,341 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// 1. 租户表 (Tenant - 你的下游客户)
+model Tenant {
+  id        String @id @default(uuid())
+  name      String // 品牌名称 (如 Winvora)
+  domain    String @unique // 绑定域名
+  subdomain String @unique // 系统分配的子域名
+  status    String @default("active") // active, suspended, trial
+  planId    String // 关联的套餐 ID
+
+  // 出金审批人数设置（最少1人，最多3人，后台可调）
+  withdrawalRequiredApprovals Int @default(1)
+
+  // 前台装修（Storefront Settings，超管在 /admin/storefront 可视化配置）
+  // themeColor：玩家大厅主色调，默认金色 #d4af37
+  // layoutConfig：模块开关与顺序，形如
+  //   { "modules": [{ "id": "hero", "visible": true }, { "id": "action", "visible": true }, { "id": "provider", "visible": false }] }
+  //   null / 非法值一律回退到「Hero → 核心功能岛 → 品牌墙」全开（见 src/lib/storefront.ts）
+  themeColor   String @default("#d4af37")
+  layoutConfig Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  players         Player[]
+  agents          Agent[]
+  transactions    Transaction[]
+  withdrawals     Withdrawal[]
+  providerPoints  TenantProviderPoint[]
+  betRecords      BetRecord[]
+  paymentGateways PaymentGateway[]
+  depositOrders   DepositOrder[]
+}
+
+// 2. 套餐表 (Plan - 标准版/高阶版配置)
+model Plan {
+  id                  String   @id @default(uuid())
+  name                String // 名称：Standard, Premium
+  setupFee            Decimal  @db.Decimal(18, 2) // 开台费
+  monthlyFee          Decimal  @db.Decimal(18, 2) // 月费
+  platformFeeRate     Decimal  @db.Decimal(5, 4) // 平台抽水 (如 0.05)
+  agentCommissionRate Decimal  @db.Decimal(5, 4) // 代理分润 (如 0.15)
+  trafficLimitGB      Int // 流量限制 (如 150)
+  isUnlimitedTraffic  Boolean  @default(false)
+  createdAt           DateTime @default(now())
+}
+
+// 3. 玩家表 (Player)
+model Player {
+  id           String   @id @default(uuid())
+  tenantId     String // 多租户隔离字段
+  tenant       Tenant   @relation(fields: [tenantId], references: [id])
+  username     String // 玩家账号
+  passwordHash String
+  balance      Decimal  @default(0.00) @db.Decimal(18, 6) // 资金余额
+  status       String   @default("active")
+  createdAt    DateTime @default(now())
+
+  transactions  Transaction[]
+  betRecords    BetRecord[]
+  depositOrders DepositOrder[]
+  withdrawals   Withdrawal[]
+
+  @@unique([tenantId, username]) // 同一个站内账号唯一
+}
+
+// 4. 代理表 (Agent - 推广人员)
+model Agent {
+  id             String   @id @default(uuid())
+  tenantId       String // 多租户隔离字段
+  tenant         Tenant   @relation(fields: [tenantId], references: [id])
+  username       String
+  passwordHash   String
+  commissionRate Decimal  @default(0.00) @db.Decimal(5, 4) // 独立佣金比例
+  balance        Decimal  @default(0.00) @db.Decimal(18, 6) // 可提现佣金
+  createdAt      DateTime @default(now())
+
+  @@unique([tenantId, username])
+}
+
+// 5. 财务流水表 (Transaction - 核心账本)
+model Transaction {
+  id        String   @id @default(uuid())
+  tenantId  String // 多租户隔离字段
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  playerId  String? // 关联玩家(如果是玩家充值/提现/下注)
+  type      String // deposit(充值), withdraw(提现), bet(下注), win(派彩)
+  amount    Decimal  @db.Decimal(18, 6) // 金额
+  currency  String   @default("USDT")
+  status    String   @default("success") // success, pending, failed
+  txHash    String? // 区块链哈希或支付网关单号
+  createdAt DateTime @default(now())
+
+  player Player? @relation(fields: [playerId], references: [id])
+}
+
+// 6. 出金表 (Withdrawal - 提现申请 / 代付结果)
+// 纯电子记账：pending 不扣余额；代付成功回调后才扣 Player.balance 并写 Transaction(type=withdraw)。
+// 不创建任何平台内部资金账户，也不做内部划转。
+model Withdrawal {
+  id                String          @id @default(uuid())
+  tenantId          String
+  tenant            Tenant          @relation(fields: [tenantId], references: [id])
+  playerId          String?
+  player            Player?         @relation(fields: [playerId], references: [id], onDelete: SetNull)
+  amount            Decimal         @db.Decimal(18, 6)
+  currency          String          @default("USDT")
+  status            String          @default("pending") // pending, success, failed
+  walletAddress     String // 提现钱包地址
+  gatewayId         String? // 代付通道，用于回调验签
+  gateway           PaymentGateway? @relation(fields: [gatewayId], references: [id], onDelete: SetNull)
+  txHash            String? // 代付商交易号
+  approvals         Int             @default(0)
+  requiredApprovals Int             @default(1)
+  processedAt       DateTime?
+  createdAt         DateTime        @default(now())
+
+  @@index([tenantId, status])
+  @@index([playerId, createdAt])
+  @@index([gatewayId])
+}
+
+// 7. 后台管理员表 (AdminUser - 用于 Super Admin 和 租户老板登录)
+// role 决定后台可见的菜单与可调用的接口（RBAC 矩阵见 src/lib/rbac.ts）：
+//   super_admin：平台全部权限（含员工管理）
+//   finance    ：数据大盘 + 财务对账 + 出金审批
+//   tech       ：游戏商 / 游戏库技术配置（含后续 AI 日志）
+//   support    ：客服，仅数据大盘
+//   tenant_admin：租户老板，只能进 /tenant 控制台
+// AdminUser 由超管在 /admin/staff 创建，所以默认角色取最小权限的 support；
+// 建站脚本（prisma/seed.ts）会显式写入 super_admin。
+enum AdminRole {
+  super_admin
+  finance
+  tech
+  support
+  tenant_admin
+}
+
+model AdminUser {
+  id           String    @id @default(uuid())
+  tenantId     String? // 如果是空，代表平台员工；如果有值，代表是某个站的老板
+  username     String    @unique
+  passwordHash String
+  role         AdminRole @default(support)
+  createdAt    DateTime  @default(now())
+}
+
+// 8. 游戏商表 (GameProvider - GGR 点数结算配置)
+// 点数只用于分配 GGR（总下注额 - 总派彩额），绝不能乘以总流水 Turnover。
+model GameProvider {
+  id              String   @id @default(uuid())
+  name            String   @unique // 游戏商名称
+  upstreamPoint   Decimal  @db.Decimal(5, 4) // 上游点数，如 0.94（游戏商分走 6% GGR）
+  platformMarkup  Decimal  @db.Decimal(5, 4) // 平台加点，如 0.02（平台分走 2% GGR）
+  downstreamPoint Decimal  @db.Decimal(5, 4) // 下游点数，由 upstreamPoint - platformMarkup 计算写入
+  status          String   @default("active") // active, suspended（结算状态）
+  // 大厅展示控制：sortOrder 越大越靠前；isActive=false 时前台大厅与游戏商筛选 Tab 都不展示。
+  // 与 status 解耦：下架不影响历史注单结算。
+  sortOrder       Int      @default(0)
+  isActive        Boolean  @default(true)
+  // 首页【游戏商商标网格 / 品牌墙】独立开关：false 时只是不出现在大厅品牌墙，
+  // 展馆页与游戏目录照旧可用（想彻底下架请改 isActive）。
+  // 品牌墙内的顺序同样由 sortOrder 决定：数字越大越靠前。
+  showInShowcase  Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenantPoints TenantProviderPoint[]
+  betRecords   BetRecord[]
+  games        Game[]
+
+  @@index([status])
+  @@index([isActive, sortOrder])
+}
+
+// 8.1 游戏表 (Game - 从游戏商同步过来的游戏目录)
+// 同步以 [providerId, externalId] 为唯一键做 upsert：
+// 游戏名 / 品类会被上游覆盖，但后台设置的 sortOrder、isActive 不会被同步重置。
+model Game {
+  id         String       @id @default(uuid())
+  providerId String
+  provider   GameProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  externalId String // 游戏商侧的游戏编码，用于同步去重
+  name       String // 游戏名称，如 Mahjong Ways 2
+  category   String       @default("slot") // slot, live, fish（对应大厅分类）
+  iconUrl    String? // 上游封面图，缺失时前台用渐变色块占位
+  sortOrder  Int          @default(0) // 大厅同分类内的排序，越大越靠前
+  isActive   Boolean      @default(true) // 上架 / 下架
+  syncedAt   DateTime     @default(now()) // 最近一次同步时间
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  @@unique([providerId, externalId])
+  @@index([providerId, isActive])
+  @@index([isActive, sortOrder])
+  @@index([category, isActive])
+}
+
+// 9. 租户专属点数覆盖 (TenantProviderPoint)
+// 存在记录时，该租户在该游戏商下使用 customPoint 作为最终下游点数；
+// 不存在记录时，回退到 GameProvider 的全局 downstreamPoint。
+model TenantProviderPoint {
+  id          String       @id @default(uuid())
+  tenantId    String
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  providerId  String
+  provider    GameProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  customPoint Decimal      @db.Decimal(5, 4) // 专属最终下游点数，例如 0.9300
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@unique([tenantId, providerId])
+  @@index([providerId])
+}
+
+// 10. 注单表 (BetRecord - 历史结算快照)
+// snapshotPoint 等字段在玩家下注瞬间写入，后续后台修改点数不会重算历史账单。
+model BetRecord {
+  id         String       @id @default(uuid())
+  tenantId   String
+  tenant     Tenant       @relation(fields: [tenantId], references: [id])
+  providerId String
+  provider   GameProvider @relation(fields: [providerId], references: [id])
+  playerId   String?
+  player     Player?      @relation(fields: [playerId], references: [id])
+
+  externalId   String? // 游戏商注单号
+  currency     String  @default("USDT")
+  betAmount    Decimal @db.Decimal(18, 6) // 总下注额
+  payoutAmount Decimal @db.Decimal(18, 6) // 总派彩额
+  ggrAmount    Decimal @db.Decimal(18, 6) // 下注时 GGR = betAmount - payoutAmount
+
+  // 下注瞬间快照：历史账单唯一可信来源
+  snapshotPoint          Decimal @db.Decimal(5, 4) // 最终下游点数（专属优先）
+  snapshotUpstreamPoint  Decimal @db.Decimal(5, 4) // 当时上游点数
+  snapshotPlatformMarkup Decimal @db.Decimal(5, 4) // 当时实际平台点差 = 上游点数 - 最终下游点数
+
+  status    String    @default("settled") // settled, void
+  settledAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@unique([providerId, externalId]) // 防止游戏商回调重试造成重复注单
+  @@index([tenantId, createdAt])
+  @@index([providerId, createdAt])
+  @@index([playerId])
+}
+
+// 11. 支付网关形态
+// 与具体支付商（providerType）解耦，描述玩家最终如何完成支付。
+enum GatewayType {
+  REDIRECT_URL
+  DYNAMIC_QR
+  STATIC_QR
+  BANK_TRANSFER
+}
+
+// 12. 租户自有网关审核状态
+// 平台网关默认 APPROVED；租户自行接入的网关提交后为 PENDING，超管审核后变更。
+enum GatewayReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// 13. 支付网关 (PaymentGateway - 充值通道配置)
+// ownerId 为空代表平台公用网关；有值代表只允许该租户使用。
+// isPlatformGateway 区分平台提供的网关与租户自己接入的网关。
+// 费率均为小数，例如 0.005 = 0.5%；平台利润 = 售价 - 成本。
+model PaymentGateway {
+  id             String      @id @default(uuid())
+  name           String // 网关名称，如 USDT-TRC20、银行网银
+  providerType   String // usdt_trc20, usdt_erc20, tng, duitnow, sepa, payid, swift, bank_transfer, other
+  gatewayType    GatewayType @default(DYNAMIC_QR)
+  currency       String      @default("USDT")
+  walletAddress  String? // USDT 收款钱包地址（TRC20 / ERC20）；非 USDT 网关可为空
+  qrCodeImageUrl String? // STATIC_QR 的收款图片（http/https URL 或 data:image base64）
+  bankDetails    Json? // BANK_TRANSFER 的银行信息（户名、账号、SWIFT/BIC、IBAN、PayID 等）
+  endpoint       String // REDIRECT_URL / DYNAMIC_QR 的支付接口地址
+  apiKey         String // 回调验签密钥，接口只返回掩码
+
+  // 平台通道成本 / 对租户售价。代收、代付、结算三条业务线独立定价。
+  payinCostRate      Decimal @default(0) @db.Decimal(8, 6)
+  payinSellRate      Decimal @default(0) @db.Decimal(8, 6)
+  payoutCostRate     Decimal @default(0) @db.Decimal(8, 6)
+  payoutSellRate     Decimal @default(0) @db.Decimal(8, 6)
+  settlementCostRate Decimal @default(0) @db.Decimal(8, 6)
+  settlementSellRate Decimal @default(0) @db.Decimal(8, 6)
+
+  isPlatformGateway Boolean             @default(true)
+  reviewStatus      GatewayReviewStatus @default(APPROVED)
+  reviewNote        String?
+  reviewedAt        DateTime?
+
+  isActive Boolean @default(true)
+  ownerId  String? // null = 平台公用；有值 = 商户专属
+  owner    Tenant? @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  depositOrders DepositOrder[]
+  withdrawals   Withdrawal[]
+
+  @@index([ownerId, isActive])
+  @@index([isActive])
+  @@index([gatewayType, isActive])
+  @@index([isPlatformGateway, reviewStatus])
+}
+
+// 13. 充值订单 (DepositOrder - 玩家充值 / 上分)
+// status: pending -> success / failed。只有 pending -> success 的原子更新成功者才能给玩家加余额。
+model DepositOrder {
+  id        String         @id @default(uuid())
+  tenantId  String
+  tenant    Tenant         @relation(fields: [tenantId], references: [id])
+  playerId  String
+  player    Player         @relation(fields: [playerId], references: [id])
+  amount    Decimal        @db.Decimal(18, 6)
+  currency  String         @default("USDT")
+  status    String         @default("pending") // pending, success, failed
+  txHash    String? // 支付商交易号 / 区块链哈希
+  gatewayId String
+  gateway   PaymentGateway @relation(fields: [gatewayId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@unique([gatewayId, txHash])
+  @@index([tenantId, createdAt])
+  @@index([playerId, createdAt])
+  @@index([gatewayId, createdAt])
+  @@index([status])
+  @@index([txHash])
+}

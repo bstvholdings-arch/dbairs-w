@@ -1,69 +1,50 @@
-import Image from "next/image";
+import { connection } from "next/server";
 
-export default function Home() {
+import { loadLobbyData } from "@/lib/lobby-data";
+import { loadStorefront } from "@/lib/storefront-data";
+
+import { LobbyClient } from "./lobby-client";
+
+export const metadata = {
+  title: "DB AIRS | Player Lobby",
+  description:
+    "DB AIRS player lobby: hot slots, live casino and fishing games in one black-gold neon hall.",
+};
+
+export const instant = false;
+
+export default async function PlayerLobbyPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ tenant?: string | string[] }>;
+}) {
+  await connection();
+
+  const params = await searchParams;
+  const rawTenant = Array.isArray(params.tenant)
+    ? params.tenant[0]
+    : params.tenant;
+  // ?tenant=<id|子域名|域名>：后台「预览前台」与白标联调用，不传则按域名 / 会话兜底
+  const tenantKey =
+    typeof rawTenant === "string" && rawTenant.trim() ? rawTenant.trim() : null;
+
+  // 大厅首屏数据全部来自数据库（见 lib/lobby-data.ts）：
+  // - providers：上架中的游戏商 → 品牌墙
+  // - games：上架中的游戏，按 sortOrder 降序
+  // - storefront：租户的 themeColor + layoutConfig（见 lib/storefront-data.ts）
+  // 数据库不可用时返回空数组 / 默认金色主题，LobbyClient 会回退到内置游戏目录。
+  const [{ providers, games }, storefront] = await Promise.all([
+    loadLobbyData(),
+    loadStorefront(tenantKey),
+  ]);
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+    <LobbyClient
+      initialProviders={providers}
+      initialGames={games}
+      storefront={storefront}
+    />
   );
 }
+
+

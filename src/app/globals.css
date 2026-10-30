@@ -3,6 +3,53 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+
+  /*
+   * 前台主色（Storefront themeColor）的默认值：经典金色。
+   * / 与 /provider/[code] 的根节点会用内联样式覆盖成租户配置的颜色，
+   * 颜色派生（高光 / 深端 / 文字色 / 透明度阶梯）见 src/lib/storefront.ts。
+   * 默认值留在这里，是为了让任何忘记挂根节点的场景仍然渲染成金色而不是透明。
+   */
+  --sf-brand: #d4af37;
+  --sf-soft: #f0d27c;
+  --sf-mid: #e3c469;
+  --sf-pale: #f8e9b0;
+  --sf-deep: #b8912f;
+  --sf-ink: #171105;
+
+  /*
+   * 主题引擎的三个核心变量（需求命名）：
+   * 后台保存的 { hex, brightness } 会在 / 与 /provider/[code] 的根节点上
+   * 被内联样式覆盖成计算后的 hsl()（见 src/lib/storefront.ts 的 buildStorefrontTheme）。
+   * 这里的默认值 = 金色 #d4af37 + brightness 50%，保证没有注入时也渲染成金色：
+   *   --primary      = hsl(46 65% 52%)   主色
+   *   --primary-soft = 明度 +30%          Hover / 发光
+   *   --primary-dark = 明度 -30%          卡片底色 / 阴影
+   */
+  --primary: hsl(46 65% 52%);
+  --primary-soft: hsl(46 72% 67%);
+  --primary-dark: hsl(46 61% 37%);
+  --primary-ink: #171105;
+
+  /*
+   * 透明度阶梯：用于任意值阴影 / 径向渐变，例如
+   * shadow-[0_0_15px_var(--sf-a50)]、radial-gradient(...,var(--sf-a12),transparent)。
+   * 只能逐个写死 rgb(...)，不能写成 rgb(var(--sf-brand-rgb)/0.5)：
+   * 自定义属性在声明处（:root）就会完成替换，拿不到子树里的覆盖值。
+   */
+  --sf-a10: rgb(212 175 55 / 0.1);
+  --sf-a12: rgb(212 175 55 / 0.12);
+  --sf-a14: rgb(212 175 55 / 0.14);
+  --sf-a50: rgb(212 175 55 / 0.5);
+  --sf-a65: rgb(212 175 55 / 0.65);
+  --sf-a80: rgb(212 175 55 / 0.8);
+  --sf-a85: rgb(212 175 55 / 0.85);
+  --sf-a90: rgb(212 175 55 / 0.9);
+  --sf-a95: rgb(212 175 55 / 0.95);
+  --sf-soft-a55: rgb(240 210 124 / 0.55);
+  --sf-soft-a90: rgb(240 210 124 / 0.9);
+  --sf-soft-a95: rgb(240 210 124 / 0.95);
+  --sf-soft-a100: rgb(240 210 124 / 1);
 }
 
 @theme inline {
@@ -10,6 +57,28 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  /*
+   * 主色进 Tailwind 主题：这样 bg-brand/15、text-brand-soft、from-brand-deep 等
+   * 全部工具类都会编译成 color-mix(..., var(--sf-brand) N%, transparent)，
+   * 根节点一改内联变量，整站主色即时生效。
+   */
+  --color-brand: var(--sf-brand);
+  --color-brand-soft: var(--sf-soft);
+  --color-brand-mid: var(--sf-mid);
+  --color-brand-pale: var(--sf-pale);
+  --color-brand-deep: var(--sf-deep);
+  --color-brand-ink: var(--sf-ink);
+
+  /*
+   * 主题引擎核心变量的 Tailwind 别名：bg-primary、text-primary-soft、
+   * border-primary-dark、from-primary-soft 等工具类直接可用；
+   * 任意值写法 text-[var(--primary)] / bg-[var(--primary-dark)] 同样生效。
+   */
+  --color-primary: var(--primary);
+  --color-primary-soft: var(--primary-soft);
+  --color-primary-dark: var(--primary-dark);
+  --color-primary-ink: var(--primary-ink);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -23,4 +92,153 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/*
+ * 大厅 Live Jackpot 数字跳动。
+ * 每次奖池上涨时重挂载数字节点（key = tick）触发一次：
+ * jackpot-pop 让数字「翻上来 + 高光闪一下」，jackpot-rise 让增量胶囊滑入。
+ * 见 src/app/lobby-client.tsx。
+ */
+@keyframes jackpot-pop {
+  0% {
+    transform: translateY(0.42em) scale(0.94);
+    opacity: 0.35;
+    filter: brightness(1.9);
+  }
+  55% {
+    transform: translateY(-0.06em) scale(1.03);
+    opacity: 1;
+    filter: brightness(1.25);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+    filter: brightness(1);
+  }
+}
+
+@keyframes jackpot-rise {
+  0% {
+    transform: translateY(0.5em);
+    opacity: 0;
+  }
+  40% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/*
+ * 游戏卡片右上角「在线人数」胶囊：人数每 2 ~ 3 秒跳动一次，
+ * 数字节点用 key = tick 重挂载触发下面这段翻字动画。
+ * 见 src/components/lobby/use-online-count.ts + game-card.tsx。
+ */
+@keyframes online-tick {
+  0% {
+    transform: translateY(0.35em);
+    opacity: 0.35;
+    filter: brightness(1.75);
+  }
+  60% {
+    transform: translateY(-0.05em);
+    opacity: 1;
+    filter: brightness(1.18);
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+    filter: brightness(1);
+  }
+}
+
+/* 金牌 / 礼盒外圈的呼吸光晕。 */
+@keyframes halo-breathe {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(0.92);
+  }
+  50% {
+    opacity: 0.95;
+    transform: scale(1.12);
+  }
+}
+
+/* 礼盒上的两颗星芒。 */
+@keyframes gift-sparkle {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/*
+ * 大厅 Hero 轮播的「自动播放进度条」：当前指示点里的金色细条用 5 秒走满，
+ * 时长与 hero-carousel.tsx 的 HERO_ROTATE_MS 保持一致（改一处记得同步另一处）。
+ */
+@keyframes hero-progress {
+  from {
+    width: 0%;
+  }
+  to {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  @keyframes jackpot-pop {
+    from,
+    to {
+      transform: none;
+      filter: none;
+    }
+  }
+
+  @keyframes jackpot-rise {
+    from,
+    to {
+      transform: none;
+      opacity: 1;
+    }
+  }
+
+  @keyframes online-tick {
+    from,
+    to {
+      transform: none;
+      opacity: 1;
+      filter: none;
+    }
+  }
+
+  @keyframes halo-breathe {
+    from,
+    to {
+      transform: none;
+      opacity: 0.7;
+    }
+  }
+
+  @keyframes gift-sparkle {
+    from,
+    to {
+      opacity: 1;
+    }
+  }
+
+  /* 减弱动态效果时不跑进度条，直接把当前点填满。 */
+  @keyframes hero-progress {
+    from,
+    to {
+      width: 100%;
+    }
+  }
 }

@@ -1,0 +1,608 @@
+"use client";
+
+import { useRouter } from "next/navigation";
+import {
+  useEffect,
+  useId,
+  useState,
+  type FormEvent,
+} from "react";
+
+import { useLanguage } from "@/components/LanguageProvider";
+import {
+  GATEWAY_BANK_FIELD_LABEL_KEYS,
+  GATEWAY_BANK_FIELD_PLACEHOLDER_KEYS,
+  GATEWAY_PAYMENT_TYPE_HINT_KEYS,
+  GATEWAY_PAYMENT_TYPE_LABEL_KEYS,
+  GATEWAY_PROVIDER_LABEL_KEYS,
+} from "@/lib/i18n-keys";
+import type { TFunction } from "@/lib/i18n-types";
+import {
+  EMPTY_GATEWAY_BANK_DETAILS,
+  GATEWAY_BANK_DETAIL_FIELDS,
+  normalizeGatewayBankDetails,
+  validateGatewayBankDetails,
+  type GatewayBankDetails,
+} from "@/lib/payment-gateway-bank";
+import {
+  defaultGatewayCurrencyForProvider,
+  defaultGatewayTypeForProvider,
+  GATEWAY_PROVIDER_TYPES,
+  GATEWAY_TYPES,
+  type GatewayProviderType,
+  type GatewayTypeValue,
+} from "@/lib/payment-gateway-constants";
+import { normalizeGatewayQrCodeImageUrl } from "@/lib/payment-gateway-qr";
+import type { TenantOwnGateway } from "@/lib/tenant-payment-gateways";
+
+const inputClass =
+  "mt-1.5 h-10 w-full rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-neutral-200 outline-none transition-colors focus:border-[#d4af37]/50 focus:ring-1 focus:ring-[#d4af37]/30";
+
+type TenantGatewayFormValues = {
+  name: string;
+  providerType: GatewayProviderType;
+  gatewayType: GatewayTypeValue;
+  currency: string;
+  walletAddress: string;
+  qrCodeImageUrl: string;
+  bankDetails: GatewayBankDetails;
+  endpoint: string;
+  apiKey: string;
+};
+
+type TenantGatewayCreateResponse = {
+  success?: boolean;
+  gateway?: TenantOwnGateway;
+  error?: string;
+};
+
+function validateForm(form: TenantGatewayFormValues, t: TFunction) {
+  const name = form.name.trim();
+  const currency = form.currency.trim().toUpperCase();
+  const walletAddress = form.walletAddress.trim();
+  const endpoint = form.endpoint.trim();
+  const apiKey = form.apiKey.trim();
+  const isUsdt = form.providerType.startsWith("usdt_");
+
+  if (!name) {
+    return t("gateway.validation.nameRequired");
+  }
+
+  if (name.length > 80) {
+    return t("gateway.validation.nameMax");
+  }
+
+  if (!/^[A-Z]{2,10}$/.test(currency)) {
+    return t("gateway.validation.currencyInvalid");
+  }
+
+  if (isUsdt) {
+    if (form.gatewayType !== "DYNAMIC_QR") {
+      return t("gateway.validation.usdtDynamic");
+    }
+
+    if (currency !== "USDT") {
+      return t("gateway.validation.usdtCurrency");
+    }
+
+    if (!walletAddress) {
+      return t("gateway.validation.usdtWallet");
+    }
+
+    if (
+      form.providerType === "usdt_trc20" &&
+      !/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(walletAddress)
+    ) {
+      return t("gateway.validation.trc20Invalid");
+    }
+
+    if (
+      form.providerType === "usdt_erc20" &&
+      !/^0x[a-fA-F0-9]{40}$/.test(walletAddress)
+    ) {
+      return t("gateway.validation.erc20Invalid");
+    }
+  }
+
+  if (form.gatewayType === "STATIC_QR") {
+    if (!normalizeGatewayQrCodeImageUrl(form.qrCodeImageUrl)) {
+      return t("gateway.validation.staticQrRequired");
+    }
+  }
+
+  if (form.gatewayType === "BANK_TRANSFER") {
+    const bankError = validateGatewayBankDetails(
+      normalizeGatewayBankDetails(form.bankDetails),
+    );
+
+    if (bankError) {
+      return bankError.includes("户名")
+        ? t("gateway.validation.bankNameRequired")
+        : t("gateway.validation.bankAccountRequired");
+    }
+  }
+
+  const endpointRequired =
+    form.gatewayType === "REDIRECT_URL" ||
+    (form.gatewayType === "DYNAMIC_QR" && !isUsdt);
+
+  if (endpointRequired && !endpoint) {
+    return t("gateway.validation.endpointRequired");
+  }
+
+  if (endpointRequired && endpoint) {
+    try {
+      const url = new URL(endpoint);
+
+      if (url.protocol !== "http:" && url.protocol !== "https:") {
+        return t("gateway.validation.endpointProtocol");
+      }
+    } catch {
+      return t("gateway.validation.endpointInvalid");
+    }
+  }
+
+  if (
+    (form.gatewayType === "REDIRECT_URL" ||
+      form.gatewayType === "DYNAMIC_QR") &&
+    !apiKey
+  ) {
+    return t("gateway.validation.apiKeyRequired");
+  }
+
+  if (apiKey.length > 512) {
+    return t("gateway.validation.apiKeyMax");
+  }
+
+  return "";
+}
+
+export function TenantGatewayFormModal({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: (gateway: TenantOwnGateway) => void;
+}) {
+  const router = useRouter();
+  const { t } = useLanguage();
+  const titleId = useId();
+  const [form, setForm] = useState<TenantGatewayFormValues>({
+    name: "",
+    providerType: "tng",
+    gatewayType: "STATIC_QR",
+    currency: "MYR",
+    walletAddress: "",
+    qrCodeImageUrl: "",
+    bankDetails: { ...EMPTY_GATEWAY_BANK_DETAILS },
+    endpoint: "",
+    apiKey: "",
+  });
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && !submitting) {
+        onClose();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose, submitting]);
+
+  function updateField<Key extends keyof TenantGatewayFormValues>(
+    field: Key,
+    value: TenantGatewayFormValues[Key],
+  ) {
+    setForm((previous) => ({ ...previous, [field]: value }));
+  }
+
+  function handleProviderTypeChange(providerType: GatewayProviderType) {
+    setForm((previous) => ({
+      ...previous,
+      providerType,
+      gatewayType: defaultGatewayTypeForProvider(providerType),
+      currency: defaultGatewayCurrencyForProvider(providerType),
+    }));
+  }
+
+  function handleBankDetailChange(
+    field: keyof GatewayBankDetails,
+    value: string,
+  ) {
+    setForm((previous) => ({
+      ...previous,
+      bankDetails: { ...previous.bankDetails, [field]: value },
+    }));
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+
+    const validation = validateForm(form, t);
+
+    if (validation) {
+      setError(validation);
+      return;
+    }
+
+    setSubmitting(true);
+    const isUsdt = form.providerType.startsWith("usdt_");
+    const isEndpointGateway =
+      form.gatewayType === "REDIRECT_URL" ||
+      form.gatewayType === "DYNAMIC_QR";
+
+    try {
+      const response = await fetch("/api/tenant/gateways", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: form.name.trim(),
+          providerType: form.providerType,
+          gatewayType: form.gatewayType,
+          currency: form.currency.trim().toUpperCase(),
+          walletAddress: isUsdt ? form.walletAddress.trim() || null : null,
+          qrCodeImageUrl:
+            form.gatewayType === "STATIC_QR"
+              ? normalizeGatewayQrCodeImageUrl(form.qrCodeImageUrl) || null
+              : null,
+          bankDetails:
+            form.gatewayType === "BANK_TRANSFER"
+              ? normalizeGatewayBankDetails(form.bankDetails)
+              : null,
+          endpoint: isEndpointGateway ? form.endpoint.trim() : "",
+          apiKey: isEndpointGateway ? form.apiKey.trim() : "",
+        }),
+      });
+      const data: TenantGatewayCreateResponse = await response
+        .json()
+        .catch(() => ({}) as TenantGatewayCreateResponse);
+
+      if (response.status === 401) {
+        router.replace("/login?next=/tenant/payments");
+        return;
+      }
+
+      if (!response.ok || !data.success || !data.gateway) {
+        setError(data.error || t("tenantGateway.error.submitFailed"));
+        return;
+      }
+
+      onCreated(data.gateway);
+    } catch {
+      setError(t("common.networkError"));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/80 p-0 backdrop-blur-sm sm:items-center sm:p-6"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !submitting) {
+          onClose();
+        }
+      }}
+    >
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-t-2xl border border-[#d4af37]/20 bg-[#0a0a0a] shadow-[0_30px_120px_-30px_rgba(212,175,55,0.35)] sm:rounded-2xl"
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-[#d4af37]/10 px-5 py-4">
+          <div>
+            <p className="text-[9px] uppercase tracking-[0.24em] text-[#d4af37]/60">
+              {t("tenantGateway.eyebrow")}
+            </p>
+            <h2 id={titleId} className="mt-1 text-lg font-semibold text-white">
+              {t("tenantGateway.title")}
+            </h2>
+            <p className="mt-1 text-[10px] leading-5 text-neutral-600">
+              {t("tenantGateway.subtitle")}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            aria-label={t("common.close")}
+            className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 text-neutral-500 transition-colors hover:border-[#d4af37]/30 hover:text-neutral-200 disabled:opacity-50"
+          >
+            ×
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit}>
+          <div className="space-y-4 px-5 py-5">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="block">
+                <span className="text-[10px] uppercase tracking-[0.16em] text-neutral-600">
+                  {t("tenantGateway.form.name")}
+                </span>
+                <input
+                  value={form.name}
+                  onChange={(event) => updateField("name", event.target.value)}
+                  maxLength={80}
+                  placeholder={t("tenantGateway.form.namePlaceholder")}
+                  className={inputClass}
+                />
+              </label>
+
+              <label className="block">
+                <span className="text-[10px] uppercase tracking-[0.16em] text-neutral-600">
+                  {t("tenantGateway.form.providerType")}
+                </span>
+                <select
+                  value={form.providerType}
+                  onChange={(event) =>
+                    handleProviderTypeChange(
+                      event.target.value as GatewayProviderType,
+                    )
+                  }
+                  className={inputClass}
+                >
+                  {GATEWAY_PROVIDER_TYPES.map((providerType) => (
+                    <option
+                      key={providerType}
+                      value={providerType}
+                      className="bg-[#0a0a0a]"
+                    >
+                      {t(GATEWAY_PROVIDER_LABEL_KEYS[providerType])}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="text-[10px] uppercase tracking-[0.16em] text-neutral-600">
+                  {t("tenantGateway.form.gatewayType")}
+                </span>
+                <select
+                  value={form.gatewayType}
+                  onChange={(event) =>
+                    updateField(
+                      "gatewayType",
+                      event.target.value as GatewayTypeValue,
+                    )
+                  }
+                  className={inputClass}
+                >
+                  {GATEWAY_TYPES.map((gatewayType) => (
+                    <option
+                      key={gatewayType}
+                      value={gatewayType}
+                      disabled={
+                        form.providerType.startsWith("usdt_") &&
+                        gatewayType !== "DYNAMIC_QR"
+                      }
+                      className="bg-[#0a0a0a]"
+                    >
+                      {t(GATEWAY_PAYMENT_TYPE_LABEL_KEYS[gatewayType])}
+                    </option>
+                  ))}
+                </select>
+                <span className="mt-1.5 block text-[10px] leading-5 text-neutral-600">
+                  {t(GATEWAY_PAYMENT_TYPE_HINT_KEYS[form.gatewayType])}
+                </span>
+              </label>
+
+              <label className="block">
+                <span className="text-[10px] uppercase tracking-[0.16em] text-neutral-600">
+                  {t("tenantGateway.form.currency")}
+                </span>
+                <input
+                  value={form.currency}
+                  onChange={(event) =>
+                    updateField("currency", event.target.value.toUpperCase())
+                  }
+                  maxLength={10}
+                  spellCheck={false}
+                  autoComplete="off"
+                  placeholder="MYR / EUR / AUD / USD / USDT"
+                  className={`${inputClass} font-mono uppercase`}
+                />
+                <span className="mt-1.5 block text-[10px] leading-5 text-neutral-600">
+                  {t("tenantGateway.form.currencyHint")}
+                </span>
+              </label>
+            </div>
+
+            {form.gatewayType === "DYNAMIC_QR" &&
+            form.providerType.startsWith("usdt_") ? (
+              <label className="block">
+                <span className="text-[10px] uppercase tracking-[0.16em] text-neutral-600">
+                  {t("tenantGateway.form.wallet")}
+                </span>
+                <input
+                  value={form.walletAddress}
+                  onChange={(event) =>
+                    updateField("walletAddress", event.target.value)
+                  }
+                  maxLength={200}
+                  spellCheck={false}
+                  autoComplete="off"
+                  placeholder={
+                    form.providerType === "usdt_erc20"
+                      ? t("tenantGateway.form.erc20Placeholder")
+                      : t("tenantGateway.form.trc20Placeholder")
+                  }
+                  className={`${inputClass} font-mono`}
+                />
+                <span className="mt-1.5 block text-[10px] leading-5 text-neutral-600">
+                  {t("tenantGateway.form.walletHint")}
+                </span>
+              </label>
+            ) : null}
+
+            {form.gatewayType === "STATIC_QR" ? (
+              <label className="block">
+                <span className="text-[10px] uppercase tracking-[0.16em] text-neutral-600">
+                  {t("tenantGateway.form.qrUrl")}
+                </span>
+                <input
+                  value={form.qrCodeImageUrl}
+                  onChange={(event) =>
+                    updateField("qrCodeImageUrl", event.target.value)
+                  }
+                  spellCheck={false}
+                  autoComplete="off"
+                  placeholder="https://cdn.example.com/my-qr.png"
+                  className={inputClass}
+                />
+                <span className="mt-1.5 block text-[10px] leading-5 text-neutral-600">
+                  {t("tenantGateway.form.qrUrlHint")}
+                </span>
+              </label>
+            ) : null}
+
+            {form.gatewayType === "BANK_TRANSFER" ? (
+              <div className="rounded-xl border border-[#d4af37]/15 bg-[#d4af37]/[0.03] p-3.5">
+                <span className="text-[10px] uppercase tracking-[0.16em] text-neutral-600">
+                  {t("tenantGateway.form.bankInfo")}
+                </span>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  {GATEWAY_BANK_DETAIL_FIELDS.map((field) =>
+                    field.multiline ? (
+                      <label key={field.key} className="block sm:col-span-2">
+                        <span className="text-[10px] uppercase tracking-[0.16em] text-neutral-600">
+                          {t(GATEWAY_BANK_FIELD_LABEL_KEYS[field.key])}
+                        </span>
+                        <textarea
+                          value={form.bankDetails[field.key]}
+                          onChange={(event) =>
+                            handleBankDetailChange(
+                              field.key,
+                              event.target.value,
+                            )
+                          }
+                          maxLength={field.maxLength}
+                          rows={3}
+                          placeholder={t(
+                            GATEWAY_BANK_FIELD_PLACEHOLDER_KEYS[field.key],
+                          )}
+                          className={`${inputClass} h-auto min-h-20 py-2`}
+                        />
+                      </label>
+                    ) : (
+                      <label key={field.key} className="block">
+                        <span className="text-[10px] uppercase tracking-[0.16em] text-neutral-600">
+                          {t(GATEWAY_BANK_FIELD_LABEL_KEYS[field.key])}
+                        </span>
+                        <input
+                          value={form.bankDetails[field.key]}
+                          onChange={(event) =>
+                            handleBankDetailChange(
+                              field.key,
+                              event.target.value,
+                            )
+                          }
+                          maxLength={field.maxLength}
+                          spellCheck={false}
+                          autoComplete="off"
+                          placeholder={t(
+                            GATEWAY_BANK_FIELD_PLACEHOLDER_KEYS[field.key],
+                          )}
+                          className={inputClass}
+                        />
+                      </label>
+                    ),
+                  )}
+                </div>
+                <p className="mt-2 text-[10px] leading-5 text-neutral-600">
+                  {t("tenantGateway.form.bankHint")}
+                </p>
+              </div>
+            ) : null}
+
+            {form.gatewayType === "REDIRECT_URL" ||
+            form.gatewayType === "DYNAMIC_QR" ? (
+              <>
+                <label className="block">
+                  <span className="text-[10px] uppercase tracking-[0.16em] text-neutral-600">
+                    {form.gatewayType === "REDIRECT_URL"
+                      ? t("tenantGateway.form.endpointRedirect")
+                      : t("tenantGateway.form.endpointQr")}
+                  </span>
+                  <input
+                    value={form.endpoint}
+                    onChange={(event) =>
+                      updateField("endpoint", event.target.value)
+                    }
+                    placeholder="https://pay.example.com/checkout"
+                    className={inputClass}
+                  />
+                  <span className="mt-1.5 block text-[10px] leading-5 text-neutral-600">
+                    {form.gatewayType === "REDIRECT_URL"
+                      ? t("tenantGateway.form.endpointRedirectHint")
+                      : form.providerType.startsWith("usdt_")
+                        ? t("tenantGateway.form.endpointUsdtHint")
+                        : t("tenantGateway.form.endpointQrHint")}
+                  </span>
+                </label>
+
+                <label className="block">
+                  <span className="text-[10px] uppercase tracking-[0.16em] text-neutral-600">
+                    {t("tenantGateway.form.apiKey")}
+                  </span>
+                  <input
+                    type="password"
+                    value={form.apiKey}
+                    onChange={(event) =>
+                      updateField("apiKey", event.target.value)
+                    }
+                    autoComplete="new-password"
+                    placeholder={t("tenantGateway.form.apiKeyPlaceholder")}
+                    className={inputClass}
+                  />
+                  <span className="mt-1.5 block text-[10px] leading-5 text-neutral-600">
+                    {t("tenantGateway.form.apiKeyHint")}
+                  </span>
+                </label>
+              </>
+            ) : null}
+
+            {error ? (
+              <div className="flex items-start gap-2 rounded-lg border border-red-400/20 bg-red-400/[0.06] px-3 py-2.5 text-[11px] leading-5 text-red-300">
+                <span className="mt-0.5">!</span>
+                <span>{error}</span>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="flex flex-col-reverse gap-2 border-t border-[#d4af37]/10 bg-[#080808]/80 px-5 py-4 sm:flex-row sm:justify-end">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={submitting}
+              className="h-10 rounded-xl border border-white/[0.08] px-4 text-xs text-neutral-400 transition-colors hover:border-[#d4af37]/20 hover:text-neutral-200 disabled:opacity-50"
+            >
+              {t("common.cancel")}
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="h-10 rounded-xl bg-gradient-to-r from-[#b8912f] via-[#f0d27c] to-[#b8912f] px-5 text-xs font-bold text-[#171105] shadow-[0_12px_32px_-12px_rgba(212,175,55,0.8)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {submitting
+                ? t("common.submitting")
+                : t("tenantGateway.form.submit")}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
