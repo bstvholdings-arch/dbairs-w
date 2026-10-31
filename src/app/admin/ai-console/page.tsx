@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { connection } from "next/server";
 
+import { listAgentFaqTenants } from "@/lib/ai/faqs";
 import {
   listAgentConfigs,
   loadRecentChatLogsByAgent,
@@ -35,11 +36,12 @@ export default async function AdminAiConsolePage() {
     redirect(`${homePathForRole(user.role)}?denied=aiConsole`);
   }
 
-  const [snapshot, logsByAgent, settings, agents] = await Promise.all([
+  const [snapshot, logsByAgent, settings, agents, tenants] = await Promise.all([
     loadWarRoomSnapshot("open"),
     loadRecentChatLogsByAgent({ take: 40 }),
     getAiSettingsSnapshot(),
     listAgentConfigs(),
+    listAgentFaqTenants(),
   ]);
 
   // listAgentConfigs 已保证 5 个助手都存在；直接复用，避免再对 sales 做一次并发 upsert。
@@ -53,6 +55,7 @@ export default async function AdminAiConsolePage() {
       initialLogsByAgent={logsByAgent}
       initialSettings={settings}
       initialAgents={agents}
+      initialTenants={tenants}
       cloudEnabled={cloudEnabled}
       modelLabel={cloudEnabled ? settings.model : null}
     />

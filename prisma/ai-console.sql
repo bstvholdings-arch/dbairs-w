@@ -78,6 +78,23 @@ CREATE TABLE IF NOT EXISTS "AiSettings" (
   CONSTRAINT "AiSettings_pkey" PRIMARY KEY ("id")
 );
 
+-- 5 个助手各自的 FAQ 知识库。tenantId 为空代表平台级，有值代表商户级。
+CREATE TABLE IF NOT EXISTS "AgentFaq" (
+  "id" TEXT NOT NULL,
+  "agentType" TEXT NOT NULL DEFAULT 'sales',
+  "question" TEXT NOT NULL,
+  "answer" TEXT NOT NULL,
+  "tenantId" TEXT,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL,
+  CONSTRAINT "AgentFaq_pkey" PRIMARY KEY ("id")
+);
+
+CREATE INDEX IF NOT EXISTS "AgentFaq_agentType_tenantId_updatedAt_idx"
+  ON "AgentFaq"("agentType", "tenantId", "updatedAt");
+CREATE INDEX IF NOT EXISTS "AgentFaq_tenantId_idx"
+  ON "AgentFaq"("tenantId");
+
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -87,6 +104,15 @@ BEGIN
       ADD CONSTRAINT "AiChatLog_leadId_fkey"
       FOREIGN KEY ("leadId") REFERENCES "LeadRecord"("id")
       ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'AgentFaq_tenantId_fkey'
+  ) THEN
+    ALTER TABLE "AgentFaq"
+      ADD CONSTRAINT "AgentFaq_tenantId_fkey"
+      FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id")
+      ON DELETE CASCADE ON UPDATE CASCADE;
   END IF;
 END
 $$;

@@ -197,6 +197,28 @@ export function LobbyClient({
     void refreshPlayer();
   }, [refreshPlayer]);
 
+  // 从游戏商页面返回 / 切回大厅标签页时重新校准余额，
+  // 避免玩家在别处充值后仍看到旧余额。
+  useEffect(() => {
+    function syncPlayer() {
+      void refreshPlayer();
+    }
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        syncPlayer();
+      }
+    }
+
+    window.addEventListener("focus", syncPlayer);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("focus", syncPlayer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [refreshPlayer]);
+
   // 头像下拉：点击外部或按 Esc 关闭。
   useEffect(() => {
     if (!accountMenuOpen) {

@@ -175,7 +175,9 @@ export function PlayerAuthForm({
         return;
       }
 
-      router.replace(safeNext || "/player/profile");
+      // 指令要求登录 / 注册后回大厅；排行榜、推广等入口会通过 ?next=
+      // 明确指定要回到的玩家中心 Tab，这里只负责兜底。
+      router.replace(safeNext || "/");
       router.refresh();
     } catch {
       setErrorKey("common.networkError");

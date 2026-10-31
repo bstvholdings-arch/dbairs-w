@@ -37,7 +37,7 @@ export default async function PlayerLoginPage({
   const session = await getPlayerSessionFromCookies();
 
   if (session) {
-    redirect(nextPath || "/player/profile");
+    redirect(nextPath || "/");
   }
 
   return (

@@ -2,6 +2,7 @@ import type {
   AiConsoleAgentName,
   ReasonCount,
 } from "@/lib/ai/constants";
+import type { AgentFaqSnapshot } from "@/lib/ai/faq-types";
 import type {
   AiAgentConfigSnapshot,
   SerializedAiChatLog,
@@ -28,6 +29,8 @@ export type ChatMessage = {
   fallback?: boolean;
   /** 实际调用的模型，展示在助手气泡下方。 */
   model?: string;
+  /** 本轮注入 System Prompt 的 FAQ 数量。 */
+  faqCount?: number;
 };
 
 export type LeadsResponse = {
@@ -49,6 +52,8 @@ export type ChatResponse = {
   failureReasonSaved?: boolean;
   /** 「新对话」首轮由服务端返回的新上下文起点，后续请求用它过滤历史。 */
   contextStartedAt?: string | null;
+  /** 本轮命中的 FAQ（本地规则兜底时为空）。 */
+  faqMatches?: { id: string; question: string }[];
   error?: string;
 };
 
@@ -83,6 +88,17 @@ export type AiAgentsResponse = {
   success?: boolean;
   agent?: AiAgentConfigSnapshot;
   agents?: AiAgentConfigSnapshot[];
+  error?: string;
+};
+
+export type AiFaqsResponse = {
+  faqs?: AgentFaqSnapshot[];
+  error?: string;
+};
+
+export type AiFaqResponse = {
+  success?: boolean;
+  faq?: AgentFaqSnapshot;
   error?: string;
 };
 

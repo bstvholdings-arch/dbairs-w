@@ -39,6 +39,7 @@ model Tenant {
   depositOrders    DepositOrder[]
   referralRewards  ReferralReward[]
   dailyBonusClaims DailyBonusClaim[]
+  agentFaqs        AgentFaq[]
 }
 
 // 2. 套餐表 (Plan - 标准版/高阶版配置)
@@ -453,6 +454,23 @@ model AiSettings {
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// 17.1 AI 助手专属知识库 (AgentFaq)
+// tenantId 为空 = 平台级 FAQ（所有对话可用）；有值 = 指定商户 FAQ。
+// 检索时平台级与当前商户级 FAQ 会一起参与匹配，最多取 3 条拼入 System Prompt。
+model AgentFaq {
+  id        String   @id @default(uuid())
+  agentType String   @default("sales") // sales, tech, finance, audit, strategist
+  question  String   @db.Text
+  answer    String   @db.Text
+  tenantId  String?
+  tenant    Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([agentType, tenantId, updatedAt])
+  @@index([tenantId])
 }
 
 // 17. AI 智能体配置 (AgentConfig)

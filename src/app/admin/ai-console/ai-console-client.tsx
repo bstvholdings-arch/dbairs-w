@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
 import type { AiProviderValue } from "@/lib/ai/constants";
+import type { AgentFaqTenantOption } from "@/lib/ai/faq-types";
 import type {
   AgentChatLogMap,
   AiAgentConfigSnapshot,
@@ -38,6 +39,7 @@ export function AiConsoleClient({
   initialLogsByAgent,
   initialSettings,
   initialAgents,
+  initialTenants,
   cloudEnabled,
   modelLabel,
 }: {
@@ -46,6 +48,7 @@ export function AiConsoleClient({
   initialLogsByAgent: AgentChatLogMap;
   initialSettings: AiSettingsSnapshot;
   initialAgents: AiAgentConfigSnapshot[];
+  initialTenants: AgentFaqTenantOption[];
   cloudEnabled: boolean;
   modelLabel: string | null;
 }) {
@@ -136,6 +139,7 @@ export function AiConsoleClient({
         <AssistantChat
           agents={agents}
           initialLogsByAgent={initialLogsByAgent}
+          tenants={initialTenants}
           cloudEnabled={runtimeCloud}
           runtimeModel={runtimeModel}
           runtimeProvider={runtimeProvider}

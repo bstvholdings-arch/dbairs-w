@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
 import {
@@ -10,12 +10,14 @@ import {
   type AiConsoleAgentName,
   type AiProviderValue,
 } from "@/lib/ai/constants";
+import type { AgentFaqTenantOption } from "@/lib/ai/faq-types";
 import type {
   AgentChatLogMap,
   AiAgentConfigSnapshot,
 } from "@/lib/ai/records";
 import type { TranslationKey } from "@/lib/i18n-types";
 
+import { FaqDrawer } from "./faq-drawer";
 import {
   AGENT_COPY_KEYS,
   type ChatMessage,
@@ -117,12 +119,14 @@ function formatTime(value: string, locale: "zh-CN" | "en-US") {
 export function AssistantChat({
   agents,
   initialLogsByAgent,
+  tenants,
   cloudEnabled,
   runtimeModel,
   runtimeProvider,
 }: {
   agents: AiAgentConfigSnapshot[];
   initialLogsByAgent: AgentChatLogMap;
+  tenants: AgentFaqTenantOption[];
   cloudEnabled: boolean;
   runtimeModel: string | null;
   runtimeProvider: AiProviderValue;
@@ -131,6 +135,8 @@ export function AssistantChat({
   const locale = language === "zh" ? "zh-CN" : "en-US";
   const [activeAgent, setActiveAgent] =
     useState<AiConsoleAgentName>("sales");
+  const [faqOpen, setFaqOpen] = useState(false);
+  const [faqTenantId, setFaqTenantId] = useState("");
   const [messagesByAgent, setMessagesByAgent] = useState<AgentMessageMap>(
     () => messagesFromLogs(initialLogsByAgent),
   );
@@ -193,6 +199,8 @@ export function AssistantChat({
       [agentName]: value,
     }));
   }
+
+  const closeFaqDrawer = useCallback(() => setFaqOpen(false), []);
 
   function startNewChat(agentName: AiConsoleAgentName) {
     if (sendingByAgent[agentName]) {
@@ -265,6 +273,7 @@ export function AssistantChat({
           resetContext: resetContextRef.current[agentName] === true,
           contextStartedAt:
             contextStartedAtRef.current[agentName] || undefined,
+          tenantId: faqTenantId || null,
         }),
       });
       const data = (await response.json().catch(() => ({}))) as ChatResponse;
@@ -288,6 +297,7 @@ export function AssistantChat({
             createdAt: reply.createdAt,
             fallback: data.fallback,
             model: data.model,
+            faqCount: data.faqMatches?.length ?? 0,
           },
         ],
       }));
@@ -320,7 +330,8 @@ export function AssistantChat({
   }
 
   return (
-    <section className="overflow-hidden rounded-[28px] border border-[#d4af37]/15 bg-[#080808]/90 shadow-[0_30px_90px_rgba(0,0,0,0.45)]">
+    <>
+      <section className="overflow-hidden rounded-[28px] border border-[#d4af37]/15 bg-[#080808]/90 shadow-[0_30px_90px_rgba(0,0,0,0.45)]">
       <div className="grid min-h-[640px] lg:h-[calc(100vh-15rem)] lg:min-h-[680px] lg:grid-cols-[286px_minmax(0,1fr)]">
         <aside className="flex min-h-0 flex-col border-b border-white/[0.06] bg-black/30 lg:border-b-0 lg:border-r">
           <div className="border-b border-white/[0.06] px-5 py-5">
@@ -475,11 +486,35 @@ export function AssistantChat({
               </div>
             </div>
 
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
               <span className="hidden items-center gap-1.5 rounded-full border border-white/[0.06] px-2 py-1 text-[9px] text-neutral-500 sm:inline-flex">
                 <span className="h-1 w-1 rounded-full bg-[#d4af37]" />
                 {t("aiConsole.assistants.contextIsolation")}
               </span>
+              <select
+                value={faqTenantId}
+                onChange={(event) => setFaqTenantId(event.target.value)}
+                aria-label={t("aiConsole.assistants.faq.scopeLabel")}
+                title={t("aiConsole.assistants.faq.scopeHint")}
+                className="h-8 max-w-[132px] rounded-lg border border-white/[0.08] bg-black/30 px-2 text-[10px] text-neutral-300 outline-none transition-colors hover:border-[#d4af37]/30 focus:border-[#d4af37]/40"
+              >
+                <option value="">
+                  {t("aiConsole.assistants.faq.form.platform")}
+                </option>
+                {tenants.map((tenant) => (
+                  <option key={tenant.id} value={tenant.id}>
+                    {tenant.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => setFaqOpen(true)}
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-white/[0.08] bg-white/[0.03] px-3 text-[10px] text-neutral-300 transition-colors hover:border-[#d4af37]/30 hover:text-[#f0d27c]"
+              >
+                <span aria-hidden="true">📚</span>
+                {t("aiConsole.assistants.faq.button")}
+              </button>
               <button
                 type="button"
                 onClick={() => startNewChat(activeAgent)}
@@ -563,6 +598,13 @@ export function AssistantChat({
                     locale={locale}
                     fallbackLabel={t("aiConsole.chat.fallback")}
                     youLabel={t("aiConsole.assistants.you")}
+                    faqLabel={
+                      message.faqCount
+                        ? t("aiConsole.assistants.faq.faqUsed", {
+                            count: message.faqCount,
+                          })
+                        : null
+                    }
                   />
                 ))}
               </div>
@@ -643,9 +685,22 @@ export function AssistantChat({
           </footer>
 
         </div>
-
       </div>
-    </section>
+      </section>
+
+      {faqOpen ? (
+        <FaqDrawer
+          key={activeAgent}
+          open
+          agentName={activeAgent}
+          agentLabel={activeName}
+          agentEmoji={activeTheme.emoji}
+          avatarClass={activeTheme.avatar}
+          tenants={tenants}
+          onClose={closeFaqDrawer}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -657,6 +712,7 @@ function MessageBubble({
   locale,
   fallbackLabel,
   youLabel,
+  faqLabel,
 }: {
   message: ChatMessage;
   agentName: string;
@@ -665,6 +721,7 @@ function MessageBubble({
   locale: "zh-CN" | "en-US";
   fallbackLabel: string;
   youLabel: string;
+  faqLabel: string | null;
 }) {
   const isUser = message.role === "user";
 
@@ -708,11 +765,16 @@ function MessageBubble({
             {message.content}
           </p>
         </div>
-        {!isUser && (message.model || message.fallback) ? (
+        {!isUser && (message.model || message.fallback || faqLabel) ? (
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5 px-1">
             {message.fallback ? (
               <span className="rounded-full border border-[#d4af37]/20 bg-[#d4af37]/[0.07] px-2 py-0.5 text-[8px] text-[#f0d27c]">
                 {fallbackLabel}
+              </span>
+            ) : null}
+            {faqLabel ? (
+              <span className="rounded-full border border-emerald-400/20 bg-emerald-400/[0.07] px-2 py-0.5 text-[8px] text-emerald-300">
+                {faqLabel}
               </span>
             ) : null}
             {message.model ? (

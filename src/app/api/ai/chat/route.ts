@@ -8,6 +8,12 @@ import {
   normalizeFailReason,
 } from "@/lib/ai/constants";
 import { generateFallbackCompletion } from "@/lib/ai/fallback";
+import type { AgentFaqSnapshot } from "@/lib/ai/faq-types";
+import {
+  agentFaqTenantExists,
+  buildFaqSystemPrompt,
+  findRelevantAgentFaqs,
+} from "@/lib/ai/faqs";
 import {
   jsonError,
   jsonNoStore,
@@ -95,6 +101,10 @@ function readHistory(value: unknown): ChatTurn[] {
   }
 
   return turns.slice(-CHAT_HISTORY_LIMIT);
+}
+
+function serializeFaqMatches(faqs: readonly AgentFaqSnapshot[]) {
+  return faqs.map((faq) => ({ id: faq.id, question: faq.question }));
 }
 
 function readToolReason(rawArguments: string): string | null {
@@ -186,6 +196,7 @@ export async function POST(request: NextRequest) {
   const inputLeadId = readTrimmedString(body.leadId, 64);
   const tgOrEmail = readTrimmedString(body.tgOrEmail, 120);
   const brandName = readTrimmedString(body.brandName, 80);
+  const requestedTenantId = readTrimmedString(body.tenantId, 64) || null;
   const clientHistory = readHistory(body.history);
 
   try {
@@ -197,6 +208,25 @@ export async function POST(request: NextRequest) {
         400,
       );
     }
+
+    if (
+      requestedTenantId &&
+      !(await agentFaqTenantExists(requestedTenantId))
+    ) {
+      return jsonError("tenantId 对应的商户不存在", 404);
+    }
+
+    // 轻量 RAG：先按当前问题召回该助手的 FAQ，再拼进 System Prompt。
+    // 未命中或检索异常时 buildFaqSystemPrompt 会原样返回基础 Prompt。
+    const faqMatches = await findRelevantAgentFaqs({
+      agentType,
+      query: message,
+      tenantId: requestedTenantId,
+    });
+    const systemPrompt = buildFaqSystemPrompt(
+      config.effectivePrompt,
+      faqMatches,
+    );
 
     const connection = await resolveAiConnection(config.model);
 
@@ -213,7 +243,7 @@ export async function POST(request: NextRequest) {
       }
 
       const messages: AiProviderMessage[] = [
-        { role: "system", content: config.effectivePrompt },
+        { role: "system", content: systemPrompt },
         ...clientHistory,
         { role: "user", content: message },
       ];
@@ -242,6 +272,7 @@ export async function POST(request: NextRequest) {
           model: completion.model,
           fallback: false,
           warning: null,
+          faqMatches: serializeFaqMatches(faqMatches),
         });
       } catch (error) {
         if (!(error instanceof AiProviderError)) {
@@ -299,7 +330,7 @@ export async function POST(request: NextRequest) {
         : [...clientHistory, { role: "user", content: message }];
 
     const messages: AiProviderMessage[] = [
-      { role: "system", content: config.effectivePrompt },
+      { role: "system", content: systemPrompt },
       ...history,
     ];
 
@@ -432,6 +463,10 @@ export async function POST(request: NextRequest) {
       lead: leadAfter,
       failReason,
       failureReasonSaved,
+      // 本地规则兜底没有使用 FAQ，避免前端展示「已参考知识库」造成误解。
+      faqMatches: completion.fallback
+        ? []
+        : serializeFaqMatches(faqMatches),
       // 新对话首轮用真实用户消息时间作为后续上下文起点，避免服务端时间误差。
       contextStartedAt: resetContext ? userLog.createdAt : null,
     });
