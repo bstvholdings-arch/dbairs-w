@@ -57,6 +57,27 @@ CREATE TABLE IF NOT EXISTS "AiAgentConfig" (
 CREATE UNIQUE INDEX IF NOT EXISTS "AiAgentConfig_agentType_key"
   ON "AiAgentConfig"("agentType");
 
+-- AI 控制中心增量字段：旧表 AiAgentConfig 继续保留，只补列。
+-- Prisma 模型名已升级为 AgentConfig（agentName 映射 agentType）。
+ALTER TABLE "AiAgentConfig"
+  ADD COLUMN IF NOT EXISTS "model" TEXT NOT NULL DEFAULT 'deepseek-chat';
+ALTER TABLE "AiAgentConfig"
+  ADD COLUMN IF NOT EXISTS "isEnabled" BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE "AiAgentConfig"
+  ADD COLUMN IF NOT EXISTS "tokenLimit" INTEGER NOT NULL DEFAULT 2000;
+
+CREATE TABLE IF NOT EXISTS "AiSettings" (
+  "id" TEXT NOT NULL DEFAULT 'global',
+  "provider" TEXT NOT NULL DEFAULT 'deepseek',
+  "apiKey" TEXT NOT NULL DEFAULT '',
+  "baseUrl" TEXT NOT NULL DEFAULT 'https://api.deepseek.com',
+  "model" TEXT NOT NULL DEFAULT 'deepseek-chat',
+  "isActive" BOOLEAN NOT NULL DEFAULT true,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "AiSettings_pkey" PRIMARY KEY ("id")
+);
+
 DO $$
 BEGIN
   IF NOT EXISTS (

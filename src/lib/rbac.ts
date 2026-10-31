@@ -98,6 +98,7 @@ export const API_ACCESS_RULES: readonly { path: string; permission: Permission }
   { path: "/api/admin/withdrawals", permission: "withdrawals" },
   // AI 设置只有超管能改；AI 日志技术可读
   { path: "/api/admin/ai-settings", permission: "aiSettings" },
+  { path: "/api/admin/ai-agents", permission: "aiSettings" },
   { path: "/api/admin/ai-logs", permission: "aiLogs" },
   // AI 中控台（销冠对话 + 战败分析）：/api/ai/log 例外，由 proxy 前置放行并在路由内
   // 校验 AI_LOG_TOKEN / 超管 Cookie（外部销售机器人没有管理员 Cookie）。

@@ -8,12 +8,74 @@ import type { TranslationKey } from "@/lib/i18n-types";
  * 与「接口写入的分类」各写一套。
  */
 
-export const AI_AGENT_TYPES = ["sales", "tech", "support"] as const;
+export const AI_AGENT_TYPES = [
+  "sales",
+  "tech",
+  "finance",
+  "audit",
+  "strategist",
+  "support",
+] as const;
 
 export type AiAgentTypeValue = (typeof AI_AGENT_TYPES)[number];
 
+/** AI 控制中心展示的 5 个平台助手。support 仅用于历史日志兼容。 */
+export const AI_CONSOLE_AGENT_TYPES = [
+  "sales",
+  "tech",
+  "finance",
+  "audit",
+  "strategist",
+] as const satisfies readonly AiAgentTypeValue[];
+
+export type AiConsoleAgentName = (typeof AI_CONSOLE_AGENT_TYPES)[number];
+
 /** 销冠 AI 是默认智能体。 */
 export const DEFAULT_AI_AGENT: AiAgentTypeValue = "sales";
+
+export const AI_PROVIDERS = ["deepseek", "openai"] as const;
+
+export type AiProviderValue = (typeof AI_PROVIDERS)[number];
+
+export const DEFAULT_AI_PROVIDER: AiProviderValue = "deepseek";
+
+export const DEFAULT_AI_MODEL = "deepseek-chat";
+
+export const DEFAULT_AI_BASE_URLS: Record<AiProviderValue, string> = {
+  deepseek: "https://api.deepseek.com",
+  openai: "https://api.openai.com/v1",
+};
+
+export const AI_MODEL_OPTIONS = [
+  { value: "deepseek-chat", label: "DeepSeek-V3", provider: "deepseek" },
+  { value: "deepseek-reasoner", label: "DeepSeek-R1", provider: "deepseek" },
+  { value: "gpt-4o-mini", label: "GPT-4o mini", provider: "openai" },
+  { value: "gpt-4.1-mini", label: "GPT-4.1 mini", provider: "openai" },
+] as const satisfies readonly {
+  value: string;
+  label: string;
+  provider: AiProviderValue;
+}[];
+
+/** Agent 卡片默认展示 DeepSeek V3 / R1（与需求一致）。 */
+export const AGENT_MODEL_OPTIONS = AI_MODEL_OPTIONS.filter(
+  (option) => option.provider === "deepseek",
+);
+
+export function isAiProvider(value: unknown): value is AiProviderValue {
+  return (
+    typeof value === "string" &&
+    (AI_PROVIDERS as readonly string[]).includes(value)
+  );
+}
+
+export function isAiModel(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+export function modelLabel(value: string) {
+  return AI_MODEL_OPTIONS.find((option) => option.value === value)?.label ?? value;
+}
 
 export const AI_CHAT_ROLES = ["user", "assistant"] as const;
 

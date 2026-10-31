@@ -3,17 +3,21 @@
 import { useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
+import type { AiProviderValue } from "@/lib/ai/constants";
 import type {
+  AgentChatLogMap,
   AiAgentConfigSnapshot,
-  SerializedAiChatLog,
   SerializedLeadRecord,
   WarRoomSnapshot,
 } from "@/lib/ai/records";
+import type { AiSettingsSnapshot } from "@/lib/ai/settings";
 
+import { AssistantChat } from "./assistant-chat";
 import { ChatTab } from "./chat-tab";
+import { ControlCenter } from "./control-center";
 import { WarRoomTab } from "./war-room-tab";
 
-type Tab = "chat" | "warRoom";
+type Tab = "assistants" | "control" | "chat" | "warRoom";
 
 type ChatTarget = {
   lead: SerializedLeadRecord | null;
@@ -22,26 +26,37 @@ type ChatTarget = {
 };
 
 /**
- * AI 中控台外壳：页头 + 两个 Tab。
+ * AI 中控台外壳：页头 + 4 个 Tab。
  *
- * 两个 Tab 同时挂载、用 hidden 切换，避免来回切换时丢失正在编辑的对话；
- * 从看板点「去对话」时通过 key 重建 ChatTab，把线索带进聊天。
+ * 所有 Tab 同时挂载、用 hidden 切换，避免来回切换时丢失正在编辑的对话；
+ * 默认进入「AI 助手」，5 个助手各自维护独立上下文。从看板点「去对话」时
+ * 通过 key 重建 ChatTab，把线索带进销售线索对话。
  */
 export function AiConsoleClient({
   initialSnapshot,
   initialConfig,
-  initialLogs,
+  initialLogsByAgent,
+  initialSettings,
+  initialAgents,
   cloudEnabled,
   modelLabel,
 }: {
   initialSnapshot: WarRoomSnapshot;
   initialConfig: AiAgentConfigSnapshot;
-  initialLogs: SerializedAiChatLog[];
+  initialLogsByAgent: AgentChatLogMap;
+  initialSettings: AiSettingsSnapshot;
+  initialAgents: AiAgentConfigSnapshot[];
   cloudEnabled: boolean;
   modelLabel: string | null;
 }) {
   const { t } = useLanguage();
-  const [tab, setTab] = useState<Tab>("warRoom");
+  const [tab, setTab] = useState<Tab>("assistants");
+  const [runtimeCloud, setRuntimeCloud] = useState(cloudEnabled);
+  const [runtimeModel, setRuntimeModel] = useState(modelLabel);
+  const [runtimeProvider, setRuntimeProvider] = useState<AiProviderValue>(
+    initialSettings.provider,
+  );
+  const [agents, setAgents] = useState(initialAgents);
   const [chatTarget, setChatTarget] = useState<ChatTarget>({
     lead: null,
     nonce: 0,
@@ -75,17 +90,17 @@ export function AiConsoleClient({
           </span>
           <span
             className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[10px] ${
-              cloudEnabled
+              runtimeCloud
                 ? "border-emerald-400/20 bg-emerald-400/10 text-emerald-300"
                 : "border-white/10 bg-white/[0.03] text-neutral-400"
             }`}
             title={t("aiConsole.runtime.hint")}
           >
             <span className="h-1.5 w-1.5 rounded-full bg-current" />
-            {cloudEnabled
+            {runtimeCloud
               ? t("aiConsole.runtime.cloud")
               : t("aiConsole.runtime.local")}
-            {modelLabel ? ` · ${modelLabel}` : ""}
+            {runtimeModel ? ` · ${runtimeModel}` : ""}
           </span>
         </div>
       </header>
@@ -96,6 +111,16 @@ export function AiConsoleClient({
         className="flex flex-wrap gap-2 border-b border-white/[0.06] pb-3"
       >
         <TabButton
+          active={tab === "assistants"}
+          label={t("aiConsole.tab.assistants")}
+          onClick={() => setTab("assistants")}
+        />
+        <TabButton
+          active={tab === "control"}
+          label={t("aiConsole.tab.control")}
+          onClick={() => setTab("control")}
+        />
+        <TabButton
           active={tab === "warRoom"}
           label={t("aiConsole.tab.warRoom")}
           onClick={() => setTab("warRoom")}
@@ -104,6 +129,35 @@ export function AiConsoleClient({
           active={tab === "chat"}
           label={t("aiConsole.tab.chat")}
           onClick={() => setTab("chat")}
+        />
+      </div>
+
+      <div className={tab === "assistants" ? "" : "hidden"}>
+        <AssistantChat
+          agents={agents}
+          initialLogsByAgent={initialLogsByAgent}
+          cloudEnabled={runtimeCloud}
+          runtimeModel={runtimeModel}
+          runtimeProvider={runtimeProvider}
+        />
+      </div>
+
+      <div className={tab === "control" ? "" : "hidden"}>
+        <ControlCenter
+          initialSettings={initialSettings}
+          initialAgents={agents}
+          onSettingsSaved={(settings) => {
+            setRuntimeCloud(settings.isActive && settings.hasApiKey);
+            setRuntimeModel(settings.model);
+            setRuntimeProvider(settings.provider);
+          }}
+          onAgentSaved={(saved) => {
+            setAgents((previous) =>
+              previous.map((agent) =>
+                agent.agentName === saved.agentName ? saved : agent,
+              ),
+            );
+          }}
         />
       </div>
 
@@ -118,7 +172,7 @@ export function AiConsoleClient({
       <div className={tab === "chat" ? "" : "hidden"}>
         <ChatTab
           key={`chat-${chatTarget.nonce}`}
-          initialLogs={initialLogs}
+          initialLogs={initialLogsByAgent.sales}
           initialLead={chatTarget.lead}
           onOpenWarRoom={() => setTab("warRoom")}
         />

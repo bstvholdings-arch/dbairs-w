@@ -13,7 +13,7 @@ import type { PromptResponse, TacticsResponse } from "./types";
  *
  * 生成（POST /api/ai/tactics）只返回话术，不落库；
  * 用户确认后点「保存到 System Prompt」（POST /api/ai/prompt），
- * 服务端把话术追加到 AiAgentConfig.tactics，下一次销售对话立即带上。
+ * 服务端把话术追加到 AgentConfig.tactics，下一次销售对话立即带上。
  */
 export function TacticsPanel({
   config,

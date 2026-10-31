@@ -1,11 +1,14 @@
 import { prisma } from "@/lib/prisma";
 
 import {
+  AI_CONSOLE_AGENT_TYPES,
+  DEFAULT_AI_MODEL,
   countFailReasons,
   isAiAgentType,
   isAiChatRole,
   isLeadStatus,
   type AiAgentTypeValue,
+  type AiConsoleAgentName,
   type LeadStatusValue,
   type ReasonCount,
 } from "./constants";
@@ -39,12 +42,47 @@ export type SerializedLeadRecord = {
 };
 
 export type AiAgentConfigSnapshot = {
+  agentName: AiAgentTypeValue;
+  /** 兼容旧组件：与 agentName 相同。 */
   agentType: AiAgentTypeValue;
   systemPrompt: string;
   tactics: string;
   effectivePrompt: string;
+  model: string;
+  isEnabled: boolean;
+  tokenLimit: number;
   updatedAt: string;
 };
+
+type AgentConfigSource = {
+  agentName: string;
+  systemPrompt: string;
+  tactics: string;
+  model: string;
+  isEnabled: boolean;
+  tokenLimit: number;
+  updatedAt: Date;
+};
+
+export function serializeAgentConfig(
+  config: AgentConfigSource,
+): AiAgentConfigSnapshot {
+  const agentName = isAiAgentType(config.agentName)
+    ? config.agentName
+    : "sales";
+
+  return {
+    agentName,
+    agentType: agentName,
+    systemPrompt: config.systemPrompt,
+    tactics: config.tactics,
+    effectivePrompt: buildEffectiveSystemPrompt(agentName, config),
+    model: config.model,
+    isEnabled: config.isEnabled,
+    tokenLimit: config.tokenLimit,
+    updatedAt: config.updatedAt.toISOString(),
+  };
+}
 
 type ChatLogSource = {
   id: string;
@@ -95,13 +133,16 @@ export function serializeLead(lead: LeadSource): SerializedLeadRecord {
 export async function ensureAgentConfig(agentType: AiAgentTypeValue) {
   const basePrompt = buildAgentSystemPrompt(agentType);
 
-  return prisma.aiAgentConfig.upsert({
-    where: { agentType },
+  return prisma.agentConfig.upsert({
+    where: { agentName: agentType },
     update: {},
     create: {
-      agentType,
+      agentName: agentType,
       systemPrompt: basePrompt,
       tactics: "",
+      model: DEFAULT_AI_MODEL,
+      isEnabled: true,
+      tokenLimit: 2000,
     },
   });
 }
@@ -110,14 +151,52 @@ export async function getAgentConfigSnapshot(
   agentType: AiAgentTypeValue,
 ): Promise<AiAgentConfigSnapshot> {
   const config = await ensureAgentConfig(agentType);
+  return serializeAgentConfig(config);
+}
 
-  return {
-    agentType,
-    systemPrompt: config.systemPrompt,
-    tactics: config.tactics,
-    effectivePrompt: buildEffectiveSystemPrompt(agentType, config),
-    updatedAt: config.updatedAt.toISOString(),
-  };
+/** AI 控制中心：读取 5 个平台助手，缺失时自动补基础配置。 */
+export async function listAgentConfigs(): Promise<AiAgentConfigSnapshot[]> {
+  const configs = await Promise.all(
+    AI_CONSOLE_AGENT_TYPES.map((agentName) => ensureAgentConfig(agentName)),
+  );
+
+  return configs.map(serializeAgentConfig);
+}
+
+/** AI 控制中心：保存单个 Agent 的开关、模型、Token 上限与提示词。 */
+export async function saveAgentConfig(input: {
+  agentName: AiAgentTypeValue;
+  systemPrompt?: string;
+  model?: string;
+  isEnabled?: boolean;
+  tokenLimit?: number;
+}): Promise<AiAgentConfigSnapshot> {
+  const basePrompt = buildAgentSystemPrompt(input.agentName);
+  const updated = await prisma.agentConfig.upsert({
+    where: { agentName: input.agentName },
+    update: {
+      ...(input.systemPrompt !== undefined
+        ? { systemPrompt: input.systemPrompt }
+        : {}),
+      ...(input.model !== undefined ? { model: input.model } : {}),
+      ...(input.isEnabled !== undefined
+        ? { isEnabled: input.isEnabled }
+        : {}),
+      ...(input.tokenLimit !== undefined
+        ? { tokenLimit: input.tokenLimit }
+        : {}),
+    },
+    create: {
+      agentName: input.agentName,
+      systemPrompt: input.systemPrompt ?? basePrompt,
+      tactics: "",
+      model: input.model ?? DEFAULT_AI_MODEL,
+      isEnabled: input.isEnabled ?? true,
+      tokenLimit: input.tokenLimit ?? 2000,
+    },
+  });
+
+  return serializeAgentConfig(updated);
 }
 
 export type AppendTacticResult = {
@@ -136,19 +215,20 @@ export async function saveSystemPrompt(
     throw new Error("System Prompt 不能为空");
   }
 
-  const updated = await prisma.aiAgentConfig.upsert({
-    where: { agentType },
+  const updated = await prisma.agentConfig.upsert({
+    where: { agentName: agentType },
     update: { systemPrompt: trimmed },
-    create: { agentType, systemPrompt: trimmed, tactics: "" },
+    create: {
+      agentName: agentType,
+      systemPrompt: trimmed,
+      tactics: "",
+      model: DEFAULT_AI_MODEL,
+      isEnabled: true,
+      tokenLimit: 2000,
+    },
   });
 
-  return {
-    agentType,
-    systemPrompt: updated.systemPrompt,
-    tactics: updated.tactics,
-    effectivePrompt: buildEffectiveSystemPrompt(agentType, updated),
-    updatedAt: updated.updatedAt.toISOString(),
-  };
+  return serializeAgentConfig(updated);
 }
 
 /**
@@ -169,13 +249,7 @@ export async function appendTactic(
 
   if (config.tactics.includes(nextTactic)) {
     return {
-      config: {
-        agentType,
-        systemPrompt: config.systemPrompt,
-        tactics: config.tactics,
-        effectivePrompt: buildEffectiveSystemPrompt(agentType, config),
-        updatedAt: config.updatedAt.toISOString(),
-      },
+      config: serializeAgentConfig(config),
       alreadyPresent: true,
     };
   }
@@ -184,19 +258,13 @@ export async function appendTactic(
     ? `${config.tactics.trim()}\n\n- ${nextTactic}`
     : `- ${nextTactic}`;
 
-  const updated = await prisma.aiAgentConfig.update({
-    where: { agentType },
+  const updated = await prisma.agentConfig.update({
+    where: { agentName: agentType },
     data: { tactics },
   });
 
   return {
-    config: {
-      agentType,
-      systemPrompt: updated.systemPrompt,
-      tactics: updated.tactics,
-      effectivePrompt: buildEffectiveSystemPrompt(agentType, updated),
-      updatedAt: updated.updatedAt.toISOString(),
-    },
+    config: serializeAgentConfig(updated),
     alreadyPresent: false,
   };
 }
@@ -327,12 +395,15 @@ export async function loadRecentChatLogs(
     agentType?: AiAgentTypeValue;
     leadId?: string;
     take?: number;
+    /** 只读取该时间之后的消息，用于「新对话」而不删除历史日志。 */
+    since?: Date;
   } = {},
 ): Promise<SerializedAiChatLog[]> {
   const logs = await prisma.aiChatLog.findMany({
     where: {
       ...(input.agentType ? { agentType: input.agentType } : {}),
       ...(input.leadId ? { leadId: input.leadId } : {}),
+      ...(input.since ? { createdAt: { gte: input.since } } : {}),
     },
     orderBy: { createdAt: "desc" },
     take: Math.min(Math.max(input.take ?? 30, 1), 200),
@@ -347,4 +418,32 @@ export async function loadRecentChatLogs(
   });
 
   return logs.map(serializeChatLog);
+}
+
+export type AgentChatLogMap = Record<
+  AiConsoleAgentName,
+  SerializedAiChatLog[]
+>;
+
+/**
+ * 5 个助手各自读取最近日志。
+ *
+ * 不能先读全量再在前端按 agentType 过滤：那样很容易把其他助手的上下文
+ * 带进当前请求。这里每个 agentType 单独查询，首屏数据也天然隔离。
+ */
+export async function loadRecentChatLogsByAgent(
+  input: { take?: number } = {},
+): Promise<AgentChatLogMap> {
+  const entries = await Promise.all(
+    AI_CONSOLE_AGENT_TYPES.map(async (agentName) => {
+      const logs = await loadRecentChatLogs({
+        agentType: agentName,
+        take: input.take,
+      });
+
+      return [agentName, logs] as const;
+    }),
+  );
+
+  return Object.fromEntries(entries) as AgentChatLogMap;
 }

@@ -411,7 +411,7 @@ model AiChatLog {
   id        String      @id @default(uuid())
   role      String // user, assistant
   content   String      @db.Text
-  agentType String      @default("sales") // sales, tech, support
+  agentType String      @default("sales") // sales, tech, finance, audit, strategist（support 为历史兼容）
   leadId    String?
   lead      LeadRecord? @relation(fields: [leadId], references: [id], onDelete: SetNull)
   createdAt DateTime    @default(now())
@@ -440,15 +440,36 @@ model LeadRecord {
   @@index([failReason])
 }
 
-// 16. AI 智能体配置 (AiAgentConfig)
-// systemPrompt：基础人设与工具规则（销冠 AI 的 System Prompt 主体）
-// tactics：战败复盘「生成对策」一键沉淀的标准话术，按条追加
+// 16. AI 全局接入配置 (AiSettings)
+// 单例记录，固定 id = "global"。apiKey 只允许服务端读取，接口返回前必须掩码。
+// provider：deepseek / openai；model 为全局默认模型，Agent 未单独指定时使用。
+// isActive=false 时所有云端调用视为未配置，前端会提示先启用接入。
+model AiSettings {
+  id        String   @id @default("global")
+  provider  String   @default("deepseek") // deepseek, openai
+  apiKey    String   @default("")
+  baseUrl   String   @default("https://api.deepseek.com")
+  model     String   @default("deepseek-chat")
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// 17. AI 智能体配置 (AgentConfig)
+// agentName：sales / tech / finance / audit / strategist（support 为历史兼容）
+// systemPrompt：基础人设与工具规则；tactics：战败复盘沉淀的标准话术
 // 真正下发给模型的 System Prompt = systemPrompt + tactics（见 src/lib/ai/prompts.ts）。
-model AiAgentConfig {
+// @@map 保留旧表名，升级阶段不会丢已有提示词与战术沉淀。
+model AgentConfig {
   id           String   @id @default(uuid())
-  agentType    String   @unique // sales, tech, support
+  agentName    String   @unique @map("agentType")
   systemPrompt String   @db.Text
   tactics      String   @default("") @db.Text
+  model        String   @default("deepseek-chat")
+  isEnabled    Boolean  @default(true)
+  tokenLimit   Int      @default(2000)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+
+  @@map("AiAgentConfig")
 }

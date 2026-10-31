@@ -13,6 +13,7 @@ import {
   requestChatCompletion,
 } from "@/lib/ai/provider";
 import { loadFailureReasonCounts } from "@/lib/ai/records";
+import { resolveAiConnection } from "@/lib/ai/settings";
 import { guardPermission } from "@/lib/session";
 
 /**
@@ -67,9 +68,10 @@ export async function POST(request: NextRequest) {
     let warning: string | null = null;
 
     try {
+      const connection = await resolveAiConnection();
       const completion = await requestChatCompletion(
         buildTacticsMessages(ordered),
-        { temperature: 0.6, maxTokens: 500 },
+        { connection, temperature: 0.6, maxTokens: 500 },
       );
 
       tactic = completion.content.trim();

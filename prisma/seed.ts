@@ -2,6 +2,12 @@ import "dotenv/config";
 
 import bcrypt from "bcryptjs";
 
+import {
+  AI_CONSOLE_AGENT_TYPES,
+  DEFAULT_AI_BASE_URLS,
+  DEFAULT_AI_MODEL,
+} from "../src/lib/ai/constants";
+import { buildAgentSystemPrompt } from "../src/lib/ai/prompts";
 import { syncProviderGames } from "../src/lib/game-sync";
 import { prisma } from "../src/lib/prisma";
 
@@ -63,6 +69,49 @@ async function main() {
   if (!passwordVerified) {
     throw new Error("密码写入后自检失败：数据库中的哈希与 admin123 不匹配。");
   }
+
+  // AI 控制中心：全局接入配置默认留空 Key，管理员登录后台后自行粘贴。
+  // 已存在配置一律不覆盖，避免 seed 冲掉线上填写的 Key / Base URL。
+  await prisma.aiSettings.upsert({
+    where: { id: "global" },
+    update: {},
+    create: {
+      id: "global",
+      provider: "deepseek",
+      apiKey: "",
+      baseUrl: DEFAULT_AI_BASE_URLS.deepseek,
+      model: DEFAULT_AI_MODEL,
+      isActive: true,
+    },
+  });
+
+  const agentLabels: Record<(typeof AI_CONSOLE_AGENT_TYPES)[number], string> = {
+    sales: "销冠",
+    tech: "技术",
+    finance: "财务",
+    audit: "审计",
+    strategist: "军师",
+  };
+
+  for (const agentName of AI_CONSOLE_AGENT_TYPES) {
+    // 已存在的 Agent 保留管理员改过的人设 / 模型 / 开关，只补缺失记录。
+    await prisma.agentConfig.upsert({
+      where: { agentName },
+      update: {},
+      create: {
+        agentName,
+        systemPrompt: buildAgentSystemPrompt(agentName),
+        tactics: "",
+        model: DEFAULT_AI_MODEL,
+        isEnabled: true,
+        tokenLimit: 2000,
+      },
+    });
+  }
+
+  console.log(
+    `AI 控制中心已就绪: 5 个 Agent（${AI_CONSOLE_AGENT_TYPES.map((name) => agentLabels[name]).join("、")}）| Key 由后台填写`,
+  );
 
   // 大厅品牌墙演示数据：保证前台的 PROVIDER SHOWCASE 至少能横向排满 5 家品牌，
   // 手机端只露出约 1.5 张、桌面端一屏 4~5 张（布局见 components/lobby/provider-wall.tsx）。

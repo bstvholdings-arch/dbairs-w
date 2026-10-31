@@ -41,7 +41,7 @@ export async function GET(request: NextRequest) {
     : DEFAULT_AI_AGENT;
 
   if (agentTypeParam && !isAiAgentType(agentTypeParam)) {
-    return jsonError("agentType 只能是 sales、tech 或 support", 400);
+    return jsonError("agentType 不是受支持的 AI 助手", 400);
   }
 
   try {
@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (body.agentType !== undefined && !isAiAgentType(body.agentType)) {
-    return jsonError("agentType 只能是 sales、tech 或 support", 400);
+    return jsonError("agentType 不是受支持的 AI 助手", 400);
   }
 
   const agentType = isAiAgentType(body.agentType)

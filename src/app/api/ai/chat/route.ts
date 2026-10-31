@@ -30,18 +30,29 @@ import {
   type AiCompletion,
   type AiProviderMessage,
 } from "@/lib/ai/provider";
+import { resolveAiConnection } from "@/lib/ai/settings";
 import { prisma } from "@/lib/prisma";
 import { guardPermission } from "@/lib/session";
 
 /**
- * POST /api/ai/chat —— 销冠 AI 的真实对话入口（AI 中控台「销售对话」Tab）。
+ * POST /api/ai/chat —— 5 大 AI 助手的统一真实对话入口。
  *
  * 流程：
- * 1. RBAC（aiConsole，默认仅超管）→ 2. upsert 线索 → 3. 用户消息脱敏落库
- * → 4. 读取 System Prompt + 历史 → 5. 调用模型（带 save_lead_failure_reason 工具）
- * → 6. 执行工具（写入 status=failed / failReason）→ 7. 助手回复脱敏落库。
+ * 1. RBAC（aiConsole，默认仅超管）→ 2. 校验 agentType 并读取该助手的
+ *    AgentConfig（System Prompt / 模型 / Token 上限 / 启停状态）
+ * → 3. upsert 线索（仅销售场景）→ 4. 用户消息脱敏落库
+ * → 5. 按 agentType 读取历史 → 6. 调用模型（仅销冠带战败工具）
+ * → 7. 执行工具（写入 status=failed / failReason）→ 8. 助手回复脱敏落库。
  *
- * 没配置 AI_API_KEY 或模型报错时自动降级为本地规则回复，保证链路可演示。
+ * 上下文隔离：
+ * - 正式对话的历史始终按 agentType 查询；有 leadId 时再叠加 leadId 过滤。
+ * - 前端传入的 history 只在数据库还没有历史时作为兼容兜底，不能跨助手串线。
+ * - resetContext=true 时忽略历史并返回新的 contextStartedAt；
+ *   后续请求按 contextStartedAt 过滤，实现「新对话」而不删除历史日志。
+ *
+ * 运行时连接优先使用 AiSettings 中保存的 Key / Base URL / 模型；
+ * 未配置（且环境变量也没有 Key）或模型报错时自动降级为本地规则回复，保证链路可演示。
+ * testMode=true 时只做一轮真实模型调用，不写线索 / 日志，未配置 Key 会明确报错。
  */
 
 type ChatTurn = { role: "user" | "assistant"; content: string };
@@ -148,15 +159,99 @@ export async function POST(request: NextRequest) {
     return jsonError("message 不能为空", 400);
   }
 
-  const agentType = isAiAgentType(body.agentType)
-    ? body.agentType
+  const requestedAgent = body.agentType ?? body.agentName;
+
+  // 显式传了 agentType 就必须合法，避免拼写错误时静默落到销冠、串用销售上下文。
+  if (requestedAgent !== undefined && !isAiAgentType(requestedAgent)) {
+    return jsonError("agentType 不是受支持的 AI 助手", 400);
+  }
+
+  const agentType = isAiAgentType(requestedAgent)
+    ? requestedAgent
     : DEFAULT_AI_AGENT;
+  const testMode = body.testMode === true;
+  const resetContext = body.resetContext === true;
+  const contextStartedAtRaw = readTrimmedString(body.contextStartedAt, 64);
+  const contextStartedAt = contextStartedAtRaw
+    ? new Date(contextStartedAtRaw)
+    : null;
+
+  if (
+    contextStartedAt &&
+    Number.isNaN(contextStartedAt.getTime())
+  ) {
+    return jsonError("contextStartedAt 不是合法时间", 400);
+  }
+
   const inputLeadId = readTrimmedString(body.leadId, 64);
   const tgOrEmail = readTrimmedString(body.tgOrEmail, 120);
   const brandName = readTrimmedString(body.brandName, 80);
   const clientHistory = readHistory(body.history);
 
   try {
+    const config = await getAgentConfigSnapshot(agentType);
+
+    if (!config.isEnabled) {
+      return jsonError(
+        `助手「${agentType}」已停用，请先在 AI 控制中心启用后再试`,
+        400,
+      );
+    }
+
+    const connection = await resolveAiConnection(config.model);
+
+    // AI 控制中心「测试窗口」：只做一轮真实模型调用，不写线索、不落聊天日志。
+    // 未配置 Key 时明确报错，不静默走本地规则，避免误以为已接通 DeepSeek。
+    if (testMode) {
+      if (!connection.configured) {
+        return jsonError(
+          connection.source === "disabled"
+            ? "AI 接入已停用，请先在 AI 控制中心启用并保存 API Key"
+            : "尚未配置可用的 API Key，请先在 AI 控制中心完成模型接入",
+          503,
+        );
+      }
+
+      const messages: AiProviderMessage[] = [
+        { role: "system", content: config.effectivePrompt },
+        ...clientHistory,
+        { role: "user", content: message },
+      ];
+
+      try {
+        const completion = await requestChatCompletion(messages, {
+          connection,
+          temperature: agentType === "sales" ? 0.45 : 0.3,
+          maxTokens: config.tokenLimit,
+        });
+
+        return jsonNoStore({
+          success: true,
+          testMode: true,
+          reply: {
+            id: `test-${Date.now()}`,
+            role: "assistant",
+            content:
+              completion.content ||
+              "模型返回了空回复，请检查模型名称或稍后重试。",
+            agentType,
+            leadId: null,
+            createdAt: new Date().toISOString(),
+          },
+          agentType,
+          model: completion.model,
+          fallback: false,
+          warning: null,
+        });
+      } catch (error) {
+        if (!(error instanceof AiProviderError)) {
+          throw error;
+        }
+
+        return jsonError(error.message, error.status);
+      }
+    }
+
     const lead = await resolveLead({
       leadId: inputLeadId,
       tgOrEmail,
@@ -167,34 +262,42 @@ export async function POST(request: NextRequest) {
       return jsonError("leadId 对应的线索不存在", 404);
     }
 
-    await createChatLog({
+    const userLog = await createChatLog({
       role: "user",
       content: message,
       agentType,
       leadId: lead?.id ?? null,
     });
 
-    // 有线索时以数据库里的历史为准（跨会话记忆）；没有线索才使用前端传入的上下文。
-    const storedLogs = lead
-      ? await loadRecentChatLogs({
+    // 历史始终按 agentType 隔离；有线索时再叠加 leadId，避免 5 个助手互相串上下文。
+    const storedLogs = resetContext
+      ? []
+      : await loadRecentChatLogs({
           agentType,
-          leadId: lead.id,
+          ...(lead?.id ? { leadId: lead.id } : {}),
+          ...(contextStartedAt ? { since: contextStartedAt } : {}),
           take: CHAT_HISTORY_LIMIT,
-        })
-      : [];
+        });
 
-    const history: ChatTurn[] = lead
-      ? storedLogs
-          .slice()
-          .reverse()
-          .flatMap((log) =>
-            log.role === "user" || log.role === "assistant"
-              ? [{ role: log.role, content: log.content } as ChatTurn]
-              : [],
-          )
-      : [...clientHistory, { role: "user", content: message }];
+    const persistedHistory: ChatTurn[] = storedLogs
+      .slice()
+      .reverse()
+      .flatMap((log) =>
+        log.role === "user" || log.role === "assistant"
+          ? [{ role: log.role, content: log.content } as ChatTurn]
+          : [],
+      );
 
-    const config = await getAgentConfigSnapshot(agentType);
+    // storedLogs 已包含刚落库的本轮用户消息。若数据库还没有更早的助手记录，
+    // 才使用前端 history 兼容外部调用方；否则一律以数据库的 agentType 历史为准。
+    const history: ChatTurn[] = resetContext
+      ? [{ role: "user", content: message }]
+      : contextStartedAt ||
+          persistedHistory.length > 1 ||
+          clientHistory.length === 0
+        ? persistedHistory
+        : [...clientHistory, { role: "user", content: message }];
+
     const messages: AiProviderMessage[] = [
       { role: "system", content: config.effectivePrompt },
       ...history,
@@ -207,7 +310,9 @@ export async function POST(request: NextRequest) {
     try {
       completion = await requestChatCompletion(messages, {
         tools,
+        connection,
         temperature: agentType === "sales" ? 0.45 : 0.3,
+        maxTokens: config.tokenLimit,
       });
     } catch (error) {
       if (!(error instanceof AiProviderError)) {
@@ -284,7 +389,9 @@ export async function POST(request: NextRequest) {
         try {
           completion = await requestChatCompletion(messages, {
             tools,
+            connection,
             temperature: 0.45,
+            maxTokens: config.tokenLimit,
           });
         } catch (error) {
           if (!(error instanceof AiProviderError)) {
@@ -325,6 +432,8 @@ export async function POST(request: NextRequest) {
       lead: leadAfter,
       failReason,
       failureReasonSaved,
+      // 新对话首轮用真实用户消息时间作为后续上下文起点，避免服务端时间误差。
+      contextStartedAt: resetContext ? userLog.createdAt : null,
     });
   } catch (error) {
     console.error("AI 对话处理失败:", error);

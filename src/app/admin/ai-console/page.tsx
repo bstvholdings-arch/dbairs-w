@@ -1,21 +1,21 @@
 import { redirect } from "next/navigation";
 import { connection } from "next/server";
 
-import { getAiRuntimeConfig } from "@/lib/ai/provider";
 import {
-  getAgentConfigSnapshot,
-  loadRecentChatLogs,
+  listAgentConfigs,
+  loadRecentChatLogsByAgent,
   loadWarRoomSnapshot,
 } from "@/lib/ai/records";
+import { getAiSettingsSnapshot } from "@/lib/ai/settings";
 import { can, homePathForRole } from "@/lib/rbac";
 import { getSessionUserFromCookies } from "@/lib/session";
 
 import { AiConsoleClient } from "./ai-console-client";
 
 export const metadata = {
-  title: "AI Console | DBAIRS Super Admin",
+  title: "AI Control Center | DBAIRS Super Admin",
   description:
-    "Sales AI chat, lost-lead failure-reason analytics and one-click tactic generation for the sales System Prompt.",
+    "Five independent AI assistants, DeepSeek / OpenAI model access, live test chat and lost-lead analytics.",
 };
 
 export const instant = false;
@@ -35,21 +35,26 @@ export default async function AdminAiConsolePage() {
     redirect(`${homePathForRole(user.role)}?denied=aiConsole`);
   }
 
-  const [snapshot, config, logs] = await Promise.all([
+  const [snapshot, logsByAgent, settings, agents] = await Promise.all([
     loadWarRoomSnapshot("open"),
-    getAgentConfigSnapshot("sales"),
-    loadRecentChatLogs({ agentType: "sales", take: 20 }),
+    loadRecentChatLogsByAgent({ take: 40 }),
+    getAiSettingsSnapshot(),
+    listAgentConfigs(),
   ]);
 
-  const runtime = getAiRuntimeConfig();
+  // listAgentConfigs 已保证 5 个助手都存在；直接复用，避免再对 sales 做一次并发 upsert。
+  const config = agents.find((agent) => agent.agentName === "sales")!;
+  const cloudEnabled = settings.isActive && settings.hasApiKey;
 
   return (
     <AiConsoleClient
       initialSnapshot={snapshot}
       initialConfig={config}
-      initialLogs={logs}
-      cloudEnabled={runtime.configured}
-      modelLabel={runtime.configured ? runtime.model : null}
+      initialLogsByAgent={logsByAgent}
+      initialSettings={settings}
+      initialAgents={agents}
+      cloudEnabled={cloudEnabled}
+      modelLabel={cloudEnabled ? settings.model : null}
     />
   );
 }

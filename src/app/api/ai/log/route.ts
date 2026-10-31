@@ -149,7 +149,7 @@ export async function GET(request: NextRequest) {
   const takeRaw = Number.parseInt(params.get("take") ?? "", 10);
 
   if (agentType && !isAiAgentType(agentType)) {
-    return jsonError("agentType 只能是 sales、tech 或 support", 400);
+    return jsonError("agentType 不是受支持的 AI 助手", 400);
   }
 
   try {
