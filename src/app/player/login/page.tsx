@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
 
 import { PlayerAuthForm } from "@/components/player/player-auth-form";
 import { getPlayerSessionFromCookies } from "@/lib/player-session";
@@ -32,6 +33,10 @@ export default async function PlayerLoginPage({
     site?: string | string[];
   }>;
 }) {
+  // jwt.verify 内部会用 Date.now() 校验过期时间，属于请求期数据：
+  // 先 connection() 显式声明动态渲染（与 /player/kyc、根页保持一致）。
+  await connection();
+
   const params = await searchParams;
   const nextPath = safeNextPath(readParam(params.next));
   const session = await getPlayerSessionFromCookies();

@@ -11,6 +11,7 @@ import type { TranslationKey } from "@/lib/i18n-types";
 import { can, type Permission } from "@/lib/rbac";
 
 import { RbacDeniedNotice } from "@/components/rbac-denied-notice";
+import { ImpersonationBanner } from "@/components/impersonation-banner";
 import { LogoutButton } from "@/app/logout-button";
 import type { AdminRole } from "@/lib/session";
 
@@ -23,8 +24,10 @@ type NavIconName =
   | "gateways"
   | "finance"
   | "players"
+  | "kyc"
   | "ai"
   | "staff"
+  | "integrations"
   | "preview";
 
 type NavItem = {
@@ -67,6 +70,14 @@ const PLATFORM_NAV: NavItem[] = [
     icon: "tenants",
     permission: "tenants",
   },
+  // API 与集成中心：回调地址 / IP 白名单 / 平台密钥状态 / 商户对接资料，
+  // 密钥属于最高敏感配置，只有 super_admin 拥有 integrations 权限
+  {
+    labelKey: "nav.integrations",
+    href: "/admin/integrations",
+    icon: "integrations",
+    permission: "integrations",
+  },
   // 前台装修：主色 + 大厅模块开关/排序，影响的是玩家看到的 / 与品牌展馆
   {
     labelKey: "nav.storefront",
@@ -102,20 +113,29 @@ const PLATFORM_NAV: NavItem[] = [
   },
 ];
 
+/**
+ * 商户后台菜单：只有「概览 / 玩家 / 财务 / 客服记录 / 站点设置」5 项。
+ *
+ * 平台侧的任何全局配置（租户管理、游戏库、支付网关审核、AI 中控台、员工管理）
+ * 都不会出现在这里；商户想改游戏费率 / 自有支付通道，从「站点设置」页内的
+ * 入口进入（保留既有功能，但不占用主导航）。
+ */
 const TENANT_ADMIN_NAV: NavItem[] = [
-  { labelKey: "nav.tenantDashboard", href: "/tenant", icon: "dashboard" },
   {
-    labelKey: "nav.tenantProviders",
-    href: "/tenant/providers",
-    icon: "providers",
+    labelKey: "nav.tenantOverview",
+    href: "/tenant/dashboard",
+    icon: "dashboard",
   },
   { labelKey: "nav.tenantPlayers", href: "/tenant/players", icon: "players" },
+  // KYC 审核：只处理本站玩家提交的实名资料
+  { labelKey: "nav.tenantKyc", href: "/tenant/kyc", icon: "kyc" },
+  { labelKey: "nav.tenantFinance", href: "/tenant/finance", icon: "finance" },
+  { labelKey: "nav.tenantAiLogs", href: "/tenant/ai-logs", icon: "ai" },
   {
-    labelKey: "nav.tenantPayments",
-    href: "/tenant/payments",
-    icon: "gateways",
+    labelKey: "nav.tenantSettings",
+    href: "/tenant/settings",
+    icon: "storefront",
   },
-  { labelKey: "nav.finance", href: "/finance", icon: "finance" },
 ];
 
 
@@ -195,6 +215,15 @@ function NavIcon({ name }: { name: NavIconName }) {
           <path d="M7 15h4" />
         </svg>
       );
+    case "integrations":
+      return (
+        <svg {...common}>
+          <path d="M9 3v5" />
+          <path d="M15 3v5" />
+          <path d="M6 8h12v3a6 6 0 0 1-12 0V8Z" />
+          <path d="M12 17v4" />
+        </svg>
+      );
     case "players":
       return (
         <svg {...common}>
@@ -214,6 +243,16 @@ function NavIcon({ name }: { name: NavIconName }) {
           <path d="M3 12h3" />
           <path d="M18 12h3" />
           <circle cx="12" cy="12" r="3.6" />
+        </svg>
+      );
+    case "kyc":
+      return (
+        <svg {...common}>
+          <rect x="3" y="5" width="18" height="14" rx="2.5" />
+          <circle cx="9" cy="11" r="2.2" />
+          <path d="M5.8 16.4c.6-1.6 1.9-2.4 3.2-2.4s2.6.8 3.2 2.4" />
+          <path d="M15.5 10h3" />
+          <path d="M15.5 13.5h2" />
         </svg>
       );
     case "staff":
@@ -254,11 +293,14 @@ export function ConsoleShell({
   role,
   username,
   tenantName,
+  impersonation,
   children,
 }: {
   role: AdminRole;
   username: string;
   tenantName?: string | null;
+  /** 超管代登录时传 { adminId, username }，用于渲染顶部安全横幅。 */
+  impersonation?: { adminId: string; username: string } | null;
   children: ReactNode;
 }) {
   const pathname = usePathname();
@@ -420,6 +462,13 @@ export function ConsoleShell({
         </header>
 
         <main className="mx-auto w-full max-w-[1500px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+          {/* 超管代登录：顶部常驻安全提示 + 一键退出 */}
+          {impersonation ? (
+            <ImpersonationBanner
+              tenantName={tenantName ?? t("shell.scope.tenantFallback")}
+              adminUsername={impersonation.username}
+            />
+          ) : null}
           {/* 越权访问被 proxy 重定向回来时（?denied=权限点）在这里提示 */}
           <Suspense fallback={null}>
             <RbacDeniedNotice role={role} />

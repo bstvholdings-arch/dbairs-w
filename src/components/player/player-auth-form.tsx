@@ -9,8 +9,13 @@ import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import type { TranslationKey } from "@/lib/i18n-types";
 import { playerErrorKey } from "@/lib/player-errors";
 import {
+  DEFAULT_PLAYER_PHONE_COUNTRY,
+  PLAYER_PHONE_COUNTRIES,
+  findPlayerPhoneCountry,
   readPlayerEmail,
+  readPlayerLoginIdentifier,
   readPlayerPassword,
+  readPlayerPhone,
   readPlayerReferralCode,
   readPlayerUsername,
 } from "@/lib/player-validation";
@@ -25,8 +30,13 @@ type ApiErrorPayload = {
 
 const PLAYER_DEFAULT_THEME = "#d4af37";
 
-const FIELD_CLASS =
-  "mt-1.5 h-11 w-full rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 text-sm text-neutral-100 outline-none transition-colors placeholder:text-neutral-600 focus:border-brand/50 focus:ring-1 focus:ring-brand/25";
+const LABEL_CLASS =
+  "text-[10px] font-semibold uppercase tracking-[0.18em] text-neutral-500";
+
+const INPUT_CLASS =
+  "h-11 w-full rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 text-sm text-neutral-100 outline-none transition-colors placeholder:text-neutral-600 focus:border-brand/50 focus:ring-1 focus:ring-brand/25";
+
+const FIELD_CLASS = `mt-1.5 ${INPUT_CLASS}`;
 
 /** 只允许站内相对路径，防止 ?next=https://evil 之类的开放跳转。 */
 function safeNextPath(value: string) {
@@ -59,7 +69,12 @@ export function PlayerAuthForm({
   const theme = useMemo(() => buildStorefrontTheme(PLAYER_DEFAULT_THEME), []);
 
   const safeNext = safeNextPath(nextPath);
+  const [identifier, setIdentifier] = useState("");
   const [username, setUsername] = useState("");
+  const [phoneCountry, setPhoneCountry] = useState<string>(
+    DEFAULT_PLAYER_PHONE_COUNTRY,
+  );
+  const [phoneNumber, setPhoneNumber] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -71,6 +86,11 @@ export function PlayerAuthForm({
   const [errorMessage, setErrorMessage] = useState("");
 
   const isRegister = mode === "register";
+
+  // 区号决定本地号码位数（如 +65 固定 8 位、+86 固定 11 位），
+  // 输入框 maxLength 与提示文案都跟着下拉框走。
+  const phoneCountryMeta =
+    findPlayerPhoneCountry(phoneCountry) ?? PLAYER_PHONE_COUNTRIES[0];
 
   useEffect(() => {
     document.title = isRegister
@@ -103,13 +123,6 @@ export function PlayerAuthForm({
     setErrorKey(null);
     setErrorMessage("");
 
-    const normalizedUsername = readPlayerUsername(username);
-
-    if (!normalizedUsername) {
-      setErrorKey("player.error.usernameInvalid");
-      return;
-    }
-
     const normalizedPassword = readPlayerPassword(password);
 
     if (!normalizedPassword) {
@@ -117,22 +130,66 @@ export function PlayerAuthForm({
       return;
     }
 
-    let normalizedEmail = "";
+    let payload: Record<string, string>;
 
     if (isRegister) {
-      const parsedEmail = readPlayerEmail(email);
+      const normalizedUsername = readPlayerUsername(username);
 
-      if (parsedEmail === null) {
+      if (!normalizedUsername) {
+        setErrorKey("player.error.usernameInvalid");
+        return;
+      }
+
+      // 手机号 = 区号 + 本地号码；本地号码允许用户习惯性带前导 0（0123456789），
+      // 国际格式里要去掉，统一归一化成 +60123456789 再交给共用校验函数。
+      const normalizedPhone = readPlayerPhone(
+        `${phoneCountry}${phoneNumber.replace(/^0+/, "")}`,
+      );
+
+      if (!normalizedPhone) {
+        setErrorKey("player.error.phoneInvalid");
+        return;
+      }
+
+      const normalizedEmail = readPlayerEmail(email);
+
+      if (normalizedEmail === null) {
         setErrorKey("player.error.emailInvalid");
         return;
       }
 
-      normalizedEmail = parsedEmail;
+      if (!normalizedEmail) {
+        setErrorKey("player.error.emailRequired");
+        return;
+      }
 
       if (confirmPassword !== password) {
         setErrorKey("player.error.passwordMismatch");
         return;
       }
+
+      payload = {
+        username: normalizedUsername,
+        password: normalizedPassword,
+        confirmPassword,
+        phone: normalizedPhone,
+        email: normalizedEmail,
+        referralCode: referral,
+        ...(site ? { site } : {}),
+      };
+    } else {
+      const normalizedIdentifier = readPlayerLoginIdentifier(identifier);
+
+      if (!normalizedIdentifier) {
+        setErrorKey("player.error.identifierInvalid");
+        return;
+      }
+
+      payload = {
+        identifier: normalizedIdentifier,
+        password: normalizedPassword,
+        ...(site ? { site } : {}),
+      };
     }
 
     setSubmitting(true);
@@ -142,22 +199,7 @@ export function PlayerAuthForm({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
-        body: JSON.stringify(
-          isRegister
-            ? {
-                username: normalizedUsername,
-                password: normalizedPassword,
-                confirmPassword,
-                email: normalizedEmail,
-                referralCode: referral,
-                ...(site ? { site } : {}),
-              }
-            : {
-                username: normalizedUsername,
-                password: normalizedPassword,
-                ...(site ? { site } : {}),
-              },
-        ),
+        body: JSON.stringify(payload),
       });
 
       const data = (await response
@@ -303,40 +345,106 @@ export function PlayerAuthForm({
             </p>
 
             <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
-              <AuthField
-                label={t("player.auth.username")}
-                value={username}
-                onChange={(event) => setUsername(event.target.value)}
-                autoComplete="username"
-                maxLength={32}
-                required
-                placeholder={t("player.auth.usernamePlaceholder")}
-              />
+              {isRegister ? (
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <AuthField
+                    label={t("player.auth.username")}
+                    value={username}
+                    onChange={(event) => setUsername(event.target.value)}
+                    autoComplete="username"
+                    maxLength={32}
+                    required
+                    placeholder={t("player.auth.usernamePlaceholder")}
+                  />
+
+                  <AuthField
+                    label={t("player.auth.email")}
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    type="email"
+                    inputMode="email"
+                    autoComplete="email"
+                    maxLength={120}
+                    required
+                    placeholder={t("player.auth.emailPlaceholder")}
+                  />
+                </div>
+              ) : (
+                <AuthField
+                  label={t("player.auth.identifier")}
+                  value={identifier}
+                  onChange={(event) => setIdentifier(event.target.value)}
+                  autoComplete="username"
+                  maxLength={120}
+                  required
+                  placeholder={t("player.auth.identifierPlaceholder")}
+                />
+              )}
 
               {isRegister ? (
-                <AuthField
-                  label={t("player.auth.email")}
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  type="email"
-                  autoComplete="email"
-                  maxLength={120}
-                  placeholder={t("player.auth.emailPlaceholder")}
-                />
+                <div>
+                  <label htmlFor="player-phone" className={LABEL_CLASS}>
+                    {t("player.auth.phone")}
+                  </label>
+                  <div className="mt-1.5 flex gap-2">
+                    <div className="relative w-[9.5rem] shrink-0">
+                      <select
+                        aria-label={t("player.auth.phoneCountryLabel")}
+                        value={phoneCountry}
+                        onChange={(event) => setPhoneCountry(event.target.value)}
+                        className={`${INPUT_CLASS} appearance-none pr-8`}
+                      >
+                        {PLAYER_PHONE_COUNTRIES.map((country) => (
+                          <option
+                            key={country.code}
+                            value={country.code}
+                            className="bg-[#0b0b0b] text-neutral-100"
+                          >
+                            {country.code} {t(country.labelKey)}
+                          </option>
+                        ))}
+                      </select>
+                      <span
+                        aria-hidden="true"
+                        className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-neutral-500"
+                      >
+                        ▾
+                      </span>
+                    </div>
+
+                    <input
+                      id="player-phone"
+                      value={phoneNumber}
+                      onChange={(event) =>
+                        setPhoneNumber(event.target.value.replace(/\D/g, ""))
+                      }
+                      type="tel"
+                      inputMode="numeric"
+                      autoComplete="tel-national"
+                      maxLength={phoneCountryMeta.maxDigits}
+                      required
+                      placeholder={t("player.auth.phonePlaceholder")}
+                      className={INPUT_CLASS}
+                    />
+                  </div>
+                  <p className="mt-1.5 text-[10px] leading-4 text-neutral-600">
+                    {t("player.auth.phoneHint")}
+                  </p>
+                </div>
               ) : null}
 
-              <AuthField
-                label={t("player.auth.password")}
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                type="password"
-                autoComplete={isRegister ? "new-password" : "current-password"}
-                required
-                placeholder={t("player.auth.passwordPlaceholder")}
-              />
-
               {isRegister ? (
-                <>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <AuthField
+                    label={t("player.auth.password")}
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    type="password"
+                    autoComplete="new-password"
+                    required
+                    placeholder={t("player.auth.passwordPlaceholder")}
+                  />
+
                   <AuthField
                     label={t("player.auth.confirmPassword")}
                     value={confirmPassword}
@@ -346,18 +454,30 @@ export function PlayerAuthForm({
                     required
                     placeholder={t("player.auth.confirmPasswordPlaceholder")}
                   />
+                </div>
+              ) : (
+                <AuthField
+                  label={t("player.auth.password")}
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  placeholder={t("player.auth.passwordPlaceholder")}
+                />
+              )}
 
-                  <AuthField
-                    label={t("player.auth.referralCode")}
-                    value={referral}
-                    onChange={(event) =>
-                      setReferral(event.target.value.toUpperCase())
-                    }
-                    maxLength={16}
-                    placeholder={t("player.auth.referralPlaceholder")}
-                    className="uppercase tracking-[0.12em] placeholder:normal-case placeholder:tracking-normal"
-                  />
-                </>
+              {isRegister ? (
+                <AuthField
+                  label={t("player.auth.referralCode")}
+                  value={referral}
+                  onChange={(event) =>
+                    setReferral(event.target.value.toUpperCase())
+                  }
+                  maxLength={16}
+                  placeholder={t("player.auth.referralPlaceholder")}
+                  className="uppercase tracking-[0.12em] placeholder:normal-case placeholder:tracking-normal"
+                />
               ) : null}
 
               {errorText ? (

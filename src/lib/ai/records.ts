@@ -363,6 +363,10 @@ export async function createChatLog(input: {
   content: string;
   agentType: AiAgentTypeValue;
   leadId?: string | null;
+  /** 租户侧对话（玩家与 AI 客服）必须带上，平台侧对话留空 */
+  tenantId?: string | null;
+  /** 已登录玩家 id；访客为 null（仍然归属 tenantId） */
+  playerId?: string | null;
 }): Promise<SerializedAiChatLog> {
   const content = redactSensitiveContent(input.content);
 
@@ -376,6 +380,8 @@ export async function createChatLog(input: {
       content,
       agentType: input.agentType,
       leadId: input.leadId ?? null,
+      tenantId: input.tenantId ?? null,
+      playerId: input.playerId ?? null,
     },
     select: {
       id: true,

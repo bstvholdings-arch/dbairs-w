@@ -33,6 +33,7 @@ export const PERMISSIONS = [
   "aiLogs",
   "aiConsole",
   "staff",
+  "integrations",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -44,7 +45,10 @@ export type Permission = (typeof PERMISSIONS)[number];
  * - finance    ：数据大盘 + 财务对账 + 出金审批
  * - tech       ：游戏商 / 游戏库技术配置 + AI 日志（只读）
  * - support    ：客服，仅数据大盘
- * - tenant_admin：只有租户侧的财务对账，其余平台权限一律没有
+ * - tenant_admin：平台权限一律没有。
+ *   商户后台（/tenant/... 与 /api/tenant/...）按「租户分区」放行，
+ *   数据范围由服务端强制 where: { tenantId } 收口，不走这份矩阵，
+ *   避免商户账号因为拿到某个平台权限而混进 /admin。
  *
  * aiConsole 是「AI 中控台」（含战败分析看板），默认只有 super_admin 拥有；
  * 看板里的线索联系方式属于敏感数据，不要下放给 finance / tech / support。
@@ -54,8 +58,17 @@ export const ROLE_PERMISSIONS: Record<AdminRole, readonly Permission[]> = {
   finance: ["dashboard", "finance", "withdrawals"],
   tech: ["providers", "aiLogs"],
   support: ["dashboard"],
-  tenant_admin: ["finance"],
+  tenant_admin: [],
 };
+
+/** 商户后台首页（tenant_admin 的默认落地页与 /admin 越权跳转目标）。 */
+export const TENANT_HOME_PATH = "/tenant/dashboard";
+
+/** 商户后台路径前缀（页面与接口各一份，proxy 用它做分区判断）。 */
+export const TENANT_PAGE_PREFIX = "/tenant";
+
+/** 独立的商户登录页（公开入口，与平台 /login 分开）。 */
+export const TENANT_LOGIN_PATH = "/tenant/login";
 
 /** 各角色登录后的默认落地页（必须是该角色有权访问的页面，否则会循环重定向）。 */
 export const ROLE_HOME_PATH: Record<AdminRole, string> = {
@@ -63,7 +76,7 @@ export const ROLE_HOME_PATH: Record<AdminRole, string> = {
   finance: "/admin",
   tech: "/admin/providers",
   support: "/admin",
-  tenant_admin: "/tenant",
+  tenant_admin: TENANT_HOME_PATH,
 };
 
 /** 页面路径 → 权限。命中规则为「最长前缀优先」。 */
@@ -76,6 +89,8 @@ export const PAGE_ACCESS_RULES: readonly { path: string; permission: Permission 
   { path: "/admin/payments", permission: "payments" },
   { path: "/admin/finance", permission: "finance" },
   { path: "/admin/staff", permission: "staff" },
+  // API 与集成中心：商户对接密钥 / 全局 IP 白名单属于最高敏感配置，只有超管可见
+  { path: "/admin/integrations", permission: "integrations" },
   { path: "/admin/ai-logs", permission: "aiLogs" },
   { path: "/admin/ai-console", permission: "aiConsole" },
   { path: "/finance", permission: "finance" },
@@ -88,6 +103,10 @@ export const PAGE_ACCESS_RULES: readonly { path: string; permission: Permission 
 export const API_ACCESS_RULES: readonly { path: string; permission: Permission }[] = [
   { path: "/api/admin/staff", permission: "staff" },
   { path: "/api/admin/tenants", permission: "tenants" },
+  // API 集成中心：白名单 / 平台密钥状态，与页面同权限（只有超管）
+  { path: "/api/admin/integrations", permission: "integrations" },
+  // 超管「进入商户后台 / 退出代登录」：只有拥有租户管理权限的角色可调用。
+  { path: "/api/admin/impersonation", permission: "tenants" },
   { path: "/api/tenants", permission: "tenants" },
   { path: "/api/admin/providers", permission: "providers" },
   { path: "/api/providers", permission: "providers" },
@@ -180,5 +199,18 @@ export function isTenantApiPath(pathname: string): boolean {
 }
 
 export function isTenantPagePath(pathname: string): boolean {
-  return pathname === "/tenant" || pathname.startsWith("/tenant/");
+  // /tenant/login 是公开入口，不能按「需要商户身份」的页面拦截。
+  if (pathname === TENANT_LOGIN_PATH) {
+    return false;
+  }
+
+  return (
+    pathname === TENANT_PAGE_PREFIX ||
+    pathname.startsWith(`${TENANT_PAGE_PREFIX}/`)
+  );
+}
+
+/** 平台后台路径（/admin 及其子路径）。商户账号一律不允许进入。 */
+export function isAdminPagePath(pathname: string): boolean {
+  return pathname === "/admin" || pathname.startsWith("/admin/");
 }

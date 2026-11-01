@@ -3,15 +3,18 @@
 import { useEffect, useId, useRef, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
-import type { TranslationKey } from "@/lib/i18n-types";
+import {
+  SUPPORT_MESSAGE_MAX_LENGTH,
+  SUPPORT_TOPICS,
+  supportReplyKeyFor,
+} from "@/lib/support-chat";
 
 /**
  * 顶栏 AI 客服弹窗。
  *
- * 当前没有对玩家开放的 AI / 人工坐席接口（/api/ai/chat 仅限后台且需要员工权限），
- * 所以这里是一个纯前端的客服助手：按关键词匹配常见问题并即时给出对应答复，
- * 需要人工处理时引导玩家联系在线客服。等玩家侧接口上线后，只需把
- * `handleSend` 里的本地回复替换成 fetch 即可，UI 与状态机不用改。
+ * 回复规则与「写入商户后台 AI 客服监控」的日志都由 /api/player/support/chat 负责
+ * （服务端按同一份关键词表 src/lib/support-chat.ts 生成文案并落库）。
+ * 网络或数据库异常时退回本地同规则文案，保证玩家侧客服窗口永远可用。
  */
 
 type ChatMessage = {
@@ -19,60 +22,6 @@ type ChatMessage = {
   role: "assistant" | "user";
   text: string;
 };
-
-type SupportTopic = {
-  id: string;
-  labelKey: TranslationKey;
-  replyKey: TranslationKey;
-  pattern: RegExp;
-};
-
-const SUPPORT_TOPICS: SupportTopic[] = [
-  {
-    id: "human",
-    labelKey: "lobby.support.quick.human",
-    replyKey: "lobby.support.reply.human",
-    pattern: /人工|真人客服|专员|客服电话|human|agent|representative|live chat/i,
-  },
-  {
-    id: "deposit",
-    labelKey: "lobby.support.quick.deposit",
-    replyKey: "lobby.support.reply.deposit",
-    pattern: /充值|存款|入账|到账|deposit|top.?up|credit/i,
-  },
-  {
-    id: "withdraw",
-    labelKey: "lobby.support.quick.withdraw",
-    replyKey: "lobby.support.reply.withdraw",
-    pattern: /提现|出金|出款|取款|withdraw|payout|cash.?out/i,
-  },
-  {
-    id: "bonus",
-    labelKey: "lobby.support.quick.bonus",
-    replyKey: "lobby.support.reply.bonus",
-    pattern: /彩金|红利|优惠|奖励|返水|活动|bonus|promotion|rebate|reward|free spin/i,
-  },
-  {
-    id: "account",
-    labelKey: "lobby.support.quick.account",
-    replyKey: "lobby.support.reply.account",
-    pattern: /账号|账户|登录|密码|注册|验证|account|login|password|sign.?up|verify/i,
-  },
-  {
-    id: "game",
-    labelKey: "lobby.support.quick.game",
-    replyKey: "lobby.support.reply.game",
-    pattern: /游戏|卡住|掉线|加载|老虎机|game|stuck|lag|load|slot/i,
-  },
-];
-
-const FALLBACK_REPLY_KEY: TranslationKey = "lobby.support.reply.fallback";
-
-function resolveSupportTopic(message: string): SupportTopic | null {
-  return (
-    SUPPORT_TOPICS.find((topic) => topic.pattern.test(message.trim())) ?? null
-  );
-}
 
 export function SupportChatDialog({
   open,
@@ -83,7 +32,7 @@ export function SupportChatDialog({
   playerName: string | null;
   onClose: () => void;
 }) {
-  const { t } = useLanguage();
+  const { language, t } = useLanguage();
   const titleId = useId();
   const listRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -126,15 +75,14 @@ export function SupportChatDialog({
     [],
   );
 
-  function handleSend(raw: string) {
+  async function handleSend(raw: string) {
     const text = raw.trim();
 
     if (!text || typing) {
       return;
     }
 
-    const topic = resolveSupportTopic(text);
-    const replyKey = topic?.replyKey ?? FALLBACK_REPLY_KEY;
+    const replyKey = supportReplyKeyFor(text);
 
     setMessages((current) => [
       ...current,
@@ -143,13 +91,39 @@ export function SupportChatDialog({
     setDraft("");
     setTyping(true);
 
+    // 服务端生成回复并写入商户后台的 AI 客服监控；失败时用本地同规则文案兜底。
+    let replyText = "";
+
+    try {
+      const response = await fetch("/api/player/support/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        cache: "no-store",
+        body: JSON.stringify({ message: text, language }),
+      });
+
+      if (response.ok) {
+        const data = (await response.json().catch(() => null)) as {
+          reply?: { content?: unknown };
+        } | null;
+        const content = data?.reply?.content;
+
+        if (typeof content === "string" && content.trim()) {
+          replyText = content.trim();
+        }
+      }
+    } catch {
+      // 断网 / 接口异常：保持原有本地客服体验，不向玩家抛错。
+    }
+
     const timer = window.setTimeout(() => {
       setMessages((current) => [
         ...current,
         {
           id: nextMessageId.current++,
           role: "assistant",
-          text: t(replyKey),
+          text: replyText || t(replyKey),
         },
       ]);
       setTyping(false);
@@ -281,7 +255,7 @@ export function SupportChatDialog({
                 key={topic.id}
                 type="button"
                 disabled={typing}
-                onClick={() => handleSend(t(topic.labelKey))}
+                onClick={() => void handleSend(t(topic.labelKey))}
                 className="rounded-full border border-white/[0.08] bg-white/[0.02] px-2.5 py-1 text-[9px] text-neutral-400 transition-colors hover:border-brand/35 hover:text-brand-soft disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {t(topic.labelKey)}
@@ -294,7 +268,7 @@ export function SupportChatDialog({
         <form
           onSubmit={(event) => {
             event.preventDefault();
-            handleSend(draft);
+            void handleSend(draft);
           }}
           className="shrink-0 px-3.5 pb-2 pt-2.5"
         >
@@ -303,7 +277,7 @@ export function SupportChatDialog({
               ref={inputRef}
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
-              maxLength={500}
+              maxLength={SUPPORT_MESSAGE_MAX_LENGTH}
               disabled={typing}
               autoComplete="off"
               placeholder={t("lobby.support.placeholder")}

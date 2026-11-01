@@ -1,8 +1,15 @@
 import { Prisma } from "@prisma/client";
 import type { NextRequest } from "next/server";
 
+import { readCallbackUrl, readContactEmail } from "@/lib/integrations";
+import { sendTenantAdminInviteEmail } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
 import { getSuperAdminFromRequest } from "@/lib/super-admin";
+import {
+  listTenantAdmins,
+  provisionTenantAdminAccount,
+  readTenantAdminEmail,
+} from "@/lib/tenant-admin-account";
 import {
   DOMAIN_PATTERN,
   SUBDOMAIN_PATTERN,
@@ -63,8 +70,10 @@ export async function GET(
       return jsonError("租户不存在", 404);
     }
 
+    const admins = await listTenantAdmins(id);
+
     return Response.json(
-      { tenant },
+      { tenant: { ...tenant, admins } },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
@@ -207,17 +216,111 @@ async function updateTenant(
       data.withdrawalRequiredApprovals = approvals;
     }
 
-    if (Object.keys(data).length === 0) {
+    // API 集成中心（/admin/integrations）的「编辑对接资料」弹窗：
+    // 只允许改对接邮箱与商户专属回调地址，商户专属 API Key 走单独的
+    // POST /api/admin/tenants/[id]/reset-key，避免普通编辑把密钥改坏。
+    if (hasOwn(input, "contactEmail")) {
+      const contactEmail = readContactEmail(input.contactEmail);
+
+      if (contactEmail === null) {
+        return jsonError("对接联系邮箱格式不正确", 400);
+      }
+
+      // 传空串表示清空（发密钥时会提示先补邮箱）。
+      data.contactEmail = contactEmail || null;
+    }
+
+    if (hasOwn(input, "apiCallbackUrl")) {
+      const apiCallbackUrl = readCallbackUrl(input.apiCallbackUrl);
+
+      if (apiCallbackUrl === null) {
+        return jsonError(
+          "商户专属回调地址必须是 http:// 或 https:// 开头的完整地址",
+          400,
+        );
+      }
+
+      // 空串 = 沿用平台默认回调地址，不存空字符串，避免列表里出现空白项。
+      data.apiCallbackUrl = apiCallbackUrl || null;
+    }
+
+    // 分配商户管理员账号：只收邮箱，账号名 / 临时密码由服务端生成。
+    // "" 表示本次不创建；非法格式直接 400，避免半保存。
+    const adminEmail = readTenantAdminEmail(input.adminEmail);
+
+    if (adminEmail === null) {
+      return jsonError("商户管理员邮箱格式不正确", 400);
+    }
+
+    if (Object.keys(data).length === 0 && !adminEmail) {
       return jsonError("没有可更新的字段", 400);
     }
 
-    const tenant = await prisma.tenant.update({
-      where: { id },
-      data,
-      select: tenantSelect,
-    });
+    const tenant =
+      Object.keys(data).length > 0
+        ? await prisma.tenant.update({
+            where: { id },
+            data,
+            select: tenantSelect,
+          })
+        : existing;
 
-    return Response.json({ success: true, tenant });
+    let tenantAdmin:
+      | {
+          status: "created" | "exists" | "conflict" | "failed";
+          username?: string;
+          email?: string;
+          temporaryPassword?: string;
+          emailSent?: boolean;
+          emailError?: string;
+          message?: string;
+        }
+      | undefined;
+
+    if (adminEmail) {
+      const result = await provisionTenantAdminAccount({
+        tenantId: id,
+        email: adminEmail,
+      });
+
+      if (result.status === "created") {
+        // 与「新增租户」保持一致：建号后立刻把登录地址与初始密码发到该邮箱。
+        const emailResult = await sendTenantAdminInviteEmail({
+          tenantName: tenant.name,
+          email: result.account.email ?? adminEmail,
+          username: result.account.username,
+          password: result.temporaryPassword,
+        });
+
+        tenantAdmin = {
+          status: "created",
+          username: result.account.username,
+          email: result.account.email ?? adminEmail,
+          // 明文临时密码只在这里出现一次，数据库只存 bcrypt 哈希。
+          temporaryPassword: result.temporaryPassword,
+          emailSent: emailResult.ok,
+          ...(emailResult.ok ? {} : { emailError: emailResult.error }),
+        };
+      } else if (result.status === "exists") {
+        tenantAdmin = {
+          status: "exists",
+          username: result.account.username,
+          email: result.account.email ?? adminEmail,
+          message: "该邮箱已是本租户的管理员账号，本次未重置密码",
+        };
+      } else {
+        // 冲突 / 失败不阻断租户资料保存：返回 200 + 提示，由弹窗展示。
+        tenantAdmin = { status: result.status, message: result.message };
+      }
+    }
+
+    const admins = await listTenantAdmins(id);
+
+    return Response.json({
+      success: true,
+      tenant: { ...tenant, admins },
+      ...(tenantAdmin ? { tenantAdmin } : {}),
+    });
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&

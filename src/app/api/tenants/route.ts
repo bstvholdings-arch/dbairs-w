@@ -1,8 +1,15 @@
 import { Prisma } from "@prisma/client";
 import type { NextRequest } from "next/server";
 
+import { sendTenantAdminInviteEmail } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
+import { TENANT_ROLE } from "@/lib/rbac";
 import { getSuperAdminFromRequest } from "@/lib/super-admin";
+import {
+  provisionTenantAdminAccount,
+  readTenantAdminEmail,
+  type TenantAdminProvisionResult,
+} from "@/lib/tenant-admin-account";
 
 const tenantSelect = {
   id: true,
@@ -56,6 +63,75 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error("获取租户列表失败:", error);
     return jsonError("服务器内部错误，请稍后重试", 500);
+  }
+}
+
+/** 事务内主动中止创建：Prisma 会连带回滚刚写入的租户记录。 */
+class TenantRegistrationAbort extends Error {}
+
+type TenantAdminCreated = Extract<
+  TenantAdminProvisionResult,
+  { status: "created" }
+>;
+
+type CreateTenantWithAdminResult =
+  | {
+      ok: true;
+      tenant: Prisma.TenantGetPayload<{ select: typeof tenantSelect }>;
+      provision: TenantAdminCreated;
+    }
+  | { ok: false; message: string };
+
+/**
+ * 同一个事务里完成「建租户 + 建商户管理员账号」。
+ *
+ * 账号创建失败（邮箱 / 账号名被并发抢占等）时主动抛异常让事务回滚，
+ * 绝不留下「租户建好了，但没有任何账号能登录」的孤儿数据。
+ */
+async function createTenantWithAdmin(input: {
+  name: string;
+  domain: string;
+  subdomain: string;
+  withdrawalRequiredApprovals: number;
+  planId: string;
+  adminEmail: string;
+}): Promise<CreateTenantWithAdminResult> {
+  try {
+    const created = await prisma.$transaction(async (tx) => {
+      const tenant = await tx.tenant.create({
+        data: {
+          name: input.name,
+          domain: input.domain,
+          subdomain: input.subdomain,
+          withdrawalRequiredApprovals: input.withdrawalRequiredApprovals,
+          planId: input.planId,
+        },
+        select: tenantSelect,
+      });
+
+      const provision = await provisionTenantAdminAccount(
+        { tenantId: tenant.id, email: input.adminEmail },
+        tx,
+      );
+
+      if (provision.status !== "created") {
+        throw new TenantRegistrationAbort(
+          provision.status === "failed"
+            ? provision.message
+            : "该邮箱已绑定其他账号，请换一个邮箱后重试",
+        );
+      }
+
+      return { tenant, provision };
+    });
+
+    return { ok: true, ...created };
+  } catch (error) {
+    if (error instanceof TenantRegistrationAbort) {
+      return { ok: false, message: error.message };
+    }
+
+    throw error;
   }
 }
 
@@ -131,7 +207,24 @@ export async function POST(request: NextRequest) {
       return jsonError("出金审批人数只能是 1、2 或 3", 400);
     }
 
-    const [domainExists, subdomainExists] = await Promise.all([
+    // 商户管理员邮箱在本流程里是必填：建租户的同时要建 tenant_admin 账号并发送登录邮件。
+    const adminEmail = readTenantAdminEmail(input.adminEmail);
+
+    if (adminEmail === null) {
+      return jsonError(
+        "商户管理员邮箱格式不正确，请填写类似 boss@brand.com 的邮箱",
+        400,
+      );
+    }
+
+    if (!adminEmail) {
+      return jsonError(
+        "商户管理员邮箱不能为空：系统需要用它创建商户账号并发送登录邮件",
+        400,
+      );
+    }
+
+    const [domainExists, subdomainExists, emailOwner] = await Promise.all([
       prisma.tenant.findFirst({
         where: { domain: { equals: domain, mode: "insensitive" } },
         select: { id: true },
@@ -139,6 +232,10 @@ export async function POST(request: NextRequest) {
       prisma.tenant.findFirst({
         where: { subdomain: { equals: subdomain, mode: "insensitive" } },
         select: { id: true },
+      }),
+      prisma.adminUser.findFirst({
+        where: { email: { equals: adminEmail, mode: "insensitive" } },
+        select: { id: true, role: true },
       }),
     ]);
 
@@ -150,6 +247,16 @@ export async function POST(request: NextRequest) {
       return jsonError("该子域名已被其他租户使用", 409);
     }
 
+    // AdminUser.email 是全局唯一键：先提前拦一次，避免白跑一个事务。
+    if (emailOwner) {
+      return jsonError(
+        emailOwner.role === TENANT_ROLE
+          ? "该邮箱已绑定为其他商户的管理员账号，请换一个邮箱"
+          : "该邮箱已被平台账号占用，请换一个邮箱",
+        409,
+      );
+    }
+
     // 当前创建弹窗未包含套餐选择。优先关联现有最便宜的套餐；
     // 如果系统尚未配置套餐，则写入占位值，后续可在套餐模块中重新分配。
     const defaultPlan = await prisma.plan.findFirst({
@@ -157,18 +264,44 @@ export async function POST(request: NextRequest) {
       select: { id: true },
     });
 
-    const tenant = await prisma.tenant.create({
-      data: {
-        name,
-        domain,
-        subdomain,
-        withdrawalRequiredApprovals,
-        planId: defaultPlan?.id ?? "unassigned",
-      },
-      select: tenantSelect,
+    const created = await createTenantWithAdmin({
+      name,
+      domain,
+      subdomain,
+      withdrawalRequiredApprovals,
+      planId: defaultPlan?.id ?? "unassigned",
+      adminEmail,
     });
 
-    return Response.json({ success: true, tenant }, { status: 201 });
+    if (!created.ok) {
+      return jsonError(created.message, 409);
+    }
+
+    // 邮件在事务提交之后发送：发信失败不影响已经落库的租户与账号，
+    // 弹窗仍会展示一次性临时密码，超管可以手动发给商户。
+    const emailResult = await sendTenantAdminInviteEmail({
+      tenantName: created.tenant.name,
+      email: adminEmail,
+      username: created.provision.account.username,
+      password: created.provision.temporaryPassword,
+    });
+
+    return Response.json(
+      {
+        success: true,
+        tenant: { ...created.tenant, admins: [created.provision.account] },
+        tenantAdmin: {
+          status: "created",
+          username: created.provision.account.username,
+          email: created.provision.account.email ?? adminEmail,
+          // 明文临时密码只在这里出现一次，数据库只存 bcrypt 哈希。
+          temporaryPassword: created.provision.temporaryPassword,
+          emailSent: emailResult.ok,
+          ...(emailResult.ok ? {} : { emailError: emailResult.error }),
+        },
+      },
+      { status: 201 },
+    );
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&

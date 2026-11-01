@@ -11,11 +11,10 @@ import { formatAmount, formatDate } from "@/lib/format";
 import type { TranslationKey } from "@/lib/i18n-types";
 import { playerErrorKey } from "@/lib/player-errors";
 import type { PlayerProfileData } from "@/lib/player-profile";
-import {
-  readPlayerPassword,
-  readPlayerWalletAddress,
-} from "@/lib/player-validation";
+import { readPlayerPassword } from "@/lib/player-validation";
 import { buildStorefrontTheme } from "@/lib/storefront";
+
+import { PlayerWithdrawalAccounts } from "./player-withdrawal-accounts";
 
 export type PlayerProfileTab = "wallet" | "history" | "security" | "referral";
 
@@ -67,6 +66,58 @@ function shortValue(value: string, head = 10, tail = 6) {
   return `${value.slice(0, head)}…${value.slice(-tail)}`;
 }
 
+/** 实名认证状态文案（NONE = 从未提交） */
+const KYC_STATUS_KEYS: Record<string, TranslationKey> = {
+  NONE: "player.kyc.status.none",
+  PENDING: "player.kyc.status.pending",
+  APPROVED: "player.kyc.status.approved",
+  REJECTED: "player.kyc.status.rejected",
+};
+
+/**
+ * 钱包页顶部的实名认证提示条。
+ *
+ * 未认证 -> 「请完成实名认证以解锁提现」并给出去认证入口；
+ * 审核中 / 已驳回 / 已通过 -> 展示对应状态，入口一直保留（可看进度）。
+ */
+function KycNotice({ kyc }: { kyc: PlayerProfileData["kyc"] }) {
+  const { t } = useLanguage();
+
+  const tone =
+    kyc.status === "APPROVED"
+      ? "border-emerald-400/25 bg-emerald-400/10 text-emerald-200"
+      : kyc.status === "REJECTED"
+        ? "border-red-400/25 bg-red-400/10 text-red-200"
+        : kyc.status === "PENDING"
+          ? "border-amber-400/25 bg-amber-400/10 text-amber-200"
+          : "border-brand/25 bg-brand/[0.06] text-brand-pale";
+
+  const text =
+    kyc.status === "APPROVED"
+      ? t("player.kyc.banner.approved")
+      : kyc.status === "PENDING"
+        ? t("player.kyc.banner.pending")
+        : kyc.status === "REJECTED"
+          ? t("player.kyc.banner.rejected", {
+              reason: kyc.rejectReason ?? "",
+            })
+          : t("player.kyc.banner.required");
+
+  return (
+    <div
+      className={`flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-[11px] ${tone}`}
+    >
+      <p className="min-w-0 leading-5">{text}</p>
+      <Link
+        href="/player/kyc"
+        className="inline-flex h-8 shrink-0 items-center rounded-lg border border-white/20 px-3 text-[10px] font-semibold transition-colors hover:bg-white/10"
+      >
+        {t("player.kyc.profileAction")}
+      </Link>
+    </div>
+  );
+}
+
 /**
  * 玩家中心：钱包 / 注单 / 安全 / 推广 四个 Tab。
  * 服务端一次取齐数据（见 lib/player-profile.ts），这里只做交互和局部状态更新，
@@ -95,13 +146,6 @@ export function PlayerProfileClient({
   const [bonusClaimed, setBonusClaimed] = useState(
     profile.dailyBonus.claimedToday,
   );
-  const [walletInput, setWalletInput] = useState(
-    profile.player.walletAddress ?? "",
-  );
-  const [walletBusy, setWalletBusy] = useState(false);
-  const [walletErrorKey, setWalletErrorKey] = useState<TranslationKey | null>(
-    null,
-  );
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -114,7 +158,6 @@ export function PlayerProfileClient({
   useEffect(() => {
     setCurrent(profile);
     setBonusClaimed(profile.dailyBonus.claimedToday);
-    setWalletInput(profile.player.walletAddress ?? "");
   }, [profile]);
 
   useEffect(() => {
@@ -199,94 +242,6 @@ export function PlayerProfileClient({
     }
   }
 
-  async function handleSaveWallet(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setWalletErrorKey(null);
-
-    const raw = walletInput.trim();
-    const parsed = raw ? readPlayerWalletAddress(raw) : "";
-
-    if (raw && !parsed) {
-      setWalletErrorKey("player.error.walletInvalid");
-      return;
-    }
-
-    setWalletBusy(true);
-
-    try {
-      const response = await fetch("/api/player/wallet", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify({ walletAddress: parsed }),
-      });
-      const data = (await response.json().catch(() => ({}))) as {
-        walletAddress?: string | null;
-        code?: string;
-      };
-
-      if (!response.ok) {
-        setWalletErrorKey(playerErrorKey(data.code) ?? "player.error.generic");
-        return;
-      }
-
-      const nextWallet = data.walletAddress ?? null;
-      setCurrent((prev) => ({
-        ...prev,
-        player: { ...prev.player, walletAddress: nextWallet },
-      }));
-      setWalletInput(nextWallet ?? "");
-      setToast(
-        nextWallet
-          ? "player.security.walletSaved"
-          : "player.security.walletRemoved",
-      );
-      router.refresh();
-    } catch {
-      setWalletErrorKey("common.networkError");
-    } finally {
-      setWalletBusy(false);
-    }
-  }
-
-  async function handleUnbindWallet() {
-    if (!window.confirm(t("player.security.removeWalletConfirm"))) {
-      return;
-    }
-
-    setWalletInput("");
-    setWalletErrorKey(null);
-    setWalletBusy(true);
-
-    try {
-      const response = await fetch("/api/player/wallet", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify({ walletAddress: "" }),
-      });
-      const data = (await response.json().catch(() => ({}))) as {
-        code?: string;
-      };
-
-      if (!response.ok) {
-        setWalletErrorKey(playerErrorKey(data.code) ?? "player.error.generic");
-        return;
-      }
-
-      setCurrent((prev) => ({
-        ...prev,
-        player: { ...prev.player, walletAddress: null },
-      }));
-      setToast("player.security.walletRemoved");
-      router.refresh();
-    } catch {
-      setWalletErrorKey("common.networkError");
-    } finally {
-      setWalletBusy(false);
-    }
-  }
-
   async function handleChangePassword(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPasswordErrorKey(null);
@@ -355,6 +310,15 @@ export function PlayerProfileClient({
 
   const summary = current.summary;
   const bonusAmount = formatAmount(current.dailyBonus.amount);
+
+  // 运营口径：顶部卡片只呈现正向数字。
+  // 「今日输赢」= 今日派彩 - 今日下注，只有盈利时才显示金额（+$xxx），
+  // 亏损 / 打平一律显示 $0.00 —— 绝不让玩家在自己的中心页上看到亏损数字。
+  const todayNet =
+    Number(summary.todayPayout) - Number(summary.todayBetAmount);
+  const todayProfit = Number.isFinite(todayNet) && todayNet > 0 ? todayNet : 0;
+  const todayProfitValue =
+    todayProfit > 0 ? `+$${formatAmount(todayProfit)}` : "$0.00";
 
   return (
     <div
@@ -482,31 +446,31 @@ export function PlayerProfileClient({
         <div className="mt-5">
           {tab === "wallet" ? (
             <div className="space-y-5">
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
-                <StatCard
+              <KycNotice kyc={current.kyc} />
+
+              {/* 顶部激励卡：只保留正向数据（余额 / 奖励 / 今日盈利）。
+                  累计充值、累计下注、累计派彩一律不展示 —— 玩家算不出「我亏了多少」。 */}
+              <div className="mx-auto grid w-full max-w-4xl grid-cols-1 gap-4 sm:grid-cols-3">
+                <HighlightStatCard
                   label={t("player.wallet.currentBalance")}
                   value={`$${formatAmount(summary.balance)}`}
+                  hint={t("player.wallet.balanceHint")}
                   accent
                 />
-                <StatCard
-                  label={t("player.wallet.totalDeposits")}
-                  value={`$${formatAmount(summary.totalDeposits)}`}
-                />
-                <StatCard
-                  label={t("player.wallet.totalWithdrawals")}
-                  value={`$${formatAmount(summary.totalWithdrawals)}`}
-                />
-                <StatCard
+                <HighlightStatCard
                   label={t("player.wallet.totalRewards")}
                   value={`$${formatAmount(summary.totalRewards)}`}
+                  hint={t("player.wallet.rewardsHint")}
                 />
-                <StatCard
-                  label={t("player.wallet.totalBets")}
-                  value={`$${formatAmount(summary.totalBetAmount)}`}
-                />
-                <StatCard
-                  label={t("player.wallet.totalPayout")}
-                  value={`$${formatAmount(summary.totalPayout)}`}
+                <HighlightStatCard
+                  label={t("player.wallet.todayPl")}
+                  value={todayProfitValue}
+                  hint={
+                    todayProfit > 0
+                      ? t("player.wallet.todayPlUp")
+                      : t("player.wallet.todayPlFlat")
+                  }
+                  positive={todayProfit > 0}
                 />
               </div>
 
@@ -869,6 +833,11 @@ export function PlayerProfileClient({
                     value={current.player.email ?? "—"}
                   />
                   <InfoRow
+                    label={t("player.security.phone")}
+                    value={current.player.phone ?? "—"}
+                    mono
+                  />
+                  <InfoRow
                     label={t("player.security.referralCode")}
                     value={current.player.referralCode}
                     mono
@@ -887,26 +856,6 @@ export function PlayerProfileClient({
                   />
                 </dl>
 
-                <div className="mt-4 rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
-                  <p className="text-[11px] font-semibold text-neutral-300">
-                    {t("player.security.boundWallet")}
-                  </p>
-                  <p className="mt-1 break-all font-mono text-[11px] text-brand-soft">
-                    {current.player.walletAddress ??
-                      t("player.security.noWallet")}
-                  </p>
-                  {current.player.walletAddress ? (
-                    <button
-                      type="button"
-                      onClick={() => void handleUnbindWallet()}
-                      disabled={walletBusy}
-                      className="mt-2.5 h-8 rounded-lg border border-red-400/25 px-3 text-[10px] font-semibold text-red-300 transition-colors hover:bg-red-400/10 disabled:opacity-60"
-                    >
-                      {t("player.security.removeWallet")}
-                    </button>
-                  ) : null}
-                </div>
-
                 <button
                   type="button"
                   onClick={() => void handleLogout()}
@@ -921,41 +870,41 @@ export function PlayerProfileClient({
 
               <div className="space-y-4">
                 <SectionCard
-                  title={t("player.security.walletTitle")}
-                  subtitle={t("player.security.walletHint")}
+                  title={t("player.kyc.profileTitle")}
+                  subtitle={t("player.kyc.profileHint")}
                 >
-                  <form onSubmit={handleSaveWallet} className="space-y-3">
-                    <label className="block">
-                      <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-neutral-500">
-                        {t("player.security.walletLabel")}
-                      </span>
-                      <input
-                        type="text"
-                        value={walletInput}
-                        onChange={(event) =>
-                          setWalletInput(event.target.value)
-                        }
-                        placeholder="TRC20 / ERC20 / BEP20"
-                        autoComplete="off"
-                        spellCheck={false}
-                        className={INPUT_CLASS}
-                      />
-                    </label>
-                    {walletErrorKey ? (
-                      <p className="text-[11px] text-red-300">
-                        {t(walletErrorKey)}
-                      </p>
-                    ) : null}
-                    <button
-                      type="submit"
-                      disabled={walletBusy}
-                      className="h-10 w-full rounded-xl bg-gradient-to-r from-brand-deep via-brand to-brand-soft text-xs font-bold text-brand-ink transition-opacity hover:opacity-90 disabled:opacity-60"
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-brand/25 bg-brand/[0.08] px-2.5 py-1 text-[10px] font-semibold text-brand-pale">
+                      <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                      {labelFor(KYC_STATUS_KEYS, current.kyc.status, t)}
+                    </span>
+                    <Link
+                      href="/player/kyc"
+                      className="inline-flex h-8 items-center rounded-lg border border-brand/30 px-3 text-[10px] font-semibold text-brand-soft transition-colors hover:bg-brand/10"
                     >
-                      {walletBusy
-                        ? t("player.security.saving")
-                        : t("player.security.saveWallet")}
-                    </button>
-                  </form>
+                      {t("player.kyc.profileAction")}
+                    </Link>
+                  </div>
+                  {current.kyc.rejectReason ? (
+                    <p className="mt-2.5 rounded-lg border border-red-400/25 bg-red-400/10 px-2.5 py-2 text-[10px] leading-4 text-red-200">
+                      {t("player.kyc.rejectedReason")}：{current.kyc.rejectReason}
+                    </p>
+                  ) : null}
+                </SectionCard>
+
+                <SectionCard
+                  title={t("player.security.withdrawalTitle")}
+                  subtitle={t("player.security.withdrawalHint")}
+                >
+                  <PlayerWithdrawalAccounts
+                    accounts={current.withdrawalAccounts}
+                    onChange={(nextAccounts) =>
+                      setCurrent((prev) => ({
+                        ...prev,
+                        withdrawalAccounts: nextAccounts,
+                      }))
+                    }
+                  />
                 </SectionCard>
 
                 <SectionCard
@@ -1185,6 +1134,57 @@ function StatCard({
       >
         {value}
       </p>
+    </div>
+  );
+}
+
+/**
+ * 玩家中心顶部的「激励型」数据卡：比 StatCard 更大、居中均匀排布。
+ *
+ * 运营规则：这里只放正向数字（余额 / 累计奖励 / 今日盈利），
+ * 累计充值、累计下注、累计派彩这类能让玩家算出总亏损的指标一律不出现；
+ * 今日输赢亏损时调用方传 `$0.00`，卡片保持中性色，不给负面暗示。
+ */
+function HighlightStatCard({
+  label,
+  value,
+  hint,
+  accent = false,
+  positive = false,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  accent?: boolean;
+  positive?: boolean;
+}) {
+  const tone = accent
+    ? "border-brand/30 bg-gradient-to-br from-brand/[0.14] via-brand/[0.05] to-transparent"
+    : positive
+      ? "border-emerald-400/25 bg-emerald-400/[0.08]"
+      : "border-white/[0.07] bg-white/[0.03]";
+
+  const valueTone = accent
+    ? "text-brand-pale"
+    : positive
+      ? "text-emerald-300"
+      : "text-neutral-200";
+
+  return (
+    <div
+      className={`flex flex-col items-center justify-center rounded-2xl border px-5 py-6 text-center sm:px-6 sm:py-7 ${tone}`}
+    >
+      <p className="truncate text-[10px] font-semibold uppercase tracking-[0.22em] text-neutral-500">
+        {label}
+      </p>
+      <p
+        className={`mt-2 truncate font-mono text-2xl font-black tabular-nums sm:text-3xl ${valueTone}`}
+      >
+        {value}
+      </p>
+      {hint ? (
+        <p className="mt-1.5 truncate text-[10px] text-neutral-600">{hint}</p>
+      ) : null}
     </div>
   );
 }

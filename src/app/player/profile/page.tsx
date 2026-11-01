@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
 
 import {
   PlayerProfileClient,
@@ -30,6 +31,10 @@ export default async function PlayerProfilePage({
 }: {
   searchParams: Promise<{ tab?: string | string[] }>;
 }) {
+  // cacheComponents 下 cookies()/jwt.verify 属于请求期数据（jwt 内部读 Date.now 校验过期），
+  // 先显式 connection() 让本段在请求时渲染，避免预渲染阶段触碰不稳定值。
+  await connection();
+
   const params = await searchParams;
   const session = await getPlayerSessionFromCookies();
 

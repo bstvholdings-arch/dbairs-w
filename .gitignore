@@ -24,6 +24,9 @@
 .DS_Store
 *.pem
 
+# KYC 证件图片私有存储（演示版落盘目录，生产替换为对象存储）
+/.kyc-storage/
+
 # debug
 npm-debug.log*
 yarn-debug.log*

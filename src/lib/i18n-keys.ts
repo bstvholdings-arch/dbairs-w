@@ -108,6 +108,9 @@ export const LOGIN_ERROR_KEYS = {
   "账号或密码错误": "login.error.invalidCredentials",
   "服务器内部错误": "login.error.server",
   "请求体格式错误": "login.error.fallback",
+  // 商户独立登录页（/tenant/login）拒绝了平台员工账号。
+  "该入口仅限商户管理员账号登录，请前往平台登录页 /login":
+    "tenantLogin.error.wrongPortal",
 } as const satisfies Record<string, TranslationKey>;
 
 /** 玩家大厅分类文案，值域与 lobby-games.ts 的 LobbyCategoryFilter 保持一致。 */
@@ -162,6 +165,7 @@ export const PERMISSION_LABEL_KEYS = {
   aiLogs: "rbac.permission.aiLogs",
   aiConsole: "rbac.permission.aiConsole",
   staff: "rbac.permission.staff",
+  integrations: "rbac.permission.integrations",
 } as const satisfies Record<Permission, TranslationKey>;
 
 

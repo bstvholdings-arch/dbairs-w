@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 
 import { parseWithdrawalAmount } from "@/lib/payment-gateway";
 import { resolvePaymentPlayerIdentity } from "@/lib/payment-player";
+import { KYC_REQUIRED_CODE, KYC_REQUIRED_MESSAGE } from "@/lib/kyc";
 import { prisma } from "@/lib/prisma";
 
 function jsonError(message: string, status: number) {
@@ -19,6 +20,10 @@ function jsonError(message: string, status: number) {
  * - 这里只创建 pending 提现单，不扣 Player.balance，也不写流水；
  * - 代付商成功回调 /api/withdrawal/callback 后才扣余额并写 Transaction；
  * - 不创建、不扣减任何平台内部资金账户。
+ *
+ * 实名认证（KYC）前置校验：
+ * - 必须存在 status=APPROVED 的 PlayerKyc 记录，否则直接 403 + code=kyc_required；
+ * - 校验放在余额判断之前，未实名的账号连余额信息都拿不到。
  */
 export async function POST(request: NextRequest) {
   try {
@@ -93,6 +98,23 @@ export async function POST(request: NextRequest) {
 
     if (player.status !== "active") {
       return jsonError("玩家账号当前不可提现", 409);
+    }
+
+    // 实名认证闸门：没有 APPROVED 记录直接 403，提示语由 code 在前端本地化。
+    const kyc = await prisma.playerKyc.findFirst({
+      where: {
+        playerId: player.id,
+        tenantId: player.tenantId,
+        status: "APPROVED",
+      },
+      select: { id: true },
+    });
+
+    if (!kyc) {
+      return Response.json(
+        { error: KYC_REQUIRED_MESSAGE, code: KYC_REQUIRED_CODE },
+        { status: 403, headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     if (player.balance.lt(amount)) {

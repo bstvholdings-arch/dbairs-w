@@ -31,6 +31,16 @@ model Tenant {
   themeColor   String @default("#d4af37")
   layoutConfig Json?
 
+  // API 集成中心（/admin/integrations）：商户对接资料
+  // contactEmail：对接联系邮箱，发送 / 重置密钥时的默认收件人
+  // apiCallbackUrl：商户专属回调地址，留空表示使用平台默认回调
+  // apiKey：商户专属 API Key，明文入库（与 PaymentGateway.apiKey 同一口径），
+  //         所有列表 / 详情接口只返回掩码；重置接口仅在响应里返回一次新密钥
+  contactEmail    String?
+  apiCallbackUrl  String?
+  apiKey          String?
+  apiKeyUpdatedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -45,6 +55,10 @@ model Tenant {
   referralRewards  ReferralReward[]
   dailyBonusClaims DailyBonusClaim[]
   agentFaqs        AgentFaq[]
+  aiChatLogs       AiChatLog[]
+  kycRecords       PlayerKyc[]
+
+  withdrawalAccounts PlayerWithdrawalAccount[]
 }
 
 // 2. 套餐表 (Plan - 标准版/高阶版配置)
@@ -67,7 +81,8 @@ model Player {
   tenant           Tenant    @relation(fields: [tenantId], references: [id])
   username         String // 玩家账号
   passwordHash     String
-  email            String? // 选填，同一租户内唯一（用于找回密码 / 通知）
+  email            String? // 电子邮箱：注册必填、登录可用；同一租户内唯一（历史数据可为空）
+  phone            String? // 手机号：注册必填、登录可用；存 E.164 形式（如 +60123456789），同一租户内唯一
   balance          Decimal   @default(0.00) @db.Decimal(18, 6) // 资金余额
   status           String    @default("active")
   walletAddress    String? // 玩家常用提现 / 收款地址（安全中心可维护）
@@ -86,9 +101,13 @@ model Player {
   withdrawals     Withdrawal[]
   dailyBonuses    DailyBonusClaim[]
   referralRewards ReferralReward[]  @relation("ReferralInviter")
+  aiChatLogs      AiChatLog[]
+  kyc             PlayerKyc? // 实名认证（一人一条，驳回后可重新提交覆盖）
+  withdrawalAccounts PlayerWithdrawalAccount[] // 全球法币 / 加密货币提现账号（可多条，一条默认）
 
   @@unique([tenantId, username]) // 同一个站内账号唯一
   @@unique([tenantId, email]) // 同一站内邮箱唯一（NULL 不参与唯一约束）
+  @@unique([tenantId, phone]) // 同一站内手机号唯一（NULL 不参与唯一约束）
   @@index([tenantId, referredById])
 }
 
@@ -189,6 +208,36 @@ model Withdrawal {
   @@index([gatewayId])
 }
 
+// 6.1 玩家提现账号 (PlayerWithdrawalAccount - 全球法币 / 加密货币收款账号)
+// 一个玩家可绑定多个收款账号，同一「币种 + 网络」只保留一条（重复提交做覆盖更新）。
+// - accountType = "crypto"：只用 walletAddress（currency=USDT，network=TRC20 / ERC20）；
+// - accountType = "bank"  ：只用 bankName / accountNumber / accountName（法币银行账户）。
+// network 对法币账号存空字符串而不是 NULL：Postgres 里 NULL 不参与唯一比较，
+// 用空串才能让「同一玩家同一法币」也被 @@unique 拦住。
+// isDefault 每个玩家最多一条，写入时先清空其它账号再落库（见 /api/player/withdrawal-accounts）。
+// 默认的加密货币账号会同步回写 Player.walletAddress，兼容旧提现流程与商户后台展示。
+model PlayerWithdrawalAccount {
+  id            String   @id @default(uuid())
+  playerId      String
+  player        Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  currency      String // USDT / MYR / THB / IDR / VND / AUD / SGD / EUR / USD / HKD / NPR / INR
+  network       String   @default("") // 加密货币网络：TRC20 / ERC20；法币为空串
+  accountType   String   @default("crypto") // crypto, bank
+  walletAddress String? // 加密货币钱包地址
+  bankName      String? // 银行名称（法币）
+  accountNumber String? // 银行账号（法币）
+  accountName   String? // 账户持有人姓名（法币）
+  isDefault     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([playerId, currency, network])
+  @@index([tenantId, createdAt])
+  @@index([playerId, isDefault])
+}
+
 // 7. 后台管理员表 (AdminUser - 用于 Super Admin 和 租户老板登录)
 // role 决定后台可见的菜单与可调用的接口（RBAC 矩阵见 src/lib/rbac.ts）：
 //   super_admin：平台全部权限（含员工管理）
@@ -213,10 +262,17 @@ model AdminUser {
   passwordHash     String
   // 后台账号原本只有 username；按邮箱找回密码必须先有邮箱字段。
   email            String?   @unique
+  phone            String? // 联系手机号（E.164，如 +60123456789）；商户账号按租户内唯一
   resetToken       String?   @unique // 一次性找回密码 Token（UUID），使用后立即清空
   resetTokenExpiry DateTime? // Token 过期时间（默认 30 分钟）
   role             AdminRole @default(support)
   createdAt        DateTime  @default(now())
+
+  reviewedKycs PlayerKyc[] @relation("KycReviewer")
+
+  // 同一租户内邮箱 / 手机号不重复（平台员工的 tenantId 为 NULL，由上面的全局 @unique 兜底）
+  @@unique([tenantId, email])
+  @@unique([tenantId, phone])
 }
 
 // 8. 游戏商表 (GameProvider - GGR 点数结算配置)
@@ -408,11 +464,17 @@ model DepositOrder {
   @@index([txHash])
 }
 
-// 14. AI 对话日志 (AiChatLog - 永久保留的 B 端销售对话)
+// 14. AI 对话日志 (AiChatLog)
 // role: user / assistant；agentType: sales（销冠 AI）/ tech / support。
 // content 在写入前统一做脱敏（邮箱、手机号、钱包地址、TG 账号），
 // 联系方式只保留在 LeadRecord.tgOrEmail 里，供超管跟进。
 // leadId 为空代表「还没绑定线索」的售前咨询，删除线索时置空而不是删日志。
+//
+// 多租户隔离：
+// - tenantId 为空 = 平台侧对话（销冠 AI 招商、技术 / 财务助手）；
+// - tenantId 有值 = 某个商户站内玩家与 AI 客服的对话（agentType=support），
+//   商户后台 /tenant/ai-logs 只能按自己的 tenantId 查询。
+// - playerId 为空代表未登录访客（仍然归属到 tenantId，便于商户查看访客咨询）。
 model AiChatLog {
   id        String      @id @default(uuid())
   role      String // user, assistant
@@ -420,10 +482,16 @@ model AiChatLog {
   agentType String      @default("sales") // sales, tech, finance, audit, strategist（support 为历史兼容）
   leadId    String?
   lead      LeadRecord? @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  tenantId  String?
+  tenant    Tenant?     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  playerId  String?
+  player    Player?     @relation(fields: [playerId], references: [id], onDelete: SetNull)
   createdAt DateTime    @default(now())
 
   @@index([agentType, createdAt])
   @@index([leadId, createdAt])
+  @@index([tenantId, createdAt])
+  @@index([playerId, createdAt])
 }
 
 // 15. 客户线索 / 招商战败分析 (LeadRecord)
@@ -495,4 +563,59 @@ model AgentConfig {
   updatedAt    DateTime @updatedAt
 
   @@map("AiAgentConfig")
+}
+
+// 18. KYC 实名认证 (PlayerKyc)
+// 状态与平台网关审核（GatewayReviewStatus）完全是同一套语义：
+//   PENDING  玩家已提交，等待商户老板审核；
+//   APPROVED 审核通过，提现接口才放行（见 /api/withdrawal/create 的前置校验）；
+//   REJECTED 审核驳回，rejectReason 必填，玩家可带新资料重新提交（覆盖本条记录并回到 PENDING）。
+//
+// 多租户隔离：tenantId 与 playerId 同时落库，playerId 库层唯一（一个玩家只有一条），
+// 商户后台所有查询固定 where: { tenantId }，别家玩家的申请既查不到也审不了。
+//
+// 证件图片：idCardFrontUrl / idCardBackUrl 存的是「受控访问路径」
+// （/api/player/kyc/files/<key>），文件本体放在仓库外的私有目录 .kyc-storage/，
+// 必须带玩家或商户会话才能读取。生产环境应替换成对象存储 + 短期签名 URL。
+enum KycStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model PlayerKyc {
+  id             String    @id @default(uuid())
+  tenantId       String
+  tenant         Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  playerId       String    @unique
+  player         Player    @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  realName       String // 真实姓名
+  idNumber       String // 证件号码
+  idCardFrontUrl String // 证件正面（受控访问路径，非公网直链）
+  idCardBackUrl  String // 证件反面（受控访问路径，非公网直链）
+  status         KycStatus @default(PENDING)
+  rejectReason   String? // 仅 REJECTED 时有值
+  reviewedById   String? // 审核人（AdminUser.id），超管代审时也会记录
+  reviewedBy     AdminUser? @relation("KycReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, createdAt])
+}
+
+// 19. 全局 IP 白名单（API 集成中心 /admin/integrations 区域 B）
+// 下游商户共用同一份白名单：只有命中名单的调用方来源 IP 才允许调用开放接口。
+// ip 支持单个 IPv4 / IPv6 或 CIDR 段（如 203.0.113.10、203.0.113.0/24），
+// 唯一键保证重复粘贴同一批 IP 时不会产生重复行。
+// createdBy 只记 AdminUser.id 用于审计，不建外键：员工账号被删不应连带清空白名单。
+model IntegrationIpWhitelist {
+  id        String   @id @default(uuid())
+  ip        String   @unique
+  note      String?
+  createdBy String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
 }

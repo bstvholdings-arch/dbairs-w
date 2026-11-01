@@ -1,7 +1,9 @@
-import type { Prisma } from "@prisma/client";
+import type { KycStatus, Prisma } from "@prisma/client";
 
-import { prisma } from "./prisma";
 import type { PlayerSessionInfo } from "./player-session";
+import { listPlayerWithdrawalAccounts } from "./player-withdrawal-accounts";
+import { prisma } from "./prisma";
+import type { PlayerWithdrawalAccountView } from "./withdrawal-accounts";
 
 const REFERRAL_REWARD_RATE = Number(process.env.REFERRAL_REWARD_RATE ?? "0.05");
 const DAILY_BONUS_AMOUNT = Number(process.env.DAILY_BONUS_AMOUNT ?? "0.5");
@@ -51,6 +53,7 @@ export type PlayerProfileData = {
     id: string;
     username: string;
     email: string | null;
+    phone: string | null;
     walletAddress: string | null;
     referralCode: string;
     createdAt: string;
@@ -64,6 +67,13 @@ export type PlayerProfileData = {
     totalRewards: string;
     totalBetAmount: string;
     totalPayout: string;
+    /**
+     * 今日（UTC 零点起、剔除 void 作废单）的下注额 / 派彩额。
+     * 玩家中心「今日输赢」= todayPayout - todayBetAmount，
+     * 页面只展示正向净盈利，亏损 / 打平一律按 $0.00 处理。
+     */
+    todayBetAmount: string;
+    todayPayout: string;
     pendingDeposits: number;
     pendingWithdrawals: number;
   };
@@ -71,6 +81,8 @@ export type PlayerProfileData = {
   deposits: PlayerProfileDeposit[];
   withdrawals: PlayerProfileWithdrawal[];
   bets: PlayerProfileBet[];
+  /** 安全 Tab 的「提现账号」列表：加密货币 + 全球法币收款账号 */
+  withdrawalAccounts: PlayerWithdrawalAccountView[];
   referral: {
     code: string;
     invitedCount: number;
@@ -82,6 +94,15 @@ export type PlayerProfileData = {
     amount: string;
     claimedToday: boolean;
   };
+  /** 实名认证状态：NONE 表示从未提交过 */
+  kyc: PlayerProfileKyc;
+};
+
+export type PlayerProfileKyc = {
+  status: "NONE" | KycStatus;
+  rejectReason: string | null;
+  submittedAt: string | null;
+  reviewedAt: string | null;
 };
 
 function safeRate() {
@@ -127,6 +148,8 @@ export async function getPlayerProfileData(
     rewardAggregate,
     betAggregate,
     payoutAggregate,
+    todayBetAggregate,
+    todayPayoutAggregate,
     pendingDeposits,
     pendingWithdrawals,
     transactions,
@@ -136,6 +159,8 @@ export async function getPlayerProfileData(
     invitedCount,
     referralRewardAggregate,
     dailyBonusClaim,
+    kycRecord,
+    withdrawalAccounts,
   ] = await Promise.all([
     prisma.transaction.aggregate({
       where: { playerId: session.id, type: "deposit", status: "success" },
@@ -159,6 +184,24 @@ export async function getPlayerProfileData(
     }),
     prisma.betRecord.aggregate({
       where: { playerId: session.id },
+      _sum: { payoutAmount: true },
+    }),
+    // 今日输赢：和「每日奖励」一样按 UTC 零点切分，只统计有效注单
+    // （void 作废单派彩为 0，计入会凭空放大玩家的“亏损”）。
+    prisma.betRecord.aggregate({
+      where: {
+        playerId: session.id,
+        status: { not: "void" },
+        createdAt: { gte: utcStartOfToday() },
+      },
+      _sum: { betAmount: true },
+    }),
+    prisma.betRecord.aggregate({
+      where: {
+        playerId: session.id,
+        status: { not: "void" },
+        createdAt: { gte: utcStartOfToday() },
+      },
       _sum: { payoutAmount: true },
     }),
     prisma.depositOrder.count({
@@ -238,6 +281,18 @@ export async function getPlayerProfileData(
       },
       select: { id: true },
     }),
+    // 实名认证：玩家中心要显示「请完成实名认证以解锁提现」，必须带上 tenantId 双条件
+    prisma.playerKyc.findFirst({
+      where: { playerId: session.id, tenantId: session.tenantId },
+      select: {
+        status: true,
+        rejectReason: true,
+        createdAt: true,
+        reviewedAt: true,
+      },
+    }),
+    // 提现账号（加密货币 + 全球法币）：安全 Tab 的列表与动态表单都用这份数据
+    listPlayerWithdrawalAccounts(session.id, session.tenantId),
   ]);
 
   return {
@@ -245,6 +300,7 @@ export async function getPlayerProfileData(
       id: session.id,
       username: session.username,
       email: session.email,
+      phone: session.phone,
       walletAddress: session.walletAddress,
       referralCode: session.referralCode,
       createdAt: session.createdAt,
@@ -258,6 +314,8 @@ export async function getPlayerProfileData(
       totalRewards: decimalSum(rewardAggregate._sum.amount),
       totalBetAmount: decimalSum(betAggregate._sum.betAmount),
       totalPayout: decimalSum(payoutAggregate._sum.payoutAmount),
+      todayBetAmount: decimalSum(todayBetAggregate._sum.betAmount),
+      todayPayout: decimalSum(todayPayoutAggregate._sum.payoutAmount),
       pendingDeposits,
       pendingWithdrawals,
     },
@@ -297,6 +355,7 @@ export async function getPlayerProfileData(
       createdAt: item.createdAt.toISOString(),
       settledAt: item.settledAt?.toISOString() ?? null,
     })),
+    withdrawalAccounts,
     referral: {
       code: session.referralCode,
       invitedCount,
@@ -307,6 +366,12 @@ export async function getPlayerProfileData(
     dailyBonus: {
       amount: safeBonus(),
       claimedToday: Boolean(dailyBonusClaim),
+    },
+    kyc: {
+      status: kycRecord?.status ?? "NONE",
+      rejectReason: kycRecord?.rejectReason ?? null,
+      submittedAt: kycRecord?.createdAt.toISOString() ?? null,
+      reviewedAt: kycRecord?.reviewedAt?.toISOString() ?? null,
     },
   };
 }

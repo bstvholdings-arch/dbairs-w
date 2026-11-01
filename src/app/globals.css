@@ -489,3 +489,165 @@ body {
     }
   }
 }
+
+/*
+ * 玩家中心【提现账号】模块的黑金过渡动效
+ * （见 src/app/player/profile/player-withdrawal-accounts.tsx）
+ * - withdrawal-account-card ：卡片入场（淡入 + 上浮 + 微缩放），逐条 staggered 延迟由组件内联 animationDelay 控制；
+ * - withdrawal-account-sheen：悬停时扫过一道金色流光；
+ * - withdrawal-account-default：默认账号的呼吸金边（颜色跟随租户主色 var(--sf-brand)）；
+ * - withdrawal-default-dot：默认徽标里的金点脉动；
+ * - withdrawal-fields     ：切换币种 / 提示文案挂载时的淡入上滑；
+ * - withdrawal-button-sheen：保存按钮悬停时的流光。
+ */
+.withdrawal-account-card {
+  animation: withdrawal-account-enter 520ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* 同时挂入场动画与呼吸光晕：光晕延迟到入场结束后才开始，不会打断第一帧。 */
+.withdrawal-account-default {
+  animation:
+    withdrawal-account-enter 520ms cubic-bezier(0.22, 1, 0.36, 1) both,
+    withdrawal-default-glow 3.6s ease-in-out 640ms infinite;
+}
+
+.withdrawal-account-sheen {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    115deg,
+    transparent 30%,
+    color-mix(in srgb, var(--sf-brand) 18%, transparent) 48%,
+    transparent 66%
+  );
+  opacity: 0;
+  transform: translateX(-45%);
+  pointer-events: none;
+  transition: opacity 300ms ease;
+}
+
+.withdrawal-account-card:hover .withdrawal-account-sheen {
+  opacity: 1;
+  animation: withdrawal-sheen-sweep 1100ms cubic-bezier(0.22, 1, 0.36, 1) 1;
+}
+
+.withdrawal-default-dot {
+  animation: withdrawal-default-pulse 2.2s ease-in-out infinite;
+}
+
+.withdrawal-fields {
+  animation: withdrawal-fields-in 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* 金色按钮里的高光条：默认停在左侧不可见，悬停时扫过整条按钮。 */
+.withdrawal-button-sheen {
+  position: absolute;
+  inset-block: 0;
+  width: 42%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgb(255 255 255 / 0.55),
+    transparent
+  );
+  opacity: 0;
+  transform: translateX(-120%) skewX(-16deg);
+  pointer-events: none;
+}
+
+button:not(:disabled):hover .withdrawal-button-sheen {
+  animation: withdrawal-button-sheen 900ms cubic-bezier(0.22, 1, 0.36, 1) 1;
+}
+
+@keyframes withdrawal-account-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes withdrawal-sheen-sweep {
+  0% {
+    opacity: 0;
+    transform: translateX(-45%);
+  }
+  25% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(45%);
+  }
+}
+
+@keyframes withdrawal-default-glow {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--sf-brand) 26%, transparent),
+      0 14px 34px -22px color-mix(in srgb, var(--sf-brand) 70%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--sf-brand) 48%, transparent),
+      0 18px 42px -18px color-mix(in srgb, var(--sf-brand) 90%, transparent);
+  }
+}
+
+@keyframes withdrawal-default-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(0.9);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
+@keyframes withdrawal-fields-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+@keyframes withdrawal-button-sheen {
+  0% {
+    opacity: 0;
+    transform: translateX(-120%) skewX(-16deg);
+  }
+  45% {
+    opacity: 0.55;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(240%) skewX(-16deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .withdrawal-account-card,
+  .withdrawal-account-default,
+  .withdrawal-fields,
+  .withdrawal-default-dot {
+    animation: none;
+  }
+
+  .withdrawal-account-sheen,
+  .withdrawal-button-sheen {
+    display: none;
+  }
+}
+

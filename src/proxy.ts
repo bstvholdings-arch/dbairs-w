@@ -3,13 +3,20 @@ import type { NextRequest } from "next/server";
 
 import { verifyToken } from "@/lib/auth";
 import {
+  IMPERSONATION_COOKIE,
+  verifyImpersonationTicket,
+} from "@/lib/impersonation";
+import {
   homePathForRole,
+  isAdminPagePath,
   isAdminRole,
   isTenantApiPath,
   isTenantPagePath,
   can,
   permissionForApi,
   permissionForPage,
+  TENANT_HOME_PATH,
+  TENANT_LOGIN_PATH,
   TENANT_ROLE,
 } from "@/lib/rbac";
 
@@ -97,6 +104,16 @@ export function proxy(request: NextRequest) {
   const session = token ? verifyToken(token) : null;
   const isApi = pathname.startsWith("/api/");
 
+  // 超管「代登录」票据：只有 super_admin 且票据属于本人时才有效。
+  // 它是平台账号进入 /tenant 的唯一通道；tenant_admin 自己不需要票据。
+  const impersonation =
+    session?.role === "super_admin"
+      ? verifyImpersonationTicket(
+          request.cookies.get(IMPERSONATION_COOKIE)?.value,
+          session.userId,
+        )
+      : null;
+
   // 玩家大厅的只读接口：访客 / 玩家 JWT / 租户管理员都要能读取，
   // 因此无论登录态如何都放行 GET；写操作仍走下面的权限校验。
   // - /api/games      ：上架中的游戏列表（按 sortOrder 降序）
@@ -111,7 +128,8 @@ export function proxy(request: NextRequest) {
 
   // 玩家前台大厅（/）永远属于玩家：任何身份（访客 / 玩家 / 超管 / 租户管理员）
   // 打开根路径都直接渲染大厅，绝不在这里按角色重定向到后台。
-  // 后台入口是独立路径，只能手动输入 /admin（租户端为 /tenant），登录页固定 /login。
+  // 后台入口是独立路径，只能手动输入 /admin（租户端为 /tenant），
+  // 登录页固定 /login（商户的独立入口是 /tenant/login）。
   if (pathname === "/") {
     return NextResponse.next();
   }
@@ -119,6 +137,16 @@ export function proxy(request: NextRequest) {
   // 玩家前台的游戏商专属展馆（/provider/[code]）与大厅同级：访客也必须能直接浏览，
   // 否则品牌墙点击后会被踢到后台登录页。/admin/providers 等后台路径不受影响。
   if (pathname === "/provider" || pathname.startsWith("/provider/")) {
+    return NextResponse.next();
+  }
+
+  // 独立的商户登录页（/tenant/login）：未登录必须能访问，
+  // 已登录的商户账号则直接送回控制台，避免「登录了还要再看一次表单」。
+  if (pathname === TENANT_LOGIN_PATH) {
+    if (session?.role === TENANT_ROLE) {
+      return NextResponse.redirect(new URL(TENANT_HOME_PATH, request.url));
+    }
+
     return NextResponse.next();
   }
 
@@ -138,10 +166,14 @@ export function proxy(request: NextRequest) {
 
   // ---------------------------------------------------------------- API 分区
   if (isApi) {
-    // 租户侧接口只允许租户账号，平台员工（含超管）不代租户调用。
+    // 租户侧接口只允许租户账号，或持有代登录票据的超管。
     if (isTenantApiPath(pathname)) {
-      if (session.role !== TENANT_ROLE) {
-        return forbiddenApi("该接口仅限租户账号调用");
+      if (session.role !== TENANT_ROLE && !impersonation) {
+        return forbiddenApi(
+          session.role === "super_admin"
+            ? "平台账号需先从租户管理「进入后台」才能调用商户接口"
+            : "该接口仅限租户账号调用",
+        );
       }
 
       return NextResponse.next();
@@ -159,9 +191,24 @@ export function proxy(request: NextRequest) {
   }
 
   // ------------------------------------------------------------- 页面分区
-  // 租户端页面只允许 tenant_admin。
+  // 商户账号（tenant_admin）与平台后台彻底隔离：
+  // - 强行访问 /admin 或子页面 → 直接送回 /tenant/dashboard
+  //   （不带 denied 参数：这是「分区边界」，不是权限缺失提示）；
+  // - 旧平台财务 /finance 同样送回商户财务 /tenant/finance，
+  //   避免同一个模块存在两套入口、两套数据范围。
+  if (session.role === TENANT_ROLE) {
+    if (isAdminPagePath(pathname)) {
+      return NextResponse.redirect(new URL(TENANT_HOME_PATH, request.url));
+    }
+
+    if (pathname === "/finance" || pathname.startsWith("/finance/")) {
+      return NextResponse.redirect(new URL("/tenant/finance", request.url));
+    }
+  }
+
+  // 租户端页面只允许 tenant_admin，或持有代登录票据的超管。
   if (isTenantPagePath(pathname)) {
-    if (session.role !== TENANT_ROLE) {
+    if (session.role !== TENANT_ROLE && !impersonation) {
       return redirectToRoleHome(request, session.role, "tenant_zone");
     }
 

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 
 import { signToken } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { TENANT_ROLE } from "@/lib/rbac";
 
 const AUTH_COOKIE = "token";
 /** 与 signToken 的 1d 有效期保持一致。 */
@@ -51,9 +52,11 @@ export async function POST(request: Request) {
 
   logIncomingBody(body);
 
-  const { username, password } = (body ?? {}) as {
+  const { username, password, portal } = (body ?? {}) as {
     username?: unknown;
     password?: unknown;
+    /** "tenant" = 独立商户登录页 /tenant/login，只允许 tenant_admin 登录。 */
+    portal?: unknown;
   };
 
   if (
@@ -88,25 +91,60 @@ export async function POST(request: Request) {
   }
 
   try {
-    const user = await prisma.adminUser.findUnique({
-      where: { username: normalizedUsername },
+    // 支持「账号」或「邮箱」登录：老板把临时密码发给商户时通常只给邮箱。
+    const candidates = await prisma.adminUser.findMany({
+      where: {
+        OR: [
+          { username: normalizedUsername },
+          {
+            email: {
+              equals: normalizedUsername.toLowerCase(),
+              mode: "insensitive",
+            },
+          },
+        ],
+      },
+      take: 4,
     });
 
-    if (!user) {
+    if (candidates.length === 0) {
       console.warn(
-        `[login] AdminUser 未命中: username=${JSON.stringify(normalizedUsername)}`,
+        `[login] AdminUser 未命中: identifier=${JSON.stringify(normalizedUsername)}`,
       );
       return NextResponse.json({ error: "账号或密码错误" }, { status: 401 });
     }
 
-    const passwordMatches = await bcrypt.compare(password, user.passwordHash);
+    // 绝不「取第一行就放行」：逐个比对密码哈希，匹配上才算登录成功。
+    let user: (typeof candidates)[number] | null = null;
+
+    for (const candidate of candidates) {
+      if (await bcrypt.compare(password, candidate.passwordHash)) {
+        user = candidate;
+        break;
+      }
+    }
+
+    if (!user) {
+      console.warn(
+        `[login] 密码不匹配: identifier=${JSON.stringify(normalizedUsername)} 候选数=${candidates.length}`,
+      );
+      return NextResponse.json({ error: "账号或密码错误" }, { status: 401 });
+    }
 
     console.log(
-      `[login] 命中账号 id=${user.id} role=${user.role} | bcrypt.compare=${passwordMatches} | hash 前缀=${user.passwordHash.slice(0, 7)} 长度=${user.passwordHash.length}`,
+      `[login] 命中账号 id=${user.id} role=${user.role} | bcrypt.compare=${true} | hash 前缀=${user.passwordHash.slice(0, 7)} 长度=${user.passwordHash.length}`,
     );
 
-    if (!passwordMatches) {
-      return NextResponse.json({ error: "账号或密码错误" }, { status: 401 });
+    // 独立商户登录页（/tenant/login）会带上 portal=tenant：
+    // 平台员工从商户入口登录会立刻被 proxy 踢回 /admin，因此在这里就拒绝并提示。
+    if (portal === "tenant" && user.role !== TENANT_ROLE) {
+      console.warn(
+        `[login] 商户入口拒绝了非商户账号: ${user.username} (${user.role})`,
+      );
+      return NextResponse.json(
+        { error: "该入口仅限商户管理员账号登录，请前往平台登录页 /login" },
+        { status: 403 },
+      );
     }
 
     const token = signToken({

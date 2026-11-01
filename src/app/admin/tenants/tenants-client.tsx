@@ -61,7 +61,8 @@ export function TenantsClient({
           ? t("tenants.banner.created")
           : t("tenants.banner.saved"),
     });
-    setModal(null);
+    // 注意：这里不关弹窗。新建商户管理员时后端会返回一次性临时密码，
+    // 必须让弹窗继续显示凭据，由弹窗自己决定何时 onClose()。
     router.refresh();
   }
 
@@ -211,6 +212,24 @@ export function TenantsClient({
                         <p className="mt-0.5 truncate font-mono text-[10px] text-neutral-600">
                           {tenant.domain}
                         </p>
+                        <p className="mt-0.5 truncate text-[10px]">
+                          <span className="uppercase tracking-[0.14em] text-neutral-700">
+                            {t("tenants.table.admin")}
+                          </span>{" "}
+                          {tenant.admins.length > 0 ? (
+                            <span className="text-neutral-400">
+                              {tenant.admins[0].email ??
+                                tenant.admins[0].username}
+                              {tenant.admins.length > 1
+                                ? ` +${tenant.admins.length - 1}`
+                                : ""}
+                            </span>
+                          ) : (
+                            <span className="text-amber-300/70">
+                              {t("tenants.table.adminNone")}
+                            </span>
+                          )}
+                        </p>
                       </td>
                       <td className="px-5 py-3.5 font-mono text-xs text-neutral-300">
                         {tenant.subdomain}
@@ -238,6 +257,16 @@ export function TenantsClient({
                       </td>
                       <td className="px-5 py-3.5 text-right">
                         <div className="flex items-center justify-end gap-2">
+                          {/* 一键进入商户后台：走 /api/admin/impersonation/start 下发票据后跳 /tenant/dashboard */}
+                          <a
+                            href={`/api/admin/impersonation/start?tenantId=${encodeURIComponent(tenant.id)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={t("tenants.actions.impersonateHint")}
+                            className="inline-flex h-8 items-center rounded-lg border border-[#d4af37]/40 bg-[#d4af37]/15 px-3 text-[10px] font-semibold text-[#f0d27c] transition-colors hover:border-[#d4af37]/60 hover:bg-[#d4af37]/25"
+                          >
+                            {t("tenants.actions.impersonate")}
+                          </a>
                           <Link
                             href={`/admin/tenants/${tenant.id}`}
                             className="inline-flex h-8 items-center rounded-lg border border-white/10 px-3 text-[10px] text-neutral-400 transition-colors hover:border-[#d4af37]/30 hover:text-[#f0d27c]"

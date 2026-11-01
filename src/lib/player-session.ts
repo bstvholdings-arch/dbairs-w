@@ -9,6 +9,7 @@ export type PlayerSessionInfo = {
   tenantId: string;
   username: string;
   email: string | null;
+  phone: string | null;
   balance: string;
   status: string;
   walletAddress: string | null;
@@ -49,6 +50,7 @@ async function resolvePlayerSession(
       tenantId: true,
       username: true,
       email: true,
+      phone: true,
       balance: true,
       status: true,
       walletAddress: true,
@@ -75,6 +77,7 @@ async function resolvePlayerSession(
     tenantId: player.tenantId,
     username: player.username,
     email: player.email,
+    phone: player.phone,
     balance: player.balance.toString(),
     status: player.status,
     walletAddress: player.walletAddress,

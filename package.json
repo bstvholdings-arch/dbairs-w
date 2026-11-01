@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "db:check": "tsx scripts/check-db.ts",
+    "tenant:admin": "tsx scripts/create-tenant-admin.ts",
     "postinstall": "prisma skills sync || exit 0"
   },
   "dependencies": {

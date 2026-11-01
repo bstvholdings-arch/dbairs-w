@@ -13,6 +13,7 @@ import { resolvePlayerTenant } from "@/lib/player-tenant";
 import {
   readPlayerEmail,
   readPlayerPassword,
+  readPlayerPhone,
   readPlayerReferralCode,
   readPlayerUsername,
 } from "@/lib/player-validation";
@@ -43,10 +44,17 @@ async function generateUniqueReferralCode() {
 /**
  * 玩家注册。
  * POST /api/player/register
- * Body: { username, password, confirmPassword?, email?, referralCode?, site? }
+ * Body: {
+ *   username, password, phone, email,
+ *   confirmPassword?, referralCode?, site?
+ * }
  *
+ * - `username` / `password` / `phone` / `email` 全部必填，任一不合法直接 400；
+ * - `phone` 可带国际区号（+60 / +65 / +62 / +63 / +84 / +86 ...），
+ *   统一归一化成 E.164 入库，如 +60123456789；
+ * - 用户名 / 手机号 / 邮箱在**同一租户内**唯一：先查库给出精确提示，
+ *   数据库唯一索引兜底并发注册；
  * - 注册成功后直接写入 7 天有效的 httpOnly `player_token` Cookie；
- * - 用户名在同一租户内唯一，邮箱选填但同样租户内唯一；
  * - 推荐码必须属于同一租户，禁止跨站绑定。
  */
 export async function POST(request: NextRequest) {
@@ -62,17 +70,38 @@ export async function POST(request: NextRequest) {
     const input = (body ?? {}) as Record<string, unknown>;
     const username = readPlayerUsername(input.username);
     const password = readPlayerPassword(input.password);
+    const phone = readPlayerPhone(input.phone);
     const email = readPlayerEmail(input.email);
     const rawReferral =
       typeof input.referralCode === "string" ? input.referralCode.trim() : "";
     const referralCode = readPlayerReferralCode(input.referralCode);
 
     if (!username) {
-      return jsonError("username_invalid", "用户名需为 3–32 位字母、数字或 . _ -", 400);
+      return jsonError(
+        "username_invalid",
+        "用户名需为 3–32 位字母、数字或 . _ -",
+        400,
+      );
     }
 
     if (!password) {
       return jsonError("password_invalid", "密码长度需为 8–72 个字节", 400);
+    }
+
+    if (!phone) {
+      return jsonError(
+        "phone_invalid",
+        "手机号格式不正确，请选择国家区号并填写本地号码（如 +60123456789）",
+        400,
+      );
+    }
+
+    if (email === null) {
+      return jsonError("email_invalid", "邮箱格式不正确", 400);
+    }
+
+    if (!email) {
+      return jsonError("email_required", "请填写电子邮箱", 400);
     }
 
     if (
@@ -80,10 +109,6 @@ export async function POST(request: NextRequest) {
       input.confirmPassword !== password
     ) {
       return jsonError("password_mismatch", "两次输入的密码不一致", 400);
-    }
-
-    if (email === null) {
-      return jsonError("email_invalid", "邮箱格式不正确", 400);
     }
 
     if (rawReferral && !referralCode) {
@@ -100,22 +125,25 @@ export async function POST(request: NextRequest) {
       return jsonError("tenant_unavailable", "站点已停用，暂无法注册", 403);
     }
 
-    const duplicate = await prisma.player.findFirst({
+    // 一次查出所有潜在冲突，再逐字段判断，避免「手机号撞了却提示邮箱」。
+    const duplicates = await prisma.player.findMany({
       where: {
         tenantId: tenant.id,
-        OR: [
-          { username },
-          ...(email ? [{ email }] : []),
-        ],
+        OR: [{ username }, { phone }, { email }],
       },
-      select: { username: true, email: true },
+      select: { username: true, phone: true, email: true },
+      take: 5,
     });
 
-    if (duplicate?.username === username) {
+    if (duplicates.some((item) => item.username === username)) {
       return jsonError("username_taken", "该用户名已被占用", 409);
     }
 
-    if (email && duplicate?.email === email) {
+    if (duplicates.some((item) => item.phone === phone)) {
+      return jsonError("phone_taken", "该手机号已被注册", 409);
+    }
+
+    if (duplicates.some((item) => item.email === email)) {
       return jsonError("email_taken", "该邮箱已被占用", 409);
     }
 
@@ -150,7 +178,8 @@ export async function POST(request: NextRequest) {
         tenantId: tenant.id,
         username,
         passwordHash,
-        email: email || null,
+        phone,
+        email,
         referralCode: newReferralCode,
         referredById: inviterId,
         lastLoginAt: new Date(),
@@ -158,6 +187,7 @@ export async function POST(request: NextRequest) {
       select: {
         id: true,
         username: true,
+        phone: true,
         email: true,
         balance: true,
         referralCode: true,
@@ -171,6 +201,7 @@ export async function POST(request: NextRequest) {
         player: {
           id: player.id,
           username: player.username,
+          phone: player.phone,
           email: player.email,
           balance: player.balance.toString(),
           referralCode: player.referralCode,
@@ -202,6 +233,10 @@ export async function POST(request: NextRequest) {
       const target = Array.isArray(error.meta?.target)
         ? error.meta.target.join(",")
         : String(error.meta?.target ?? "");
+
+      if (target.includes("phone")) {
+        return jsonError("phone_taken", "该手机号已被注册", 409);
+      }
 
       if (target.includes("email")) {
         return jsonError("email_taken", "该邮箱已被占用", 409);
