@@ -25,6 +25,27 @@ export const DEFAULT_STOREFRONT_MODULES: StorefrontModule[] = [
   { id: "provider", visible: true },
 ];
 
+/**
+ * 顶栏语言按钮文案的默认值。格式固定为「中文标签/EN」，
+ * 中文标签由后台配置，英文按需求始终显示 EN。
+ */
+export const DEFAULT_STOREFRONT_LANGUAGE_STYLE = "CH/EN";
+
+/** 互动组件默认全开：新功能上线即可见，后台可随时关闭。 */
+export const DEFAULT_STOREFRONT_TOPBAR_CHAT = true;
+export const DEFAULT_STOREFRONT_SIDEBAR_CASINO = true;
+
+/** Tenant.layoutConfig 归一化后的完整形状（模块顺序 + 互动组件开关） */
+export type StorefrontLayout = {
+  modules: StorefrontModule[];
+  /** 顶栏语言按钮左侧是否显示 AI 客服图标 */
+  showTopbarChat: boolean;
+  /** 侧边栏「斗鸡」下方是否显示娱乐场动态卡片 */
+  showSidebarCasinoAnim: boolean;
+  /** 语言按钮文案，形如 CH/EN */
+  languageStyle: string;
+};
+
 export const DEFAULT_THEME_COLOR = "#d4af37";
 
 /**
@@ -311,9 +332,76 @@ export function normalizeLayoutConfig(raw: unknown): StorefrontModule[] {
   return result;
 }
 
-/** 写库前统一序列化成 { modules: [...] }，避免 JSON 结构漂移 */
-export function serializeLayoutConfig(modules: StorefrontModule[]) {
-  return { modules: normalizeLayoutConfig(modules) };
+function normalizeLanguageToken(value: string, fallback: string) {
+  const token = value
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z]/g, "")
+    .slice(0, 4);
+
+  return token || fallback;
+}
+
+/**
+ * 语言按钮文案归一化：只接受「中文标签/英文标签」格式。
+ * 中文标签最多 4 个英文字母，英文按需求固定为 EN，缺失时回落到 CH/EN。
+ */
+export function normalizeLanguageStyle(raw: unknown): string {
+  if (typeof raw !== "string") {
+    return DEFAULT_STOREFRONT_LANGUAGE_STYLE;
+  }
+
+  const value = raw.trim();
+
+  if (!value) {
+    return DEFAULT_STOREFRONT_LANGUAGE_STYLE;
+  }
+
+  const separator = value.indexOf("/");
+  const zhSource = separator === -1 ? value : value.slice(0, separator);
+  const zh = normalizeLanguageToken(zhSource, "CH");
+
+  // 中文标签不能也是 EN：否则 "EN/EN" 会让两个按钮完全一样，直接使用默认值。
+  if (zh === "EN") {
+    return DEFAULT_STOREFRONT_LANGUAGE_STYLE;
+  }
+
+  return `${zh}/EN`;
+}
+
+/** 把语言按钮文案拆成中英文两个标签，渲染与归一化共用。 */
+export function parseLanguageStyle(raw: unknown): { zh: string; en: string } {
+  const [zh, en] = normalizeLanguageStyle(raw).split("/");
+
+  return { zh: zh || "CH", en: en || "EN" };
+}
+
+/**
+ * 归一化完整装修配置（layoutConfig）。
+ *
+ * 兼容历史结构：
+ * - 裸数组 / `{ modules: [...] }` 只包含模块顺序；
+ * - 新增的互动组件开关缺失时默认开启，只有明确写成 false 才关闭。
+ */
+export function normalizeStorefrontLayout(raw: unknown): StorefrontLayout {
+  const record = isRecord(raw) ? raw : {};
+
+  return {
+    modules: normalizeLayoutConfig(raw),
+    showTopbarChat: record.showTopbarChat !== false,
+    showSidebarCasinoAnim: record.showSidebarCasinoAnim !== false,
+    languageStyle: normalizeLanguageStyle(record.languageStyle),
+  };
+}
+
+/** 写库前统一序列化，避免 JSON 结构漂移 */
+export function serializeLayoutConfig(layout: StorefrontLayout): StorefrontLayout {
+  const normalized = normalizeStorefrontLayout(layout);
+
+  return {
+    ...normalized,
+    modules: normalized.modules.map((module) => ({ ...module })),
+  };
 }
 
 /** 上移 / 下移：返回新数组，越界时原样返回（后台按钮同时会禁用） */
@@ -611,5 +699,11 @@ export type StorefrontSettings = {
   themeBrightness: number;
   /** 三大模块的开关与顺序（数组顺序即页面顺序） */
   modules: StorefrontModule[];
+  /** 顶栏语言按钮左侧是否显示 AI 客服图标 */
+  showTopbarChat: boolean;
+  /** 侧边栏「斗鸡」下方是否显示娱乐场动态卡片 */
+  showSidebarCasinoAnim: boolean;
+  /** 语言按钮文案，形如 CH/EN */
+  languageStyle: string;
 };
 

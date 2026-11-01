@@ -1,5 +1,6 @@
 import { cache } from "react";
 
+import { logDataFallback } from "@/lib/data-fallback-log";
 import type { LobbyGameRecord, LobbyProviderOption } from "@/lib/lobby-games";
 import { prisma } from "@/lib/prisma";
 
@@ -67,7 +68,7 @@ export const loadLobbyData = cache(async (): Promise<LobbySnapshot> => {
       })),
     };
   } catch (error) {
-    console.error("读取大厅数据失败，前台将回退到内置游戏目录:", error);
+    logDataFallback("读取大厅数据失败，前台将回退到内置游戏目录", error);
 
     return { providers: [], games: [] };
   }

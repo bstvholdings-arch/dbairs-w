@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { getSuperAdminFromRequest } from "@/lib/super-admin";
 import {
   normalizeLayoutConfig,
+  normalizeStorefrontLayout,
   parseThemeSetting,
   readThemeSettingInput,
   serializeLayoutConfig,
@@ -35,6 +36,10 @@ function jsonError(message: string, status: number) {
   return Response.json({ error: message }, { status });
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function serializeTenant(row: {
   id: string;
   name: string;
@@ -45,6 +50,7 @@ function serializeTenant(row: {
   layoutConfig: unknown;
 }) {
   const theme = parseThemeSetting(row.themeColor);
+  const layout = normalizeStorefrontLayout(row.layoutConfig);
 
   return {
     id: row.id,
@@ -54,7 +60,10 @@ function serializeTenant(row: {
     status: row.status,
     themeColor: theme.hex,
     themeBrightness: theme.brightness,
-    modules: normalizeLayoutConfig(row.layoutConfig),
+    modules: layout.modules,
+    showTopbarChat: layout.showTopbarChat,
+    showSidebarCasinoAnim: layout.showSidebarCasinoAnim,
+    languageStyle: layout.languageStyle,
   };
 }
 
@@ -151,26 +160,50 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    // layoutConfig 允许传 { modules: [...] }，也允许直接传数组，统一归一化后入库
-    const modules = normalizeLayoutConfig(
-      input.layoutConfig ?? input.modules ?? null,
-    );
-
     const exists = await prisma.tenant.findUnique({
       where: { id: tenantId },
-      select: { id: true },
+      select: { id: true, layoutConfig: true },
     });
 
     if (!exists) {
       return jsonError("租户不存在", 404);
     }
 
+    // layoutConfig 允许传完整对象、只传 { modules }，或直接传数组。
+    // 未传的互动组件开关保留数据库里的原值，避免老调用方把新开关重置成默认值。
+    const currentLayout = normalizeStorefrontLayout(exists.layoutConfig);
+    const layoutPatch: Record<string, unknown> = isRecord(input.layoutConfig)
+      ? { ...input.layoutConfig }
+      : {};
+
+    // 同时兼容把新字段放在请求体顶层的写法，方便手工 curl / 旧版后台。
+    for (const key of [
+      "showTopbarChat",
+      "showSidebarCasinoAnim",
+      "languageStyle",
+    ] as const) {
+      if (input[key] !== undefined) {
+        layoutPatch[key] = input[key];
+      }
+    }
+
+    const modules = normalizeLayoutConfig(
+      Array.isArray(input.layoutConfig)
+        ? input.layoutConfig
+        : input.modules ?? layoutPatch.modules ?? currentLayout.modules,
+    );
+    const layout = normalizeStorefrontLayout({
+      ...currentLayout,
+      ...layoutPatch,
+      modules,
+    });
+
     const tenant = await prisma.tenant.update({
       where: { id: tenantId },
       data: {
         // 统一存 {"hex":"#d4af37","brightness":50}，读取侧 parseThemeSetting 兼容裸 hex
         themeColor: serializeThemeSetting(themeSetting),
-        layoutConfig: serializeLayoutConfig(modules),
+        layoutConfig: serializeLayoutConfig(layout),
       },
       select: storefrontSelect,
     });

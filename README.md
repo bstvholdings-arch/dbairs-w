@@ -20,6 +20,23 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## 环境变量与数据库自检
+
+`.env` 必须提供 `DATABASE_URL`（应用运行用）与 `DIRECT_URL`（直连，供 prisma migrate 使用）。
+
+改完连接串先跑一次自检，确认密码 / 网络没问题：
+
+```bash
+npm run db:check
+```
+
+脚本会把连接串打码打印（不泄露密码）并真实连一次库；认证失败、Supabase 熔断（`ECIRCUITBREAKER`）等常见错误会直接给出处理建议。
+
+> Supabase 的 Supavisor 连接池**必须走 TLS**：连接串里没有 `sslmode` 时，`pg` 会以明文握手，Supavisor 会把它当成「密码不正确」（报 `28P01 credentials not valid`），连续失败后还会触发 `ECIRCUITBREAKER` 临时封禁。
+> `src/lib/database-url.ts` 会自动剥掉复制时带进来的引号/空格，并给 `*.supabase.com` 补上 `uselibpqcompat=true&sslmode=require`（加密链路但不校验 CA，兼容代理/网关替换证书的环境），所以 `.env` 里不写 sslmode 也能连上。
+
+数据库不可用时前台会自动回退到内置游戏目录，页面照常打开。兜底日志统一走 `src/lib/data-fallback-log.ts`：开发环境降级成 `console.debug`（只在终端里留排查线索，不会点亮 Next.js 左下角的红色 issues），生产环境仍然是 `console.error` 写进服务端日志。
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

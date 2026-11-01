@@ -118,6 +118,7 @@ export default async function ProviderHallPage({
       onlineTotals={hall.onlineTotals}
       themeColor={storefront.themeColor}
       themeBrightness={storefront.themeBrightness}
+      languageStyle={storefront.languageStyle}
     />
   );
 }

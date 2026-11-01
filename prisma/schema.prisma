@@ -20,9 +20,14 @@ model Tenant {
 
   // 前台装修（Storefront Settings，超管在 /admin/storefront 可视化配置）
   // themeColor：玩家大厅主色调，默认金色 #d4af37
-  // layoutConfig：模块开关与顺序，形如
-  //   { "modules": [{ "id": "hero", "visible": true }, { "id": "action", "visible": true }, { "id": "provider", "visible": false }] }
-  //   null / 非法值一律回退到「Hero → 核心功能岛 → 品牌墙」全开（见 src/lib/storefront.ts）
+  // layoutConfig：模块开关、顺序与互动组件，形如
+  //   {
+  //     "modules": [{ "id": "hero", "visible": true }, { "id": "action", "visible": true }, { "id": "provider", "visible": false }],
+  //     "showTopbarChat": true,          // 顶栏语言按钮左侧的 AI 客服图标
+  //     "showSidebarCasinoAnim": true,   // 侧边栏「斗鸡」下方的娱乐场动态卡片
+  //     "languageStyle": "CH/EN"         // 语言按钮中文标签/英文标签，英文固定 EN
+  //   }
+  //   null / 非法值一律回退到全模块显示 + 互动组件全开（见 src/lib/storefront.ts）
   themeColor   String @default("#d4af37")
   layoutConfig Json?
 

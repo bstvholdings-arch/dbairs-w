@@ -59,6 +59,7 @@ export function ProviderHallClient({
   onlineTotals,
   themeColor,
   themeBrightness,
+  languageStyle,
 }: {
   providerName: string;
   cards: LobbyGameCard[];
@@ -69,6 +70,8 @@ export function ProviderHallClient({
   themeColor: string;
   /** 后台装修的深浅调节 0-100（50 = 色号原样） */
   themeBrightness: number;
+  /** 后台装修的语言按钮文案，形如 CH/EN */
+  languageStyle: string;
 }) {
   const { t } = useLanguage();
   const brand = providerBrand(providerName);
@@ -239,7 +242,7 @@ export function ProviderHallClient({
               >
                 <ReferralGiftIcon />
               </button>
-              <LanguageSwitcher />
+              <LanguageSwitcher languageStyle={languageStyle} />
               <button
                 type="button"
                 onClick={() => setComingSoon("login")}

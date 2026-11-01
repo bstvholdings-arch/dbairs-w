@@ -6,12 +6,17 @@ import { useCallback, useMemo, useState } from "react";
 import { useLanguage } from "@/components/LanguageProvider";
 import {
   buildStorefrontTheme,
+  DEFAULT_STOREFRONT_LANGUAGE_STYLE,
   DEFAULT_STOREFRONT_MODULES,
+  DEFAULT_STOREFRONT_SIDEBAR_CASINO,
+  DEFAULT_STOREFRONT_TOPBAR_CHAT,
   DEFAULT_THEME_BRIGHTNESS,
   DEFAULT_THEME_COLOR,
   isValidThemeColor,
   moveStorefrontModule,
+  normalizeLanguageStyle,
   normalizeThemeColor,
+  parseLanguageStyle,
   STOREFRONT_MODULE_HINT_KEYS,
   STOREFRONT_MODULE_LABEL_KEYS,
   THEME_BRIGHTNESS_MAX,
@@ -30,15 +35,23 @@ import { ProviderShowcasePanel } from "./provider-showcase-panel";
 import { ThemePreviewCard } from "./theme-preview-card";
 import { ArrowIcon, SectionTitle } from "./ui";
 
-/** 用于判断「有没有未保存改动」的指纹（主色 + 深浅 + 模块开关顺序） */
+/** 用于判断「有没有未保存改动」的指纹（主色 + 深浅 + 模块开关顺序 + 互动组件） */
 function signature(
   themeColor: string,
   brightness: number,
   modules: StorefrontModule[],
+  interactions: {
+    showTopbarChat: boolean;
+    showSidebarCasinoAnim: boolean;
+    languageStyle: string;
+  },
 ) {
   return [
     `${themeColor}@${brightness}`,
     ...modules.map((module) => `${module.id}:${module.visible ? 1 : 0}`),
+    `topbarChat:${interactions.showTopbarChat ? 1 : 0}`,
+    `sidebarCasino:${interactions.showSidebarCasinoAnim ? 1 : 0}`,
+    `language:${interactions.languageStyle}`,
   ].join("|");
 }
 
@@ -83,6 +96,15 @@ export function StorefrontClient({
   const [modules, setModules] = useState<StorefrontModule[]>(
     selected?.modules ?? defaultModules(),
   );
+  const [showTopbarChat, setShowTopbarChat] = useState(
+    selected?.showTopbarChat ?? DEFAULT_STOREFRONT_TOPBAR_CHAT,
+  );
+  const [showSidebarCasinoAnim, setShowSidebarCasinoAnim] = useState(
+    selected?.showSidebarCasinoAnim ?? DEFAULT_STOREFRONT_SIDEBAR_CASINO,
+  );
+  const [languageStyle, setLanguageStyle] = useState(
+    selected?.languageStyle ?? DEFAULT_STOREFRONT_LANGUAGE_STYLE,
+  );
 
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
@@ -96,16 +118,37 @@ export function StorefrontClient({
     [brightness, themeColor],
   );
 
+  const normalizedLanguageStyle = useMemo(
+    () => normalizeLanguageStyle(languageStyle),
+    [languageStyle],
+  );
+  const languageLabels = useMemo(
+    () => parseLanguageStyle(normalizedLanguageStyle),
+    [normalizedLanguageStyle],
+  );
+
   const baseline = useMemo(
     () =>
       signature(
         selected?.themeColor ?? DEFAULT_THEME_COLOR,
         selected?.themeBrightness ?? DEFAULT_THEME_BRIGHTNESS,
         selected?.modules ?? defaultModules(),
+        {
+          showTopbarChat: selected?.showTopbarChat ?? DEFAULT_STOREFRONT_TOPBAR_CHAT,
+          showSidebarCasinoAnim:
+            selected?.showSidebarCasinoAnim ?? DEFAULT_STOREFRONT_SIDEBAR_CASINO,
+          languageStyle:
+            selected?.languageStyle ?? DEFAULT_STOREFRONT_LANGUAGE_STYLE,
+        },
       ),
     [selected],
   );
-  const dirty = signature(themeColor, brightness, modules) !== baseline;
+  const dirty =
+    signature(themeColor, brightness, modules, {
+      showTopbarChat,
+      showSidebarCasinoAnim,
+      languageStyle: normalizedLanguageStyle,
+    }) !== baseline;
 
   const previewHref = selected
     ? `/?tenant=${encodeURIComponent(selected.subdomain || selected.id)}`
@@ -123,6 +166,9 @@ export function StorefrontClient({
     setBrightness(next.themeBrightness);
     setHexDraft(next.themeColor);
     setModules(next.modules.map((module) => ({ ...module })));
+    setShowTopbarChat(next.showTopbarChat);
+    setShowSidebarCasinoAnim(next.showSidebarCasinoAnim);
+    setLanguageStyle(next.languageStyle);
     setError("");
     setSavedAt(null);
     setPreviewKey((current) => current + 1);
@@ -155,6 +201,9 @@ export function StorefrontClient({
     setBrightness(DEFAULT_THEME_BRIGHTNESS);
     setHexDraft(DEFAULT_THEME_COLOR);
     setModules(defaultModules());
+    setShowTopbarChat(DEFAULT_STOREFRONT_TOPBAR_CHAT);
+    setShowSidebarCasinoAnim(DEFAULT_STOREFRONT_SIDEBAR_CASINO);
+    setLanguageStyle(DEFAULT_STOREFRONT_LANGUAGE_STYLE);
     setError("");
   }, []);
 
@@ -175,7 +224,12 @@ export function StorefrontClient({
           tenantId: selected.id,
           // 服务端会存成 {"hex":"#d4af37","brightness":50}
           themeColor: { hex: themeColor, brightness },
-          layoutConfig: { modules },
+          layoutConfig: {
+            modules,
+            showTopbarChat,
+            showSidebarCasinoAnim,
+            languageStyle: normalizedLanguageStyle,
+          },
         }),
       });
 
@@ -199,6 +253,9 @@ export function StorefrontClient({
       setBrightness(saved.themeBrightness);
       setHexDraft(saved.themeColor);
       setModules(saved.modules.map((module) => ({ ...module })));
+      setShowTopbarChat(saved.showTopbarChat);
+      setShowSidebarCasinoAnim(saved.showSidebarCasinoAnim);
+      setLanguageStyle(saved.languageStyle);
       setSavedAt(
         new Date().toLocaleTimeString(undefined, {
           hour: "2-digit",
@@ -212,7 +269,16 @@ export function StorefrontClient({
     } finally {
       setSaving(false);
     }
-  }, [brightness, modules, selected, t, themeColor]);
+  }, [
+    brightness,
+    modules,
+    normalizedLanguageStyle,
+    selected,
+    showSidebarCasinoAnim,
+    showTopbarChat,
+    t,
+    themeColor,
+  ]);
 
   if (tenants.length === 0) {
     return (
@@ -570,6 +636,87 @@ export function StorefrontClient({
               ))}
             </ol>
           </section>
+
+          {/* ④ 互动组件：顶栏 AI 客服 / 侧边栏娱乐场动效 / 语言按钮文案 */}
+          <section className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3.5">
+            <SectionTitle
+              title={t("storefront.interactions.title")}
+              hint={t("storefront.interactions.hint")}
+            />
+
+            <div className="mt-3 space-y-2">
+              <InteractionRow
+                icon="chat"
+                title={t("storefront.interactions.topbarChat")}
+                hint={t("storefront.interactions.topbarChatHint")}
+                checked={showTopbarChat}
+                onToggle={() => setShowTopbarChat((current) => !current)}
+                toggleLabel={t("storefront.interactions.topbarChat")}
+                stateLabel={
+                  showTopbarChat
+                    ? t("storefront.interactions.on")
+                    : t("storefront.interactions.off")
+                }
+              />
+              <InteractionRow
+                icon="casino"
+                title={t("storefront.interactions.sidebarCasino")}
+                hint={t("storefront.interactions.sidebarCasinoHint")}
+                checked={showSidebarCasinoAnim}
+                onToggle={() => setShowSidebarCasinoAnim((current) => !current)}
+                toggleLabel={t("storefront.interactions.sidebarCasino")}
+                stateLabel={
+                  showSidebarCasinoAnim
+                    ? t("storefront.interactions.on")
+                    : t("storefront.interactions.off")
+                }
+              />
+            </div>
+
+            <div className="mt-3 rounded-xl border border-white/[0.07] bg-white/[0.015] p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label
+                  htmlFor="storefront-language-style"
+                  className="text-[11px] font-semibold text-neutral-200"
+                >
+                  {t("storefront.interactions.languageStyle")}
+                </label>
+                <span className="inline-flex items-center gap-1 rounded-full border border-brand/30 bg-brand/10 px-2.5 py-1 text-[10px] font-bold text-brand-soft">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={1.7}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                    className="h-3 w-3"
+                  >
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" />
+                  </svg>
+                  {languageLabels.zh}/{languageLabels.en}
+                </span>
+              </div>
+              <p className="mt-1 text-[10px] leading-relaxed text-neutral-500">
+                {t("storefront.interactions.languageStyleHint")}
+              </p>
+              <input
+                id="storefront-language-style"
+                type="text"
+                value={languageStyle}
+                maxLength={9}
+                spellCheck={false}
+                autoComplete="off"
+                onChange={(event) => setLanguageStyle(event.target.value)}
+                onBlur={() => setLanguageStyle(normalizedLanguageStyle)}
+                placeholder={t(
+                  "storefront.interactions.languageStylePlaceholder",
+                )}
+                className="mt-2 h-9 w-full rounded-lg border border-white/[0.08] bg-black/30 px-3 font-mono text-[12px] uppercase tracking-[0.12em] text-neutral-100 placeholder:text-neutral-600 focus:border-brand/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-soft/50"
+              />
+            </div>
+          </section>
         </div>
 
 
@@ -678,6 +825,95 @@ function ModuleIcon({ id }: { id: StorefrontModuleId }) {
       <path d="M13 8h7v5a3 3 0 0 1-3 3h-1a3 3 0 0 1-3-3z" />
       <path d="M6 5.5 7.5 8M17 5.5 18.5 8" />
     </svg>
+  );
+}
+
+/** 互动组件图标：顶栏客服 / 侧边栏娱乐场 */
+function InteractionIcon({ kind }: { kind: "chat" | "casino" }) {
+  const common = {
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.7,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true,
+    className: "h-5 w-5 shrink-0 text-brand-soft",
+  };
+
+  if (kind === "chat") {
+    return (
+      <svg {...common}>
+        <path d="M4 5.5h16v10H9l-5 4z" />
+        <path d="M8 9h8M8 12h5" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg {...common}>
+      <rect x="3" y="4" width="18" height="16" rx="2.5" />
+      <path d="M3 9h18" />
+      <path d="m7 13 1.5-1.5L10 13l-1.5 1.5zM14 13l1.5-1.5L17 13l-1.5 1.5z" />
+    </svg>
+  );
+}
+
+/** 互动组件开关行：样式与模块开关保持一致 */
+function InteractionRow({
+  icon,
+  title,
+  hint,
+  checked,
+  onToggle,
+  toggleLabel,
+  stateLabel,
+}: {
+  icon: "chat" | "casino";
+  title: string;
+  hint: string;
+  checked: boolean;
+  onToggle: () => void;
+  toggleLabel: string;
+  stateLabel: string;
+}) {
+  return (
+    <div
+      className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 transition-colors ${
+        checked
+          ? "border-brand/20 bg-brand/[0.05]"
+          : "border-white/[0.06] bg-white/[0.01] opacity-70"
+      }`}
+    >
+      <InteractionIcon kind={icon} />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[11px] font-semibold text-neutral-200">
+          {title}
+        </p>
+        <p className="text-[10px] leading-relaxed text-neutral-500">{hint}</p>
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        onClick={onToggle}
+        aria-label={toggleLabel}
+        className={`relative h-5 w-9 shrink-0 rounded-full border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-soft/60 ${
+          checked
+            ? "border-brand/50 bg-brand/70"
+            : "border-white/15 bg-white/[0.06]"
+        }`}
+      >
+        <span
+          className={`absolute top-0.5 h-3.5 w-3.5 rounded-full transition-all ${
+            checked ? "left-[18px] bg-brand-ink" : "left-0.5 bg-neutral-400"
+          }`}
+        />
+      </button>
+      <span className="hidden w-12 shrink-0 text-right text-[9px] uppercase tracking-[0.1em] text-neutral-600 lg:block">
+        {stateLabel}
+      </span>
+    </div>
   );
 }
 

@@ -1,9 +1,18 @@
 "use client";
 
 import { useLanguage } from "@/components/LanguageProvider";
+import { parseLanguageStyle } from "@/lib/storefront";
 
-export function LanguageSwitcher({ className = "" }: { className?: string }) {
+export function LanguageSwitcher({
+  className = "",
+  languageStyle,
+}: {
+  className?: string;
+  /** 后台可配置的语言按钮文案，形如 CH/EN；不传时使用默认值 */
+  languageStyle?: string;
+}) {
   const { language, setLanguage, t } = useLanguage();
+  const labels = parseLanguageStyle(languageStyle);
 
   return (
     <div
@@ -23,7 +32,7 @@ export function LanguageSwitcher({ className = "" }: { className?: string }) {
             : "text-neutral-500 hover:text-brand-soft"
         }`}
       >
-        ä¸­
+        {labels.zh}
       </button>
       <button
         type="button"
@@ -37,7 +46,7 @@ export function LanguageSwitcher({ className = "" }: { className?: string }) {
             : "text-neutral-500 hover:text-brand-soft"
         }`}
       >
-        EN
+        {labels.en}
       </button>
     </div>
   );

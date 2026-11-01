@@ -28,6 +28,8 @@ import {
 } from "@/components/lobby/hall-actions";
 import { HeroCarousel, type HeroBannerMetric } from "@/components/lobby/hero-carousel";
 import { ProviderWall } from "@/components/lobby/provider-wall";
+import { SidebarCasinoAnimation } from "@/components/lobby/sidebar-casino-animation";
+import { SupportChatDialog } from "@/components/lobby/support-chat-dialog";
 import { WinnerTicker } from "@/components/lobby/winner-ticker";
 import { formatAmount, formatInteger } from "@/lib/format";
 import { LOBBY_CATEGORY_LABEL_KEYS } from "@/lib/i18n-keys";
@@ -156,6 +158,8 @@ export function LobbyClient({
   const [player, setPlayer] = useState<LobbyPlayerSummary | null>(initialPlayer);
   const [playerLoading, setPlayerLoading] = useState(!initialPlayer);
   const [playerDepositOpen, setPlayerDepositOpen] = useState(false);
+  // 顶栏 AI 客服：由后台装修 showTopbarChat 控制入口，点击后弹出客服窗口。
+  const [supportChatOpen, setSupportChatOpen] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
@@ -390,7 +394,10 @@ export function LobbyClient({
     category !== "all" && (categoryCounts.get(category) ?? 0) === 0;
 
   const modalOpen =
-    connectingGame !== null || playerDepositOpen || comingSoon !== null;
+    connectingGame !== null ||
+    playerDepositOpen ||
+    comingSoon !== null ||
+    supportChatOpen;
 
   // 弹窗打开时锁背景滚动，避免大厅在弹窗后面继续滚动。
   useEffect(() => {
@@ -419,6 +426,7 @@ export function LobbyClient({
 
       setConnectingGame(null);
       setComingSoon(null);
+      setSupportChatOpen(false);
     }
 
     window.addEventListener("keydown", handleKeyDown);
@@ -461,6 +469,15 @@ export function LobbyClient({
 
     setPlayerDepositOpen(false);
     setConnectingGame(target);
+  }
+
+  /** 顶栏客服入口：先收起其它弹层，避免多个遮罩互相叠住。 */
+  function openSupportChat() {
+    setConnectingGame(null);
+    setPlayerDepositOpen(false);
+    setComingSoon(null);
+    setAccountMenuOpen(false);
+    setSupportChatOpen(true);
   }
 
   /** 未登录先去登录 / 注册，登录后回到大厅原地址（保留 tenant / 筛选参数）。 */
@@ -772,7 +789,25 @@ export function LobbyClient({
 
           {/* Header 固定显示 Logo / Balance / Search / Language / 玩家入口 */}
           <div className="order-2 ml-auto flex shrink-0 items-center gap-2 sm:order-3 sm:ml-0">
-            <LanguageSwitcher />
+            {storefront.showTopbarChat ? (
+              <button
+                type="button"
+                onClick={openSupportChat}
+                aria-label={t("lobby.support.open")}
+                aria-haspopup="dialog"
+                aria-expanded={supportChatOpen}
+                title={t("lobby.support.open")}
+                className="relative flex h-8 w-8 items-center justify-center rounded-full border border-brand/25 bg-black/35 text-brand-soft transition-colors hover:border-brand/55 hover:bg-brand/10 hover:text-brand-pale focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 sm:h-9 sm:w-9"
+              >
+                <TopbarChatIcon className="h-4 w-4" />
+                <span
+                  aria-hidden="true"
+                  className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-emerald-400 ring-2 ring-[#050505]"
+                />
+              </button>
+            ) : null}
+
+            <LanguageSwitcher languageStyle={storefront.languageStyle} />
 
             <div ref={accountMenuRef} className="relative">
               {playerLoading && !player ? (
@@ -950,6 +985,13 @@ export function LobbyClient({
                   );
                 })}
               </nav>
+
+              {/* 后台装修「互动组件」开启时，在斗鸡分类下方展示娱乐场动态卡片 */}
+              {storefront.showSidebarCasinoAnim ? (
+                <div className="hidden lg:block">
+                  <SidebarCasinoAnimation />
+                </div>
+              ) : null}
             </div>
           </aside>
 
@@ -1021,6 +1063,12 @@ export function LobbyClient({
         />
       ) : null}
 
+      <SupportChatDialog
+        open={supportChatOpen}
+        playerName={player?.username ?? null}
+        onClose={() => setSupportChatOpen(false)}
+      />
+
       {playerDepositOpen && player ? (
         <PlayerDepositFlow
           open
@@ -1070,6 +1118,30 @@ export function LobbyClient({
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * 顶栏客服图标：与左侧品类图标保持同一套 24×24 内联描边风格。
+ */
+function TopbarChatIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.7}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className={className}
+    >
+      <path d="M4.5 13.5v-1.7a7.5 7.5 0 0 1 15 0v1.7" />
+      <rect x="3" y="13" width="4" height="6" rx="1.6" />
+      <rect x="17" y="13" width="4" height="6" rx="1.6" />
+      <path d="M19 19a3 3 0 0 1-3 2.4h-2" />
+      <circle cx="13" cy="21.4" r="1" fill="currentColor" stroke="none" />
+    </svg>
   );
 }
 

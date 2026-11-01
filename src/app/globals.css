@@ -265,10 +265,165 @@ body {
   }
 }
 
+/*
+ * 侧边栏娱乐场动态大屏：容器铺满侧边栏宽度（h-[120px]），每 10 秒在
+ * 「三粒骰子 3D 翻滚」和「三张扑克牌侧滑入场 + 上下浮动」之间交替，两帧合计 20 秒一轮。
+ * 组件切换画面时会把子元素重新挂载，让每帧的入场动画从头播放。
+ */
+.lobby-casino-halo {
+  animation: lobby-casino-halo 4.2s ease-in-out infinite;
+}
+
+/* 画面 A：perspective 提供 3D 透视，三粒骰子用不同时长 / 负延迟错开翻滚节奏。 */
+.lobby-casino-dice-stage {
+  perspective: 520px;
+  perspective-origin: 50% 42%;
+}
+
+.lobby-casino-die {
+  display: block;
+  transform-style: preserve-3d;
+  will-change: transform;
+  animation: lobby-casino-die-tumble 3s cubic-bezier(0.45, 0.05, 0.55, 0.95)
+    infinite;
+}
+
+.lobby-casino-die:nth-child(2) {
+  animation-delay: -0.85s;
+  animation-duration: 2.6s;
+}
+
+.lobby-casino-die:nth-child(3) {
+  animation-delay: -1.6s;
+  animation-duration: 3.4s;
+}
+
+.lobby-casino-table-shadow {
+  animation: lobby-casino-table-shadow 3s ease-in-out infinite;
+}
+
+/* 画面 B：三张牌从右侧逐一滑入，落位后各自以不同节奏上下浮动（--card-tilt 保留倾斜角）。 */
+.lobby-casino-card-enter {
+  --card-tilt: 0deg;
+  animation: lobby-casino-card-enter 0.85s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.lobby-casino-card-enter:nth-child(1) {
+  --card-tilt: -10deg;
+  animation-delay: 0.05s;
+}
+
+.lobby-casino-card-enter:nth-child(2) {
+  --card-tilt: 1deg;
+  animation-delay: 0.2s;
+}
+
+.lobby-casino-card-enter:nth-child(3) {
+  --card-tilt: 11deg;
+  animation-delay: 0.35s;
+}
+
+.lobby-casino-card-float {
+  animation: lobby-casino-card-float 2.6s ease-in-out infinite;
+}
+
+.lobby-casino-card-enter:nth-child(2) .lobby-casino-card-float {
+  animation-delay: 0.28s;
+}
+
+.lobby-casino-card-enter:nth-child(3) .lobby-casino-card-float {
+  animation-delay: 0.56s;
+}
+
+@keyframes lobby-casino-die-tumble {
+  0% {
+    transform: translate3d(0, 0, 0) rotateX(0deg) rotateY(0deg) rotateZ(-8deg);
+  }
+  25% {
+    transform: translate3d(0, -9px, 14px) rotateX(120deg) rotateY(75deg)
+      rotateZ(10deg);
+  }
+  50% {
+    transform: translate3d(0, 0, 0) rotateX(240deg) rotateY(180deg)
+      rotateZ(-6deg);
+  }
+  75% {
+    transform: translate3d(0, -6px, 10px) rotateX(320deg) rotateY(285deg)
+      rotateZ(8deg);
+  }
+  100% {
+    transform: translate3d(0, 0, 0) rotateX(360deg) rotateY(360deg)
+      rotateZ(-8deg);
+  }
+}
+
+@keyframes lobby-casino-table-shadow {
+  0%,
+  100% {
+    opacity: 0.6;
+    transform: scaleX(1);
+  }
+  25%,
+  75% {
+    opacity: 0.3;
+    transform: scaleX(0.8);
+  }
+  50% {
+    opacity: 0.65;
+    transform: scaleX(1.05);
+  }
+}
+
+@keyframes lobby-casino-card-enter {
+  from {
+    opacity: 0;
+    transform: translateX(76px) rotate(calc(var(--card-tilt) + 16deg))
+      scale(0.86);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) rotate(var(--card-tilt)) scale(1);
+  }
+}
+
+@keyframes lobby-casino-card-float {
+  0%,
+  100% {
+    transform: rotate(var(--card-tilt)) translateY(-3px);
+  }
+  50% {
+    transform: rotate(var(--card-tilt)) translateY(3px);
+  }
+}
+
+@keyframes lobby-casino-halo {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.92);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.06);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .winner-ticker-track {
     animation: none;
     transform: none;
+  }
+
+  .lobby-casino-halo,
+  .lobby-casino-die,
+  .lobby-casino-table-shadow,
+  .lobby-casino-card-float {
+    animation: none;
+  }
+
+  .lobby-casino-card-enter {
+    animation: none;
+    transform: rotate(var(--card-tilt));
   }
 
   @keyframes jackpot-pop {

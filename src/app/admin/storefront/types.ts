@@ -13,6 +13,12 @@ export type StorefrontTenantRow = {
   themeBrightness: number;
   /** 已归一化的模块开关与顺序 */
   modules: StorefrontModule[];
+  /** 顶栏语言按钮左侧是否显示 AI 客服图标 */
+  showTopbarChat: boolean;
+  /** 侧边栏「斗鸡」下方是否显示娱乐场动态卡片 */
+  showSidebarCasinoAnim: boolean;
+  /** 语言按钮文案，形如 CH/EN */
+  languageStyle: string;
 };
 
 export type StorefrontSaveResponse = {

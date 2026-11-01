@@ -2,7 +2,7 @@ import { connection } from "next/server";
 
 import { prisma } from "@/lib/prisma";
 import {
-  normalizeLayoutConfig,
+  normalizeStorefrontLayout,
   parseThemeSetting,
 } from "@/lib/storefront";
 import { loadStorefront } from "@/lib/storefront-data";
@@ -72,6 +72,7 @@ export default async function AdminStorefrontPage({
   const tenants: StorefrontTenantRow[] = tenantRows.map((row) => {
     // themeColor 现在是 {"hex":...,"brightness":...} 的 JSON 字符串，老数据是裸 hex
     const theme = parseThemeSetting(row.themeColor);
+    const layout = normalizeStorefrontLayout(row.layoutConfig);
 
     return {
       id: row.id,
@@ -81,7 +82,10 @@ export default async function AdminStorefrontPage({
       status: row.status,
       themeColor: theme.hex,
       themeBrightness: theme.brightness,
-      modules: normalizeLayoutConfig(row.layoutConfig),
+      modules: layout.modules,
+      showTopbarChat: layout.showTopbarChat,
+      showSidebarCasinoAnim: layout.showSidebarCasinoAnim,
+      languageStyle: layout.languageStyle,
     };
   });
 

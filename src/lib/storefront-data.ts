@@ -1,13 +1,17 @@
 import { cache } from "react";
 import { headers } from "next/headers";
 
+import { logDataFallback } from "@/lib/data-fallback-log";
 import { prisma } from "@/lib/prisma";
 import { getSessionUserFromCookies } from "@/lib/session";
 import {
+  DEFAULT_STOREFRONT_LANGUAGE_STYLE,
   DEFAULT_STOREFRONT_MODULES,
+  DEFAULT_STOREFRONT_SIDEBAR_CASINO,
+  DEFAULT_STOREFRONT_TOPBAR_CHAT,
   DEFAULT_THEME_BRIGHTNESS,
   DEFAULT_THEME_COLOR,
-  normalizeLayoutConfig,
+  normalizeStorefrontLayout,
   parseThemeSetting,
   type StorefrontSettings,
 } from "@/lib/storefront";
@@ -42,19 +46,26 @@ export const FALLBACK_STOREFRONT: StorefrontSettings = {
   themeColor: DEFAULT_THEME_COLOR,
   themeBrightness: DEFAULT_THEME_BRIGHTNESS,
   modules: DEFAULT_STOREFRONT_MODULES.map((module) => ({ ...module })),
+  showTopbarChat: DEFAULT_STOREFRONT_TOPBAR_CHAT,
+  showSidebarCasinoAnim: DEFAULT_STOREFRONT_SIDEBAR_CASINO,
+  languageStyle: DEFAULT_STOREFRONT_LANGUAGE_STYLE,
 };
 
 function toSettings(row: StorefrontTenantRow): StorefrontSettings {
   // themeColor 里存的是 {"hex":"#d4af37","brightness":50}；老数据是裸 hex，
   // parseThemeSetting 两种都认，脏数据则退化成默认金色 + 50% 深浅。
   const theme = parseThemeSetting(row.themeColor);
+  const layout = normalizeStorefrontLayout(row.layoutConfig);
 
   return {
     tenantId: row.id,
     tenantName: row.name,
     themeColor: theme.hex,
     themeBrightness: theme.brightness,
-    modules: normalizeLayoutConfig(row.layoutConfig),
+    modules: layout.modules,
+    showTopbarChat: layout.showTopbarChat,
+    showSidebarCasinoAnim: layout.showSidebarCasinoAnim,
+    languageStyle: layout.languageStyle,
   };
 }
 
@@ -182,7 +193,7 @@ export const loadStorefront = cache(
 
       return FALLBACK_STOREFRONT;
     } catch (error) {
-      console.error("读取前台装修配置失败，回退到默认金色主题:", error);
+      logDataFallback("读取前台装修配置失败，回退到默认金色主题", error);
 
       return FALLBACK_STOREFRONT;
     }
