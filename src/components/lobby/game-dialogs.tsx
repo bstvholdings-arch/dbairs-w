@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
-import { formatAmount } from "@/lib/format";
+import { DEFAULT_CURRENCY, formatCurrency } from "@/lib/currency";
 import type { TranslationKey } from "@/lib/i18n-types";
 import { DEPOSIT_PRESETS } from "@/lib/lobby-wallet";
 
@@ -84,6 +84,7 @@ export function DepositDialog({
   titleId,
   balance,
   amount,
+  currency = DEFAULT_CURRENCY,
   onSelectAmount,
   onConfirm,
   onClose,
@@ -91,6 +92,8 @@ export function DepositDialog({
   titleId: string;
   balance: number;
   amount: number;
+  /** 租户记账货币：符号按它渲染，默认 MYR */
+  currency?: string;
   onSelectAmount: (amount: number) => void;
   onConfirm: () => void;
   onClose: () => void;
@@ -112,7 +115,7 @@ export function DepositDialog({
             {t("lobby.balance")}
           </span>
           <span className="font-mono text-sm font-semibold tabular-nums text-brand-pale">
-            ${formatAmount(balance)}
+            {formatCurrency(balance, currency)}
           </span>
         </div>
 

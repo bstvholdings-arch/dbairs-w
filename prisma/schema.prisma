@@ -18,6 +18,11 @@ model Tenant {
   // 出金审批人数设置（最少1人，最多3人，后台可调）
   withdrawalRequiredApprovals Int @default(1)
 
+  // 租户记账货币（玩家钱包余额、提现、统计金额的统一币种）
+  // 前端一律用 src/lib/currency.ts 的 formatCurrency() 渲染符号（RM / $ / ฿ / Rp…），
+  // 不允许在组件里写死 `$`。可选值见 SUPPORTED_CURRENCIES。
+  currency String @default("MYR")
+
   // 前台装修（Storefront Settings，超管在 /admin/storefront 可视化配置）
   // themeColor：玩家大厅主色调，默认金色 #d4af37
   // layoutConfig：模块开关、顺序与互动组件，形如

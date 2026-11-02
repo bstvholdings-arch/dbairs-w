@@ -693,6 +693,11 @@ export type StorefrontSettings = {
   tenantId: string | null;
   /** 租户名，后台预览时显示「当前正在装修：xxx」 */
   tenantName: string | null;
+  /**
+   * 租户记账货币（Tenant.currency，已归一化，默认 MYR）。
+   * 大厅顶栏 BALANCE、玩家中心所有金额都用它渲染符号，见 src/lib/currency.ts。
+   */
+  currency: string;
   /** 主色（已归一化的 hex） */
   themeColor: string;
   /** 深浅调节 0-100（50 = 色号原样） */

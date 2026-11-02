@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { headers } from "next/headers";
 
+import { DEFAULT_CURRENCY, normalizeCurrency } from "@/lib/currency";
 import { logDataFallback } from "@/lib/data-fallback-log";
 import { prisma } from "@/lib/prisma";
 import { getSessionUserFromCookies } from "@/lib/session";
@@ -28,6 +29,7 @@ import {
 const STOREFRONT_SELECT = {
   id: true,
   name: true,
+  currency: true,
   themeColor: true,
   layoutConfig: true,
 } as const;
@@ -35,6 +37,7 @@ const STOREFRONT_SELECT = {
 type StorefrontTenantRow = {
   id: string;
   name: string;
+  currency: string;
   themeColor: string;
   layoutConfig: unknown;
 };
@@ -43,6 +46,7 @@ type StorefrontTenantRow = {
 export const FALLBACK_STOREFRONT: StorefrontSettings = {
   tenantId: null,
   tenantName: null,
+  currency: DEFAULT_CURRENCY,
   themeColor: DEFAULT_THEME_COLOR,
   themeBrightness: DEFAULT_THEME_BRIGHTNESS,
   modules: DEFAULT_STOREFRONT_MODULES.map((module) => ({ ...module })),
@@ -60,6 +64,7 @@ function toSettings(row: StorefrontTenantRow): StorefrontSettings {
   return {
     tenantId: row.id,
     tenantName: row.name,
+    currency: normalizeCurrency(row.currency),
     themeColor: theme.hex,
     themeBrightness: theme.brightness,
     modules: layout.modules,

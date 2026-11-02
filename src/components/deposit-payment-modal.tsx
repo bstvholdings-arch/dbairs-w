@@ -4,6 +4,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { useEffect, useId, useState, type FormEvent } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
+import { formatCurrency } from "@/lib/currency";
 import {
   GATEWAY_BANK_FIELD_LABEL_KEYS,
   GATEWAY_PAYMENT_TYPE_LABEL_KEYS,
@@ -109,21 +110,8 @@ function formatAmountValue(value: string) {
 }
 
 function formatPaymentAmount(value: string, currency: string) {
-  const formatted = formatAmountValue(value);
-
-  if (currency === "MYR") {
-    return `RM ${formatted}`;
-  }
-
-  if (currency === "USD") {
-    return `$${formatted}`;
-  }
-
-  if (currency === "USDT") {
-    return `${formatted} USDT`;
-  }
-
-  return `${formatted} ${currency}`;
+  // 支付页金额同样走统一币种符号（RM / $ / USDT…），不再在组件里写死
+  return formatCurrency(value, currency, { maximumFractionDigits: 6 });
 }
 
 function validateAmount(value: string, t: TFunction) {
