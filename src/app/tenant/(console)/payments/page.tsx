@@ -7,9 +7,9 @@ import { loadTenantPaymentGateways } from "@/lib/tenant-payment-gateways";
 import { TenantPaymentsClient } from "./tenant-payments-client";
 
 export const metadata = {
-  title: "My Payment Gateways | DBAIRS Tenant Console",
+  title: "Payment Gateway | DBAIRS Tenant Console",
   description:
-    "View platform pay-in, payout, and settlement rates, and submit tenant-owned gateways for review.",
+    "Configure your own payment channels: API endpoint, payout wallet address and API secret. Platform no longer provides shared collection gateways.",
 };
 
 export const instant = false;

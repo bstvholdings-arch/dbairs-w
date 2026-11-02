@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
@@ -39,8 +38,6 @@ type FinanceDepositRow = {
 type FinanceViewProps = {
   /** true = 平台范围（super_admin / finance），false = 单个租户视角 */
   isPlatformScope: boolean;
-  /** 有支付网关权限（payments）才显示「管理网关」入口 */
-  canManageGateways: boolean;
   tenantName?: string;
   paymentSpreadLabel: string;
   monthStart: string;
@@ -60,7 +57,6 @@ function formatSignedAmount(value: number) {
 
 export function FinanceView({
   isPlatformScope,
-  canManageGateways,
   tenantName,
   paymentSpreadLabel,
   monthStart,
@@ -135,14 +131,6 @@ export function FinanceView({
             })}
           </p>
         </div>
-        {canManageGateways ? (
-          <Link
-            href="/admin/payments"
-            className="inline-flex h-9 items-center self-start rounded-lg border border-[#d4af37]/20 bg-[#d4af37]/[0.06] px-3 text-[11px] text-[#f0d27c] transition-colors hover:border-[#d4af37]/40 hover:bg-[#d4af37]/10 sm:self-auto"
-          >
-            {t("finance.actions.manageGateways")}
-          </Link>
-        ) : null}
       </header>
 
       <section className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">

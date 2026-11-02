@@ -4,6 +4,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { useEffect, useState, type FormEvent } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
+import { formatCurrency } from "@/lib/currency";
 import {
   GATEWAY_BANK_FIELD_LABEL_KEYS,
   GATEWAY_PROVIDER_LABEL_KEYS,
@@ -31,6 +32,8 @@ type AmountLimits = { min: string; max: string };
 type GatewayListResponse = {
   gateways?: PlayerDepositGateway[];
   amountLimits?: AmountLimits;
+  /** false = 该商户一条收款通道都没配；true = 配了但当前不可用。 */
+  merchantConfigured?: boolean;
   error?: string;
 };
 
@@ -98,18 +101,8 @@ function providerLabel(providerType: string, t: TFunction) {
 }
 
 function formatMoney(value: string, currency: string) {
-  const amount = Number(value);
-
-  if (!Number.isFinite(amount)) {
-    return `${value} ${currency}`;
-  }
-
-  const formatted = new Intl.NumberFormat("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 6,
-  }).format(amount);
-
-  return currency === "USDT" ? `${formatted} USDT` : `${formatted} ${currency}`;
+  // 符号由充值通道币种决定（MYR → RM、USDT → USDT、USD → $），见 src/lib/currency.ts
+  return formatCurrency(value, currency, { maximumFractionDigits: 6 });
 }
 
 function bankRows(details: GatewayBankDetails, t: TFunction) {
@@ -197,7 +190,15 @@ export function PlayerDepositModal({
         const available = data.gateways ?? [];
 
         if (available.length === 0) {
-          setLoadError(t("player.deposit.noGateways"));
+          // 去中心化支付：充值通道完全由商户自己配置。
+          // merchantConfigured=false 说明该商户从未接入支付商，需要引导玩家联系客服。
+          setLoadError(
+            t(
+              data.merchantConfigured === false
+                ? "player.deposit.merchantNoChannels"
+                : "player.deposit.noGateways",
+            ),
+          );
           return;
         }
 

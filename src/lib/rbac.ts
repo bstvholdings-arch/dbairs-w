@@ -26,6 +26,12 @@ export const PERMISSIONS = [
   "providers",
   "games",
   "storefront",
+  /**
+   * payments：预留的「支付业务」权限点。
+   * 去中心化支付架构下平台不再配置收款网关（已彻底下放给商户，
+   * 见 /tenant/payments），超管只在 /admin/integrations 只读监控，
+   * 因此当前没有任何页面或接口挂载该权限点。
+   */
   "payments",
   "finance",
   "withdrawals",
@@ -86,7 +92,6 @@ export const PAGE_ACCESS_RULES: readonly { path: string; permission: Permission 
   { path: "/admin/providers", permission: "providers" },
   { path: "/admin/games", permission: "games" },
   { path: "/admin/storefront", permission: "storefront" },
-  { path: "/admin/payments", permission: "payments" },
   { path: "/admin/finance", permission: "finance" },
   { path: "/admin/staff", permission: "staff" },
   // API 与集成中心：商户对接密钥 / 全局 IP 白名单属于最高敏感配置，只有超管可见
@@ -112,7 +117,6 @@ export const API_ACCESS_RULES: readonly { path: string; permission: Permission }
   { path: "/api/providers", permission: "providers" },
   { path: "/api/admin/games", permission: "games" },
   { path: "/api/admin/storefront", permission: "storefront" },
-  { path: "/api/admin/gateways", permission: "payments" },
   // 出金审批：财务与超管可调用，其它角色一律 403
   { path: "/api/admin/withdrawals", permission: "withdrawals" },
   // AI 设置只有超管能改；AI 日志技术可读

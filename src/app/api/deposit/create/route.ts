@@ -136,7 +136,7 @@ export async function POST(request: NextRequest) {
         endpoint: true,
         apiKey: true,
         isActive: true,
-        reviewStatus: true,
+        isPlatformGateway: true,
         ownerId: true,
       },
     });
@@ -149,13 +149,13 @@ export async function POST(request: NextRequest) {
       return jsonError("该支付网关已停用，请选择其他通道", 409);
     }
 
-    if (gateway.reviewStatus !== "APPROVED") {
-      return jsonError("该支付网关尚未通过审核，请选择其他通道", 409);
-    }
-
-    // 平台公用网关 ownerId 为 null；商户专属网关只能被该商户自己的玩家使用。
-    if (gateway.ownerId && gateway.ownerId !== player.tenantId) {
-      return jsonError("该支付网关不适用于当前租户", 403);
+    /**
+     * 去中心化支付架构：平台不再提供统一收款网关。
+     * 只允许使用「玩家所属商户自己配置」的通道，
+     * 平台公用通道（ownerId=null）与别家商户的通道一律拒绝。
+     */
+    if (gateway.isPlatformGateway || gateway.ownerId !== player.tenantId) {
+      return jsonError("该支付网关不属于当前商户，请选择本商户配置的通道", 403);
     }
 
     const isUsdtGateway = isUsdtProviderType(gateway.providerType);

@@ -55,7 +55,6 @@ export default async function FinancePage() {
     >
       <FinanceView
         isPlatformScope={!isTenantScope}
-        canManageGateways={can(user.role, "payments")}
         tenantName={user.tenant?.name}
         paymentSpreadLabel={paymentSpreadLabel}
         monthStart={summary.monthStart.toISOString()}

@@ -8,12 +8,11 @@ function jsonError(message: string, status: number) {
 }
 
 /**
- * 租户查看可用网关与售价。
+ * 商户查看自己的支付网关配置。
  * GET /api/tenant/gateways/available
  *
- * 返回：
- * - platformGateways：平台提供、已通过且配置完整的网关，仅含售价；
- * - ownGateways：当前租户提交的自有网关及审核状态。
+ * 去中心化支付架构下平台不再下发统一收款网关，返回体只有：
+ * - ownGateways：当前商户自行对接的通道（含已停用的，便于重新启用 / 编辑）。
  */
 export async function GET(request: NextRequest) {
   await connection();

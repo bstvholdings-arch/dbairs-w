@@ -1,42 +1,30 @@
 import { Prisma } from "@prisma/client";
 import type { NextRequest } from "next/server";
 
-import { normalizeGatewayBankDetails } from "@/lib/payment-gateway-bank";
+import { prisma } from "@/lib/prisma";
+import { getSessionUserFromRequest } from "@/lib/session";
 import {
-  isGatewayProviderType,
-  isUsdtProviderType,
-  normalizeGatewayApiKey,
-  normalizeGatewayCurrency,
-  normalizeGatewayEndpoint,
-  normalizeGatewayName,
-  normalizeWalletAddress,
-  validateGatewayConfiguration,
-} from "@/lib/payment-gateway";
-import {
-  defaultGatewayCurrencyForProvider,
-  defaultGatewayTypeForProvider,
-  isGatewayType,
-} from "@/lib/payment-gateway-constants";
-import { normalizeGatewayQrCodeImageUrl } from "@/lib/payment-gateway-qr";
+  parseTenantGatewayInput,
+  tenantGatewayWriteData,
+} from "@/lib/tenant-gateway-input";
 import {
   serializeTenantOwnGateway,
   tenantGatewaySelect,
 } from "@/lib/tenant-payment-gateways";
-import { prisma } from "@/lib/prisma";
-import { getSessionUserFromRequest } from "@/lib/session";
 
 function jsonError(message: string, status: number) {
   return Response.json({ error: message }, { status });
 }
 
 /**
- * 租户提交自有支付网关。
+ * 商户新增自有支付网关（去中心化支付架构）。
  * POST /api/tenant/gateways
  *
- * - 归属强制绑定当前租户，租户不能伪造 ownerId；
- * - 新网关固定 isPlatformGateway=false、reviewStatus=PENDING、isActive=false；
- * - 超管审核通过后才会进入玩家收银台；
- * - 租户自有网关不设置平台成本 / 售价，费率固定为 0。
+ * - 归属强制绑定当前租户，商户不能伪造 ownerId；
+ * - 平台不再提供统一收款网关，也不再人工审核：新建即 reviewStatus=APPROVED、
+ *   isActive=true，保存后立刻出现在本商户玩家的充值弹窗里；
+ * - 商户自有网关不设置平台成本 / 售价，费率固定为 0；平台只在
+ *   /admin/integrations 只读监控商户的对接状态。
  */
 export async function POST(request: NextRequest) {
   try {
@@ -47,7 +35,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (session.role !== "tenant_admin" || !session.tenantId) {
-      return jsonError("仅租户管理员可提交自有支付网关", 403);
+      return jsonError("仅租户管理员可配置支付网关", 403);
     }
 
     let body: unknown;
@@ -58,106 +46,36 @@ export async function POST(request: NextRequest) {
       return jsonError("请求体格式错误", 400);
     }
 
-    const input = (body ?? {}) as Record<string, unknown>;
-    const name = normalizeGatewayName(input.name);
+    const parsed = parseTenantGatewayInput(body);
 
-    if (!name) {
-      return jsonError("网关名称不能为空", 400);
+    if (!parsed.ok) {
+      return jsonError(parsed.error, parsed.status);
     }
 
-    if (name.length > 80) {
-      return jsonError("网关名称不能超过 80 个字符", 400);
-    }
-
-    if (!isGatewayProviderType(input.providerType)) {
-      return jsonError("请选择有效的网关类型", 400);
-    }
-
-    const providerType = input.providerType;
-    const isUsdt = isUsdtProviderType(providerType);
-    const gatewayType =
-      input.gatewayType === undefined ||
-      input.gatewayType === null ||
-      input.gatewayType === ""
-        ? defaultGatewayTypeForProvider(providerType)
-        : input.gatewayType;
-
-    if (!isGatewayType(gatewayType)) {
-      return jsonError("请选择有效的支付形态", 400);
-    }
-
-    const currency =
-      normalizeGatewayCurrency(input.currency) ||
-      defaultGatewayCurrencyForProvider(providerType);
-    const walletAddress = isUsdt
-      ? normalizeWalletAddress(input.walletAddress)
-      : "";
-    const qrCodeImageUrl =
-      gatewayType === "STATIC_QR"
-        ? normalizeGatewayQrCodeImageUrl(input.qrCodeImageUrl)
-        : "";
-    const rawEndpoint =
-      typeof input.endpoint === "string" ? input.endpoint.trim() : "";
-    const isEndpointGateway =
-      gatewayType === "REDIRECT_URL" || gatewayType === "DYNAMIC_QR";
-    const endpoint = isEndpointGateway
-      ? normalizeGatewayEndpoint(input.endpoint)
-      : "";
-
-    if (rawEndpoint && !endpoint && isEndpointGateway) {
-      return jsonError("接口地址必须是有效的 http/https URL", 400);
-    }
-
-    const apiKey = normalizeGatewayApiKey(input.apiKey);
-    const bankDetails =
-      gatewayType === "BANK_TRANSFER"
-        ? normalizeGatewayBankDetails(input.bankDetails)
-        : normalizeGatewayBankDetails(null);
-    const configurationError = validateGatewayConfiguration({
-      providerType,
-      gatewayType,
-      currency,
-      walletAddress,
-      qrCodeImageUrl,
-      endpoint,
-      apiKey,
-      bankDetails,
-    });
-
-    if (configurationError) {
-      return jsonError(configurationError, 400);
-    }
-
+    const value = parsed.value;
+    const tenantId = session.tenantId;
     const duplicate = await prisma.paymentGateway.findFirst({
       where: {
-        name: { equals: name, mode: "insensitive" },
-        ownerId: session.tenantId,
+        name: { equals: value.name, mode: "insensitive" },
+        ownerId: tenantId,
       },
       select: { id: true },
     });
 
     if (duplicate) {
-      return jsonError("当前租户下已存在同名支付网关", 409);
+      return jsonError("当前商户下已存在同名支付网关", 409);
     }
 
     const gateway = await prisma.paymentGateway.create({
       data: {
-        name,
-        providerType,
-        gatewayType,
-        currency,
-        walletAddress: isUsdt ? walletAddress || null : null,
-        qrCodeImageUrl:
-          gatewayType === "STATIC_QR" ? qrCodeImageUrl || null : null,
-        bankDetails:
-          gatewayType === "BANK_TRANSFER" ? bankDetails : Prisma.DbNull,
-        endpoint,
-        apiKey,
+        ...tenantGatewayWriteData(value),
         isPlatformGateway: false,
-        reviewStatus: "PENDING",
+        // 商户自行对接支付商，平台不再审核：创建即生效。
+        reviewStatus: "APPROVED",
         reviewNote: null,
-        isActive: false,
-        ownerId: session.tenantId,
+        reviewedAt: new Date(),
+        isActive: true,
+        ownerId: tenantId,
       },
       select: tenantGatewaySelect,
     });
@@ -165,7 +83,7 @@ export async function POST(request: NextRequest) {
     return Response.json(
       {
         success: true,
-        message: "支付网关已提交，等待平台审核",
+        message: "支付网关已保存并生效",
         gateway: serializeTenantOwnGateway(gateway),
       },
       { status: 201 },
@@ -175,7 +93,7 @@ export async function POST(request: NextRequest) {
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2003"
     ) {
-      return jsonError("所属租户不存在", 400);
+      return jsonError("所属商户不存在", 400);
     }
 
     console.error("提交租户支付网关失败:", error);

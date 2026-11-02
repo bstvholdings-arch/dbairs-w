@@ -10,6 +10,8 @@ import {
 
 type GatewayListResponse = {
   gateways?: DepositGatewayOption[];
+  /** false = 该商户一条收款通道都没配；true = 配了但当前不可用。 */
+  merchantConfigured?: boolean;
   error?: string;
 };
 
@@ -96,7 +98,13 @@ function PlayerDepositSession({
 
         if (available.length === 0) {
           setStatus("error");
-          setError(t("player.deposit.noGateways"));
+          setError(
+            t(
+              data.merchantConfigured === false
+                ? "player.deposit.merchantNoChannels"
+                : "player.deposit.noGateways",
+            ),
+          );
           return;
         }
 

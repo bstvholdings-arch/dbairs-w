@@ -15,15 +15,21 @@ function jsonError(message: string, status: number) {
 }
 
 /**
- * 租户后台 / 收银台读取当前租户可用的充值网关。
+ * 收银台 / 商户后台读取**当前商户**可用的充值网关（去中心化支付架构）。
  * GET /api/deposit/gateways
+ *
+ * 架构约定：包网平台不再提供统一收款网关，所以这里**只读当前登录玩家
+ * 所属 tenantId 的商户自有通道**，绝不再回落到平台公用网关（ownerId=null）。
  *
  * - USDT 网关：DYNAMIC_QR，必须已配置钱包地址；
  * - 静态收款图：STATIC_QR，必须已配置二维码图片；
  * - 跳转支付：REDIRECT_URL，必须已配置有效接口地址；
  * - 银行转账：BANK_TRANSFER，必须已配置银行账号信息。
  *
- * 平台公用网关（ownerId=null）与当前租户专属网关都会返回。
+ * 响应里的 merchantConfigured 用来区分两种空列表：
+ * - false：该商户一条通道都没配 → 前端提示「该商户暂未开通充值通道，请联系客服。」；
+ * - true ：配置过通道但都停用 / 配置不完整 → 提示「当前没有可用的支付通道」。
+ *
  * 列表不返回二维码原图 / 银行账号明细，避免 base64 图片或敏感信息把响应撑大；
  * 真正图片与银行信息在创建订单后由 create 接口返回。
  */
@@ -47,9 +53,9 @@ export async function GET(request: NextRequest) {
 
     const gateways = await prisma.paymentGateway.findMany({
       where: {
-        isActive: true,
-        reviewStatus: "APPROVED",
-        OR: [{ ownerId: null }, { ownerId: tenantId }],
+        // 商户自行对接：只认本商户自己的通道，平台通道一律不参与。
+        ownerId: tenantId,
+        isPlatformGateway: false,
       },
       orderBy: [{ createdAt: "desc" }],
       select: {
@@ -58,6 +64,7 @@ export async function GET(request: NextRequest) {
         providerType: true,
         gatewayType: true,
         currency: true,
+        isActive: true,
         walletAddress: true,
         qrCodeImageUrl: true,
         endpoint: true,
@@ -67,6 +74,10 @@ export async function GET(request: NextRequest) {
     });
 
     const available = gateways.flatMap((gateway) => {
+      if (!gateway.isActive) {
+        return [];
+      }
+
       const walletAddress = gateway.walletAddress?.trim() ?? "";
       const qrCodeImageUrl = gateway.qrCodeImageUrl?.trim() ?? "";
       const endpoint = gateway.endpoint?.trim() ?? "";
@@ -106,7 +117,13 @@ export async function GET(request: NextRequest) {
     });
 
     return Response.json(
-      { gateways: available, amountLimits: depositAmountLimitLabels() },
+      {
+        gateways: available,
+        // 该商户是否配置过任何通道（含已停用 / 配置不完整的）：前端据此区分
+        // 「商户未开通充值」与「通道暂时不可用」两种空态。
+        merchantConfigured: gateways.length > 0,
+        amountLimits: depositAmountLimitLabels(),
+      },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {

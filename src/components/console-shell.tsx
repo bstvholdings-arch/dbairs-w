@@ -85,12 +85,9 @@ const PLATFORM_NAV: NavItem[] = [
     icon: "storefront",
     permission: "storefront",
   },
-  {
-    labelKey: "nav.payments",
-    href: "/admin/payments",
-    icon: "gateways",
-    permission: "payments",
-  },
+  // 注意：收款网关已彻底下放给商户（商户自行对接支付商），
+  // 平台后台不再提供 Payment Gateways 配置页；
+  // 超管只在「API 与集成中心 → 支付通道」页签只读监控商户的对接状态。
   {
     labelKey: "nav.finance",
     href: "/finance",
@@ -114,11 +111,12 @@ const PLATFORM_NAV: NavItem[] = [
 ];
 
 /**
- * 商户后台菜单：只有「概览 / 玩家 / 财务 / 客服记录 / 站点设置」5 项。
+ * 商户后台菜单：概览 / 玩家 / KYC / 支付网关 / 财务 / 客服记录 / 站点设置。
  *
- * 平台侧的任何全局配置（租户管理、游戏库、支付网关审核、AI 中控台、员工管理）
- * 都不会出现在这里；商户想改游戏费率 / 自有支付通道，从「站点设置」页内的
- * 入口进入（保留既有功能，但不占用主导航）。
+ * 平台侧的任何全局配置（租户管理、游戏库、AI 中控台、员工管理）
+ * 都不会出现在这里。支付网关（/tenant/payments）已按去中心化支付架构
+ * 下放给商户：商户自己填 API Endpoint、收款钱包地址与 API Secret，
+ * 平台只读监控对接状态，不再提供统一收款网关。
  */
 const TENANT_ADMIN_NAV: NavItem[] = [
   {
@@ -129,6 +127,12 @@ const TENANT_ADMIN_NAV: NavItem[] = [
   { labelKey: "nav.tenantPlayers", href: "/tenant/players", icon: "players" },
   // KYC 审核：只处理本站玩家提交的实名资料
   { labelKey: "nav.tenantKyc", href: "/tenant/kyc", icon: "kyc" },
+  // 支付网关：商户自行对接支付商（充值通道的唯一来源）
+  {
+    labelKey: "nav.tenantPayments",
+    href: "/tenant/payments",
+    icon: "gateways",
+  },
   { labelKey: "nav.tenantFinance", href: "/tenant/finance", icon: "finance" },
   { labelKey: "nav.tenantAiLogs", href: "/tenant/ai-logs", icon: "ai" },
   {

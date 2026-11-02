@@ -50,7 +50,7 @@ type TenantGatewayFormValues = {
   apiKey: string;
 };
 
-type TenantGatewayCreateResponse = {
+type TenantGatewaySaveResponse = {
   success?: boolean;
   gateway?: TenantOwnGateway;
   error?: string;
@@ -158,24 +158,31 @@ function validateForm(form: TenantGatewayFormValues, t: TFunction) {
 }
 
 export function TenantGatewayFormModal({
+  gateway,
   onClose,
-  onCreated,
+  onSaved,
 }: {
+  /** 有值 = 编辑已有通道（PUT），无值 = 新增（POST）。 */
+  gateway?: TenantOwnGateway;
   onClose: () => void;
-  onCreated: (gateway: TenantOwnGateway) => void;
+  onSaved: (gateway: TenantOwnGateway) => void;
 }) {
   const router = useRouter();
   const { t } = useLanguage();
   const titleId = useId();
+  const isEdit = Boolean(gateway);
   const [form, setForm] = useState<TenantGatewayFormValues>({
-    name: "",
-    providerType: "tng",
-    gatewayType: "STATIC_QR",
-    currency: "MYR",
-    walletAddress: "",
-    qrCodeImageUrl: "",
-    bankDetails: { ...EMPTY_GATEWAY_BANK_DETAILS },
-    endpoint: "",
+    name: gateway?.name ?? "",
+    providerType: (gateway?.providerType ?? "tng") as GatewayProviderType,
+    gatewayType: gateway?.gatewayType ?? "STATIC_QR",
+    currency: gateway?.currency ?? "MYR",
+    walletAddress: gateway?.walletAddress ?? "",
+    qrCodeImageUrl: gateway?.qrCodeImageUrl ?? "",
+    bankDetails: gateway?.bankDetails
+      ? { ...gateway.bankDetails }
+      : { ...EMPTY_GATEWAY_BANK_DETAILS },
+    endpoint: gateway?.endpoint ?? "",
+    // 编辑时不回填密钥明文：留空 = 保持原有 API Secret 不变。
     apiKey: "",
   });
   const [error, setError] = useState("");
@@ -243,30 +250,37 @@ export function TenantGatewayFormModal({
       form.gatewayType === "DYNAMIC_QR";
 
     try {
-      const response = await fetch("/api/tenant/gateways", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: form.name.trim(),
-          providerType: form.providerType,
-          gatewayType: form.gatewayType,
-          currency: form.currency.trim().toUpperCase(),
-          walletAddress: isUsdt ? form.walletAddress.trim() || null : null,
-          qrCodeImageUrl:
-            form.gatewayType === "STATIC_QR"
-              ? normalizeGatewayQrCodeImageUrl(form.qrCodeImageUrl) || null
-              : null,
-          bankDetails:
-            form.gatewayType === "BANK_TRANSFER"
-              ? normalizeGatewayBankDetails(form.bankDetails)
-              : null,
-          endpoint: isEndpointGateway ? form.endpoint.trim() : "",
-          apiKey: isEndpointGateway ? form.apiKey.trim() : "",
-        }),
-      });
-      const data: TenantGatewayCreateResponse = await response
+      // 新增 → POST /api/tenant/gateways；编辑 → PUT /api/tenant/gateways/[id]
+      const response = await fetch(
+        isEdit && gateway
+          ? `/api/tenant/gateways/${gateway.id}`
+          : "/api/tenant/gateways",
+        {
+          method: isEdit ? "PUT" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: form.name.trim(),
+            providerType: form.providerType,
+            gatewayType: form.gatewayType,
+            currency: form.currency.trim().toUpperCase(),
+            walletAddress: isUsdt ? form.walletAddress.trim() || null : null,
+            qrCodeImageUrl:
+              form.gatewayType === "STATIC_QR"
+                ? normalizeGatewayQrCodeImageUrl(form.qrCodeImageUrl) || null
+                : null,
+            bankDetails:
+              form.gatewayType === "BANK_TRANSFER"
+                ? normalizeGatewayBankDetails(form.bankDetails)
+                : null,
+            endpoint: isEndpointGateway ? form.endpoint.trim() : "",
+            // 留空表示沿用原密钥，由服务端保留旧值。
+            apiKey: isEndpointGateway ? form.apiKey.trim() : "",
+          }),
+        },
+      );
+      const data: TenantGatewaySaveResponse = await response
         .json()
-        .catch(() => ({}) as TenantGatewayCreateResponse);
+        .catch(() => ({}) as TenantGatewaySaveResponse);
 
       if (response.status === 401) {
         router.replace("/login?next=/tenant/payments");
@@ -278,7 +292,7 @@ export function TenantGatewayFormModal({
         return;
       }
 
-      onCreated(data.gateway);
+      onSaved(data.gateway);
     } catch {
       setError(t("common.networkError"));
     } finally {
@@ -308,10 +322,16 @@ export function TenantGatewayFormModal({
               {t("tenantGateway.eyebrow")}
             </p>
             <h2 id={titleId} className="mt-1 text-lg font-semibold text-white">
-              {t("tenantGateway.title")}
+              {t(
+                isEdit ? "tenantGateway.titleEdit" : "tenantGateway.titleCreate",
+              )}
             </h2>
             <p className="mt-1 text-[10px] leading-5 text-neutral-600">
-              {t("tenantGateway.subtitle")}
+              {t(
+                isEdit
+                  ? "tenantGateway.subtitleEdit"
+                  : "tenantGateway.subtitleCreate",
+              )}
             </p>
           </div>
           <button
@@ -564,11 +584,19 @@ export function TenantGatewayFormModal({
                       updateField("apiKey", event.target.value)
                     }
                     autoComplete="new-password"
-                    placeholder={t("tenantGateway.form.apiKeyPlaceholder")}
+                    placeholder={t(
+                      isEdit && gateway?.hasApiKey
+                        ? "tenantGateway.form.apiKeyKeepPlaceholder"
+                        : "tenantGateway.form.apiKeyPlaceholder",
+                    )}
                     className={inputClass}
                   />
                   <span className="mt-1.5 block text-[10px] leading-5 text-neutral-600">
-                    {t("tenantGateway.form.apiKeyHint")}
+                    {t(
+                      isEdit && gateway?.hasApiKey
+                        ? "tenantGateway.form.apiKeyKeepHint"
+                        : "tenantGateway.form.apiKeyHint",
+                    )}
                   </span>
                 </label>
               </>
@@ -598,7 +626,11 @@ export function TenantGatewayFormModal({
             >
               {submitting
                 ? t("common.submitting")
-                : t("tenantGateway.form.submit")}
+                : t(
+                    isEdit
+                      ? "tenantGateway.form.save"
+                      : "tenantGateway.form.submit",
+                  )}
             </button>
           </div>
         </form>

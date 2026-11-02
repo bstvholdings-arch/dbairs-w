@@ -1,10 +1,10 @@
 import { Prisma } from "@prisma/client";
 
-import { normalizeGatewayBankDetails } from "./payment-gateway-bank";
+import { isUsdtProviderType } from "./payment-gateway";
 import {
-  isUsdtProviderType,
-  validateGatewayCheckoutAvailability,
-} from "./payment-gateway";
+  normalizeGatewayBankDetails,
+  type GatewayBankDetails,
+} from "./payment-gateway-bank";
 import type {
   GatewayReviewStatusValue,
   GatewayTypeValue,
@@ -39,16 +39,38 @@ export type TenantGatewayRecord = Prisma.PaymentGatewayGetPayload<{
   select: typeof tenantGatewaySelect;
 }>;
 
-/** 租户可见的平台网关：只暴露售价，不暴露平台成本。 */
-export type TenantPlatformGateway = {
+/**
+ * 商户自有支付网关（去中心化支付架构）。
+ *
+ * 平台不再提供统一收款网关，收款通道由商户在本页自行对接支付商；
+ * 因此除了展示用的摘要，还下发**商户自己填过的原始配置**
+ * （endpoint / 钱包地址 / 二维码 / 银行信息），编辑弹窗才能回填。
+ * 这些数据只属于当前商户，接口层强制 where: { ownerId: tenantId }。
+ */
+export type TenantOwnGateway = {
   id: string;
   name: string;
   providerType: string;
   gatewayType: GatewayTypeValue;
   currency: string;
-  payinSellRate: string;
-  payoutSellRate: string;
-  settlementSellRate: string;
+  walletAddress: string;
+  qrCodeImageUrl: string;
+  endpoint: string;
+  bankDetails: GatewayBankDetails;
+  configurationSummary: string;
+  configurationSummaryData: TenantGatewayConfigurationSummary;
+  apiKeyPreview: string;
+  hasApiKey: boolean;
+  isActive: boolean;
+  reviewStatus: GatewayReviewStatusValue;
+  reviewNote: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TenantPaymentGatewayData = {
+  ownGateways: TenantOwnGateway[];
 };
 
 export type TenantGatewayConfigurationSummary = {
@@ -66,30 +88,9 @@ export type TenantGatewayConfigurationSummary = {
   walletSuffix: string;
 };
 
-/** 租户自有网关：包含审核状态与配置摘要，不返回成本 / 完整密钥。 */
-export type TenantOwnGateway = {
-  id: string;
-  name: string;
-  providerType: string;
-  gatewayType: GatewayTypeValue;
-  currency: string;
-  configurationSummary: string;
-  configurationSummaryData: TenantGatewayConfigurationSummary;
-  apiKeyPreview: string;
-  hasApiKey: boolean;
-  isActive: boolean;
-  reviewStatus: GatewayReviewStatusValue;
-  reviewNote: string | null;
-  reviewedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type TenantPaymentGatewayData = {
-  platformGateways: TenantPlatformGateway[];
-  ownGateways: TenantOwnGateway[];
-};
-
+/**
+ * 商户自有网关：包含审核状态与配置摘要，不返回完整密钥（列表只展示末 4 位）。
+ */
 function maskTail(value: string, visible = 4) {
   const text = value.trim();
 
@@ -189,36 +190,6 @@ function gatewayConfigurationSummaryData(
   }
 }
 
-function isCheckoutAvailable(gateway: TenantGatewayRecord) {
-  return (
-    validateGatewayCheckoutAvailability({
-      providerType: gateway.providerType,
-      gatewayType: gateway.gatewayType,
-      currency: gateway.currency,
-      walletAddress: gateway.walletAddress?.trim() ?? "",
-      qrCodeImageUrl: gateway.qrCodeImageUrl?.trim() ?? "",
-      endpoint: gateway.endpoint?.trim() ?? "",
-      apiKey: gateway.apiKey,
-      bankDetails: normalizeGatewayBankDetails(gateway.bankDetails),
-    }) === ""
-  );
-}
-
-export function serializeTenantPlatformGateway(
-  gateway: TenantGatewayRecord,
-): TenantPlatformGateway {
-  return {
-    id: gateway.id,
-    name: gateway.name,
-    providerType: gateway.providerType,
-    gatewayType: gateway.gatewayType,
-    currency: gateway.currency,
-    payinSellRate: gateway.payinSellRate.toFixed(6),
-    payoutSellRate: gateway.payoutSellRate.toFixed(6),
-    settlementSellRate: gateway.settlementSellRate.toFixed(6),
-  };
-}
-
 export function serializeTenantOwnGateway(
   gateway: TenantGatewayRecord,
 ): TenantOwnGateway {
@@ -228,6 +199,11 @@ export function serializeTenantOwnGateway(
     providerType: gateway.providerType,
     gatewayType: gateway.gatewayType,
     currency: gateway.currency,
+    // 商户自己填过的原始配置：编辑弹窗需要回填（接口层已按租户收口）。
+    walletAddress: gateway.walletAddress ?? "",
+    qrCodeImageUrl: gateway.qrCodeImageUrl ?? "",
+    endpoint: gateway.endpoint,
+    bankDetails: normalizeGatewayBankDetails(gateway.bankDetails),
     configurationSummary: gatewayConfigurationSummary(gateway),
     configurationSummaryData: gatewayConfigurationSummaryData(gateway),
     apiKeyPreview: gateway.apiKey ? `••••${gateway.apiKey.slice(-4)}` : "",
@@ -242,38 +218,19 @@ export function serializeTenantOwnGateway(
 }
 
 /**
- * 租户支付页 / GET /api/tenant/gateways/available 共用的数据加载。
+ * 商户支付网关页 / GET /api/tenant/gateways/available 共用的数据加载。
  *
- * - platformGateways: 平台提供、已审核、已启用且配置完整的网关；
- * - ownGateways: 当前租户提交的全部自有网关（含待审核 / 驳回）。
+ * 去中心化支付架构下平台不再下发统一收款网关，这里只返回
+ * **当前商户自己配置的通道**（含已停用的，方便商户重新启用或编辑）。
  */
 export async function loadTenantPaymentGateways(
   tenantId: string,
 ): Promise<TenantPaymentGatewayData> {
   const gateways = await prisma.paymentGateway.findMany({
-    where: {
-      OR: [{ ownerId: null }, { ownerId: tenantId }],
-    },
+    where: { ownerId: tenantId, isPlatformGateway: false },
     orderBy: [{ isActive: "desc" }, { createdAt: "desc" }],
     select: tenantGatewaySelect,
   });
 
-  const platformGateways = gateways
-    .filter(
-      (gateway) =>
-        gateway.isPlatformGateway &&
-        gateway.reviewStatus === "APPROVED" &&
-        gateway.isActive &&
-        isCheckoutAvailable(gateway),
-    )
-    .map(serializeTenantPlatformGateway);
-
-  const ownGateways = gateways
-    .filter(
-      (gateway) =>
-        !gateway.isPlatformGateway && gateway.ownerId === tenantId,
-    )
-    .map(serializeTenantOwnGateway);
-
-  return { platformGateways, ownGateways };
+  return { ownGateways: gateways.map(serializeTenantOwnGateway) };
 }
