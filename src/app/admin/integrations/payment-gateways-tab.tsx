@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
@@ -14,6 +13,7 @@ import type { IntegrationGatewayRow } from "@/lib/integrations";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 
 import { IntegrationCard } from "./integration-card";
+import { GatewayEditModal } from "./gateway-edit-modal";
 import { SearchBox } from "./search-box";
 import { matchesSearch, searchDebounceDelay } from "./types";
 
@@ -43,17 +43,26 @@ function statusBadgeClass(kind: "active" | "inactive" | "pending") {
 /**
  * 页签 3：Payment Gateways（支付通道）。
  *
- * 只读清单：这里只展示通道归属、审核状态与脱敏后的 API Key。
- * 真正的增删改（含密钥）统一在 /admin/gateways 完成，
- * 页签顶部给出跳转入口，避免两套表单各改一半导致配置漂移。
+ * 去中心化支付架构下，收款通道由商户在自己的后台（/tenant/payments）填写
+ * API Endpoint、收款钱包地址与 API Secret，平台不再提供统一收款网关。
+ * 本页签默认只做监控：通道归属、对接状态、脱敏密钥。
+ * 【编辑】是运维兜底入口：只修正配置（endpoint / 钱包 / 密钥 / 启停），
+ * 不改变通道归属，也不在这里新建通道。
  */
 export function PaymentGatewaysTab({
   gateways,
+  merchantCount,
+  onSaved,
 }: {
   gateways: IntegrationGatewayRow[];
+  /** 平台商户总数：用于显示「已接入 N / M 家商户」。 */
+  merchantCount: number;
+  /** 保存成功后在页面外壳里整行替换 + 静默刷新快照。 */
+  onSaved: (gateway: IntegrationGatewayRow) => void;
 }) {
   const { t } = useLanguage();
   const [query, setQuery] = useState("");
+  const [editing, setEditing] = useState<IntegrationGatewayRow | null>(null);
 
   const debouncedQuery = useDebouncedValue(
     query,
@@ -79,25 +88,33 @@ export function PaymentGatewaysTab({
   const platformCount = gateways.filter(
     (gateway) => gateway.isPlatformGateway,
   ).length;
+  // 已接入支付商的商户数（按通道归属去重）。
+  const connectedMerchants = new Set(
+    gateways
+      .filter((gateway) => !gateway.isPlatformGateway && gateway.ownerName)
+      .map((gateway) => gateway.ownerName),
+  ).size;
 
-  return (
+  const card = (
     <IntegrationCard
       title={t("integrations.gateways.title")}
       hint={t("integrations.gateways.hint")}
       actions={
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="rounded-full border border-[#d4af37]/15 bg-white/[0.02] px-2.5 py-1 text-[10px] text-neutral-500">
             {t("integrations.gateways.count", {
               count: gateways.length,
-              platform: platformCount,
+              merchants: connectedMerchants,
+              total: merchantCount,
             })}
           </span>
-          <Link
-            href="/admin/gateways"
-            className="h-8 rounded-lg border border-[#d4af37]/25 bg-[#d4af37]/10 px-3 text-[10px] font-semibold leading-8 text-[#f0d27c] transition-colors hover:bg-[#d4af37]/20"
-          >
-            {t("integrations.gateways.manage")}
-          </Link>
+          {platformCount > 0 ? (
+            <span className="rounded-full border border-white/10 bg-white/[0.02] px-2.5 py-1 text-[10px] text-neutral-500">
+              {t("integrations.gateways.legacyCount", {
+                count: platformCount,
+              })}
+            </span>
+          ) : null}
         </div>
       }
     >
@@ -145,13 +162,16 @@ export function PaymentGatewaysTab({
               <th className="px-5 py-3 font-medium">
                 {t("integrations.providers.column.status")}
               </th>
+              <th className="px-5 py-3 text-right font-medium">
+                {t("integrations.gateways.column.actions")}
+              </th>
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 ? (
               <tr>
                 <td
-                  colSpan={8}
+                  colSpan={9}
                   className="px-5 py-10 text-center text-xs text-neutral-600"
                 >
                   {gateways.length === 0
@@ -259,6 +279,18 @@ export function PaymentGatewaysTab({
                           : t("integrations.providers.status.inactive")}
                       </span>
                     </td>
+                    <td className="px-5 py-3.5 text-right">
+                      <button
+                        type="button"
+                        onClick={() => setEditing(gateway)}
+                        aria-label={t("integrations.gateways.editAria", {
+                          name: gateway.name,
+                        })}
+                        className="h-8 rounded-lg border border-white/10 px-2.5 text-[10px] font-medium text-neutral-300 transition-colors hover:border-[#d4af37]/40 hover:text-[#f0d27c]"
+                      >
+                        {t("integrations.action.edit")}
+                      </button>
+                    </td>
                   </tr>
                 );
               })
@@ -267,5 +299,22 @@ export function PaymentGatewaysTab({
         </table>
       </div>
     </IntegrationCard>
+  );
+
+  return (
+    <>
+      {card}
+
+      {editing ? (
+        <GatewayEditModal
+          gateway={editing}
+          onClose={() => setEditing(null)}
+          onSaved={(gateway) => {
+            setEditing(null);
+            onSaved(gateway);
+          }}
+        />
+      ) : null}
+    </>
   );
 }

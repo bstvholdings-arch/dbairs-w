@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
 import type {
+  IntegrationGatewayRow,
   IntegrationIpRow,
   IntegrationProviderRow,
   IntegrationSnapshot,
@@ -65,14 +66,17 @@ type SendKeyResponse = {
  */
 export function IntegrationsClient({
   initialSnapshot,
+  initialTab = "global",
 }: {
   initialSnapshot: IntegrationSnapshot;
+  /** 首屏页签：来自 ?tab= 深链接，缺省为全局设置。 */
+  initialTab?: IntegrationTab;
 }) {
   const router = useRouter();
   const { t } = useLanguage();
 
   const [snapshot, setSnapshot] = useState(initialSnapshot);
-  const [tab, setTab] = useState<IntegrationTab>("global");
+  const [tab, setTab] = useState<IntegrationTab>(initialTab);
   const [banner, setBanner] = useState<IntegrationBanner | null>(null);
   const [issuedKey, setIssuedKey] = useState<IssuedKey | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -372,6 +376,24 @@ export function IntegrationsClient({
     void reload();
   }
 
+  /**
+   * 支付通道配置保存成功（超管兜底修正：endpoint / 收款钱包 / 密钥 / 启停）。
+   * 与游戏商一致：先本地替换整行，再静默刷新一次快照，保证统计数字同步。
+   */
+  function handleGatewaySaved(gateway: IntegrationGatewayRow) {
+    setSnapshot((current) => ({
+      ...current,
+      gateways: current.gateways.map((item) =>
+        item.id === gateway.id ? gateway : item,
+      ),
+    }));
+    setBanner({
+      type: "success",
+      text: t("integrations.banner.gatewaySaved", { name: gateway.name }),
+    });
+    void reload();
+  }
+
   const tabCounts: Record<IntegrationTab, number> = {
     global: snapshot.endpoints.length,
     providers: snapshot.providers.length,
@@ -513,7 +535,11 @@ export function IntegrationsClient({
         ) : null}
 
         {tab === "gateways" ? (
-          <PaymentGatewaysTab gateways={snapshot.gateways} />
+          <PaymentGatewaysTab
+            gateways={snapshot.gateways}
+            merchantCount={snapshot.tenants.length}
+            onSaved={handleGatewaySaved}
+          />
         ) : null}
 
         {tab === "merchants" ? (

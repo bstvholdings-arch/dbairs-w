@@ -195,12 +195,42 @@ Nodemailer 通道留了接入位置（`sendWithNodemailer`，注释里写了要�
 - 页面顶部常驻安全横幅（`src/components/impersonation-banner.tsx`）：显示「操作人 + 目标商户」，点「退出代登录」调用 `DELETE /api/admin/impersonation`，只清票据并回到 `/admin/tenants`；
 - 票据必须由 Route Handler 下发（Server Component 不能写 Cookie），所以入口是「先跳接口、再跳页面」；每次进入 / 退出都会在服务端打印 `[impersonate]` 审计日志。
 
+### 去中心化支付架构：商户自行对接支付商（平台只读监控）
+
+包网平台**不再提供统一的收款网关**：收款的 API Endpoint、收款钱包地址与 API Secret 全部由商户自己在商户后台配置，平台既不代收也不再配置任何收款钱包，只负责监控商户的对接状态。
+
+| 位置 | 变更 |
+| --- | --- |
+| `/admin` 左侧菜单 | 移除 **Payment Gateways**（`/admin/payments`）；平台后台不再有支付网关配置入口 |
+| `/admin/payments`、`/api/admin/gateways` | 已整体删除（页面 + 审核弹窗 + CRUD 接口 + RBAC 规则） |
+| `/admin/gateways` | 旧链接兼容：301 跳到 `/admin/integrations` |
+| `/admin/integrations` → Payment Gateways 页签 | 唯一入口，默认**只读监控**：通道归属、对接状态、脱敏 API Key、「已接入 N/M 家商户」与历史平台通道计数；每行带【编辑】，仅供运维兜底修正（不改归属、不能新建） |
+| `/tenant` 左侧菜单 | 新增 **支付网关 / Payment Gateway**（`nav.tenantPayments` → `/tenant/payments`），商户可自行进入 |
+| `/tenant/payments` | 开放全部配置权限：新增 / 编辑（API Endpoint、收款钱包地址、API Secret）/ 启停 / 删除 |
+
+| 接口 | 说明 |
+| --- | --- |
+| `GET /api/tenant/gateways/available` | 返回当前商户自己的通道（含已停用），供商户后台列表与编辑弹窗回填 |
+| `POST /api/tenant/gateways` | 新增通道：归属强制绑定当前 `tenantId`，`isPlatformGateway=false`；**保存即生效**（`reviewStatus=APPROVED`、`isActive=true`），不再有平台审核环节 |
+| `PUT /api/tenant/gateways/[id]` | 编辑配置；`apiKey` 留空 = 沿用原密钥（但仍以旧密钥参与完整性校验） |
+| `PATCH /api/tenant/gateways/[id]` | 启停 `{ "isActive": boolean }`；启用前会重新跑 `validateGatewayConfiguration`，配置不完整直接 400 |
+| `DELETE /api/tenant/gateways/[id]` | 删除；已有 `DepositOrder` 的通道返回 409，只能停用（对账 / 回调 / 上分都靠 `gatewayId` 回溯） |
+| `GET /api/deposit/gateways` | **严格只读玩家所属商户的通道**（`ownerId = tenantId`）；返回 `merchantConfigured` 区分「商户未开通」与「通道暂时不可用」 |
+| `POST /api/deposit/create` | 校验 `gateway.ownerId === player.tenantId`，平台通道（`isPlatformGateway` / `ownerId=null`）与别家商户通道一律 403 |
+| `PATCH /api/admin/integrations/gateways/[id]` | **超管兜底修正**（Payment Gateways 页签的【编辑】）：只改 `name` / `currency` / `endpoint` / `walletAddress` / `apiKey`（留空 = 不改）/ `isActive`，与商户侧共用 `parseTenantGatewayInput` 校验；`ownerId`、`isPlatformGateway`、支付形态不可变更，也不能新建通道 |
+
+- **玩家弹窗两种空态**：`merchantConfigured=false` → 「该商户暂未开通充值通道，请联系客服。」；有通道但全部停用 / 配置不完整 → 「当前没有可用的支付通道。」（`src/locales/zh.json` → `player.deposit.merchantNoChannels` / `player.deposit.noGateways`）。
+- **无需改表**：`PaymentGateway` 已有 `ownerId` / `isPlatformGateway` / `reviewStatus`，本次只是改变了读写口径（平台通道不再参与收款）。
+- **提现（代付）暂未改动**：`/api/player/withdrawal-gateways` 仍允许「平台历史通道 + 本商户通道」，避免存量代付通道立刻失效；后续可按同一模式整体下放。
+- **集成中心四个页签都是深链接**：`/admin/integrations?tab=global|providers|gateways|merchants`（`readIntegrationTab` 收敛非法值，统一回落到 `global`），页面内部切页签不触发路由跳转，未提交的 IP 白名单文本与搜索词不会丢。
+
+
 ### 充值（Deposit）全链路：下单 → 收款 → 回调验签 → 自动上分
 
 | 接口 | 说明 |
 | --- | --- |
 | `POST /api/deposit/create` | 统一下单：校验玩家身份（玩家 Cookie / 商户代下单）、金额区间与网关可用性，落库 `DepositOrder(status=pending)`，返回 `orderNo` 与 `paymentInstructions` |
-| `GET /api/deposit/gateways` | 收银台下拉数据：只返回当前租户可用且配置完整的网关（`isActive` + `APPROVED` + 校验通过）与 `amountLimits` |
+| `GET /api/deposit/gateways` | 收银台下拉数据：**只返回当前登录玩家所属商户（tenantId）自己配置的通道**（`isActive` + `ownerId = tenantId` + 校验通过），附 `merchantConfigured` 与 `amountLimits`；平台公用通道（`ownerId=null`）一律不返回 |
 | `POST /api/deposit/callback/[gatewayCode]` | **真实支付商回调主入口**：`x-signature` 验签 → 按 `orderNo` 回查 → 状态幂等 → 金额核对 → 事务上分 |
 | `POST /api/deposit/callback` | 旧版回调（按本系统订单主键 `orderId`，供历史联调脚本使用），与新接口共用同一份上分实现 |
 | `POST /api/deposit/test-callback` | 前端「我已完成支付（测试）」，仅非生产环境 / `DEPOSIT_ALLOW_TEST_CALLBACK=true` 开放，复用正式状态机 |
@@ -240,6 +270,19 @@ curl -X POST "https://<host>/api/deposit/callback/usdt_trc20" \
 - **可用余额 = 余额 − 处理中的提现单**：`pending` 阶段不扣款（扣款发生在代付成功回调），所以提单时必须用 `prisma.withdrawal.aggregate({ status: "pending" })` 扣掉在途金额，否则同一笔余额可以被连开多张 pending 单重复提走；超额返回 `409 insufficient_available_balance`。玩家中心同步展示 `summary.pendingWithdrawalAmount`。
 - **币种一致性**：`account.currency` 必须等于 `gateway.currency`，否则 `400 account_currency_mismatch`，避免 USDT 通道把钱打到 MYR 银行卡。
 - **前端遗留调用兼容**：`walletAddress` 仍然可用（商户代提 / 脚本），与 `accountId` 二选一。
+
+### 余额实时刷新 + 全站币种统一（RM / $ / ฿ / Rp）
+
+提单只产生 `pending` 单（`Player.balance` 不变），但玩家看到的应该是**可用余额**，且符号必须来自租户配置——这两条是前端体验的硬要求：
+
+- **唯一口径 `src/lib/player-balance.ts`**：`computeAvailableBalance(balance, pending)` / `availableBalanceToString(...)`；`availableBalance = balance − Σ(pending Withdrawal.amount)`，与服务端 `POST /api/withdrawal/create` 的判断完全一致。`src/lib/player-session.ts` 在解析会话时一次性查出 `pendingWithdrawalAmount` 与 `availableBalance`，所以 `/api/player/me`、大厅首屏、玩家中心拿到的是同一份数字。
+- **大厅顶栏 BALANCE 显示可用余额**：`src/app/lobby-client.tsx` 顶栏用 `player.availableBalance`（充值成功时本地先按「新余额 − 在途」重算，避免等接口）。
+- **跨页实时刷新 `src/lib/player-wallet-events.ts`**：提现 / 领取奖励成功后 `notifyPlayerWalletChanged()` 广播 `dbairs:player-wallet-changed`；大厅顶栏 `subscribePlayerWalletChanged(...)` 收到后立刻重新拉 `/api/player/me`。玩家中心自己再配合 `router.refresh()` 刷 Server Component，不需要手动刷新页面。
+- **币种来自租户 `Tenant.currency`（默认 `MYR`）**：`src/lib/currency.ts` 是唯一符号表（MYR→`RM `、USD→`$`、USDT→`USDT `、THB→`฿`、IDR→`Rp `、VND 后缀 `₫`…），`formatCurrency(value, currency)` 输出形如 `RM 50.50`。**禁止**再写 `` `${formatAmount(x)}` `` 式的硬编码 `$`。
+  - 玩家侧取值链：`PlayerSessionInfo.tenant.currency`（玩家中心）与 `StorefrontSettings.currency`（大厅，来自 `loadStorefront`）。
+  - 已统一的位置：大厅顶栏 / Hero 奖池、玩家中心（顶部余额、可用余额卡、今日输赢、流水、充值/提现记录、注单、推广奖励、每日奖励）、提现按钮与弹窗、充值弹窗与支付页、`DepositDialog`。
+  - 后台控制台（`/admin`、`/tenant` 的财务汇总）仍是平台视角的 `$` 展示，如需按租户币种请复用 `formatCurrency` 逐步替换。
+- **表结构增量**：`prisma/tenant-currency.sql`（幂等，`ALTER TABLE "Tenant" ADD COLUMN IF NOT EXISTS "currency"`，默认 `MYR`）；正常 `npx prisma db push` 会自动建列，只跑 SQL 的环境可用 `npm run db:sql prisma/tenant-currency.sql`，随后 `npx prisma generate`（Supabase 连接池上 `db push` 有时会卡在 shadow database，这条路径更稳）。
 
 ## Learn More
 

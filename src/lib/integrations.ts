@@ -98,6 +98,12 @@ export type IntegrationGatewayRow = {
   gatewayType: string;
   currency: string;
   endpoint: string;
+  /**
+   * 商户填写的收款钱包（仅 USDT 类通道有值）。
+   * 钱包地址不是密钥，且 Merchant Profiles 页签本来就展示 Tenant.walletAddress，
+   * 因此这里直接下发明文：超管排障修正通道配置时需要回填。
+   */
+  walletAddress: string;
   maskedKey: string;
   hasKey: boolean;
   isActive: boolean;

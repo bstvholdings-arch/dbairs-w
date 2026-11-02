@@ -17,6 +17,15 @@ export const INTEGRATION_TABS = [
 export type IntegrationTab = (typeof INTEGRATION_TABS)[number];
 
 /**
+ * 把 URL 上的 ?tab= 查询参数收敛成合法页签。
+ * 非法值统一回落到 "global"：这样 /admin/integrations?tab=xxx 永远能正常渲染，
+ * 也方便把每个页签做成可收藏 / 可分享的深链接。
+ */
+export function readIntegrationTab(value: string): IntegrationTab {
+  return INTEGRATION_TABS.find((item) => item === value) ?? "global";
+}
+
+/**
  * 页签标题文案：不直接写死中文 / 英文，统一走词典，
  * 与常量层 GATEWAY_*_KEYS 的处理方式保持一致。
  */
