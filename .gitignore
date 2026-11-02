@@ -42,3 +42,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# 一次性排障 / 联调脚本与产物（tmp-*.ts、.tmp-*.mjs、tmp-eslint.json 等）
+tmp-*
+.tmp-*

@@ -7,7 +7,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "i18n:check": "node scripts/check-i18n.mjs",
+    "check": "tsc --noEmit && eslint . && node scripts/check-i18n.mjs",
     "db:check": "tsx scripts/check-db.ts",
+    "db:sql": "tsx scripts/apply-sql.ts",
     "tenant:admin": "tsx scripts/create-tenant-admin.ts",
     "postinstall": "prisma skills sync || exit 0"
   },
