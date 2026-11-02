@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { useLanguage } from "@/components/LanguageProvider";
@@ -15,6 +15,11 @@ import { readPlayerPassword } from "@/lib/player-validation";
 import { buildStorefrontTheme } from "@/lib/storefront";
 
 import { PlayerWithdrawalAccounts } from "./player-withdrawal-accounts";
+
+// 推广链接要展示真实域名：getSnapshot 只在客户端读到 window.location.origin，
+// 服务端快照返回空串，因此不会出现水合不一致；subscribe 无需订阅任何外部源。
+const subscribeNoop = () => () => {};
+const readBrowserOrigin = () => window.location.origin;
 
 export type PlayerProfileTab = "wallet" | "history" | "security" | "referral";
 
@@ -152,17 +157,20 @@ export function PlayerProfileClient({
   const [passwordBusy, setPasswordBusy] = useState(false);
   const [passwordErrorKey, setPasswordErrorKey] =
     useState<TranslationKey | null>(null);
-  const [origin, setOrigin] = useState("");
   const [copied, setCopied] = useState<"code" | "link" | null>(null);
 
-  useEffect(() => {
+  // 客户端读取真实域名（服务端渲染时为空串），避免在 effect 里 setState。
+  const origin = useSyncExternalStore(subscribeNoop, readBrowserOrigin, () => "");
+
+  // router.refresh() 会带来新的 profile：按 React 官方「渲染期对齐 props」写法同步本地状态，
+  // 这样既有乐观更新（setCurrent），又不需要在 effect 里同步 props。
+  const [profileSnapshot, setProfileSnapshot] = useState(profile);
+
+  if (profileSnapshot !== profile) {
+    setProfileSnapshot(profile);
     setCurrent(profile);
     setBonusClaimed(profile.dailyBonus.claimedToday);
-  }, [profile]);
-
-  useEffect(() => {
-    setOrigin(window.location.origin);
-  }, []);
+  }
 
   useEffect(() => {
     document.title = t("player.profile.documentTitle");

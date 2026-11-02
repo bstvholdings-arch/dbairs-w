@@ -15,7 +15,11 @@ import { getSuperAdminFromRequest } from "@/lib/super-admin";
  *   - { providerId: "<游戏商 id>" }  → 只同步该游戏商
  *   - { all: true }                  → 同步所有「上架中」的游戏商（供定时任务调用）
  *
- * 返回每个游戏商的新增 / 更新数量。
+ * 每次同步都会先读该游戏商在「API 集成中心」里配置的 apiEndpoint /
+ * merchantId / apiSecret，按真实接入的方式组装请求（含签名）后再拉取。
+ * 响应里的 result.mode 目前恒为 "mock"，result.configured 表示凭据是否齐全，
+ * result.warnings 会逐条列出还缺哪一项，result.request 则是这次「会发出去的请求」。
+ *
  * 定时任务示例（Vercel Cron / 任意调度器）：
  *   curl -X POST https://<host>/api/admin/games/sync \
  *     -H "Cookie: token=<超管 token>" -H "Content-Type: application/json" \

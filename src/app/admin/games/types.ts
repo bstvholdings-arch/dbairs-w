@@ -36,6 +36,21 @@ export type GameSyncResponse = {
     fetched: number;
     created: number;
     updated: number;
+    /** 真实接口接入前恒为 mock */
+    mode?: "mock";
+    /** 游戏商 API 凭据（endpoint + merchantId + apiSecret）是否齐全 */
+    configured?: boolean;
+    /** 配置缺失 / 非法提示 */
+    warnings?: string[];
+    /** 本次「会发出去的请求」描述（不含密钥明文） */
+    request?: {
+      mode: "mock";
+      method: "POST";
+      url: string;
+      merchantId: string;
+      signaturePreview: string;
+      signedAt: string;
+    };
   }>;
   totals?: {
     providers: number;

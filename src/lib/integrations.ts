@@ -46,7 +46,7 @@ export const INTEGRATION_ENDPOINTS = [
     path: "/api/games/callback",
     labelKey: "integrations.endpoint.games",
     descKey: "integrations.endpoint.desc.games",
-    status: "planned",
+    status: "active",
   },
 ] as const satisfies readonly {
   id: string;
@@ -76,17 +76,35 @@ export type IntegrationIpRow = {
 };
 
 /**
- * 区域 C 的平台级接入项。
- * kind = gateway 走支付网关（PaymentGateway.apiKey 真实存在，展示掩码）；
- * kind = provider 是游戏商（密钥托管在上游后台，平台侧没有密钥可展示）。
+ * 区域 C-1 的游戏商行（Game Providers 页签）。
+ * maskedSecret 由服务端掩码，任何情况下都不下发 GameProvider.apiSecret 明文。
  */
-export type IntegrationPlatformKey = {
+export type IntegrationProviderRow = {
   id: string;
-  kind: "gateway" | "provider";
   name: string;
-  detail: string;
+  apiEndpoint: string;
+  merchantId: string;
+  maskedSecret: string;
+  hasSecret: boolean;
+  status: string;
+  isActive: boolean;
+};
+
+/** 区域 C-2 的支付通道行（Payment Gateways 页签）。 */
+export type IntegrationGatewayRow = {
+  id: string;
+  name: string;
+  providerType: string;
+  gatewayType: string;
+  currency: string;
+  endpoint: string;
   maskedKey: string;
-  active: boolean;
+  hasKey: boolean;
+  isActive: boolean;
+  isPlatformGateway: boolean;
+  /** 空串 = 平台公用通道；有值 = 商户专属通道的商户名。 */
+  ownerName: string;
+  reviewStatus: string;
 };
 
 /** 区域 D 的商户行，字段全部经过脱敏：绝不下发 Tenant.apiKey 明文。 */
@@ -98,6 +116,8 @@ export type IntegrationTenantRow = {
   status: string;
   contactEmail: string;
   apiCallbackUrl: string;
+  backendIp: string;
+  walletAddress: string;
   maskedKey: string;
   hasKey: boolean;
   apiKeyUpdatedAt: string | null;
@@ -108,7 +128,8 @@ export type IntegrationSnapshot = {
   baseUrl: string;
   endpoints: IntegrationEndpointView[];
   ipWhitelist: IntegrationIpRow[];
-  platformKeys: IntegrationPlatformKey[];
+  providers: IntegrationProviderRow[];
+  gateways: IntegrationGatewayRow[];
   tenants: IntegrationTenantRow[];
 };
 
@@ -140,7 +161,150 @@ export function maskApiKey(value: string | null | undefined) {
   return `sk-****${key.slice(-4)}`;
 }
 
+/**
+ * 游戏商 Secret 脱敏：固定 8 个圆点 + 后 4 位。
+ * 与 maskApiKey 分开命名，避免把「商户 API Key」和「游戏商签名密钥」混为一谈。
+ */
+export function maskIntegrationSecret(value: string | null | undefined) {
+  const secret = (value ?? "").trim();
+
+  if (!secret) {
+    return "";
+  }
+
+  if (secret.length <= 8) {
+    return "••••••••";
+  }
+
+  return `••••••••${secret.slice(-4)}`;
+}
+
+export const INTEGRATION_URL_MAX_LENGTH = 500;
+
+/**
+ * 读取游戏商 API Endpoint：返回 ""（未填写）、规范化后的 http(s) 地址，或 null（非法）。
+ * 与商户专属回调地址同一套规则（必须是绝对地址），直接复用 readCallbackUrl 的实现。
+ */
+export function readIntegrationUrl(value: unknown): string | null {
+  return readCallbackUrl(value);
+}
+
+/** 客户端表单用的布尔校验（空字符串返回 false）。 */
+export function isValidIntegrationUrl(value: string) {
+  return readIntegrationUrl(value) !== null && value.trim().length > 0;
+}
+
+export const MERCHANT_ID_MAX_LENGTH = 64;
+
+// 商户号只允许常见字符，避免复制粘贴时带进换行 / 空格污染签名串。
+const MERCHANT_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
+
+/** 读取游戏商分配的商户号：返回 ""（未填写）、合法商户号，或 null（非法）。 */
+export function readMerchantId(value: unknown): string | null {
+  if (value === undefined || value === null) {
+    return "";
+  }
+
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const text = value.trim();
+
+  if (!text) {
+    return "";
+  }
+
+  if (text.length > MERCHANT_ID_MAX_LENGTH || !MERCHANT_ID_PATTERN.test(text)) {
+    return null;
+  }
+
+  return text;
+}
+
+export const API_SECRET_MAX_LENGTH = 200;
+
+/**
+ * 读取游戏商签名密钥：返回 ""（未填写 / 本次不修改），或去掉首尾空白的密钥。
+ * 密钥内部不允许出现空白字符，否则签名结果会和上游对不上。
+ */
+export function readApiSecret(value: unknown): string | null {
+  if (value === undefined || value === null) {
+    return "";
+  }
+
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const text = value.trim();
+
+  if (!text) {
+    return "";
+  }
+
+  if (text.length > API_SECRET_MAX_LENGTH || /\s/.test(text)) {
+    return null;
+  }
+
+  return text;
+}
+
+export const WALLET_ADDRESS_MAX_LENGTH = 128;
+
+// 覆盖 TRC20（T 开头 base58）、ERC20（0x 开头 hex）与法币账号（IBAN 等带 - _ :）。
+const WALLET_ADDRESS_PATTERN = /^[A-Za-z0-9:_-]+$/;
+
+/** 读取商户结算钱包地址：返回 ""（未填写）、合法地址，或 null（非法）。 */
+export function readWalletAddress(value: unknown): string | null {
+  if (value === undefined || value === null) {
+    return "";
+  }
+
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const text = value.trim();
+
+  if (!text) {
+    return "";
+  }
+
+  if (
+    text.length > WALLET_ADDRESS_MAX_LENGTH ||
+    !WALLET_ADDRESS_PATTERN.test(text)
+  ) {
+    return null;
+  }
+
+  return text;
+}
+
+/**
+ * 读取商户后台出口 IP：返回 ""（未填写）、规范化后的小写 IP / CIDR 段，或 null（非法）。
+ * 复用白名单的 isIpOrCidr，保证「商户资料里的 IP 能被直接加进白名单」。
+ */
+export function readBackendIp(value: unknown): string | null {
+  if (value === undefined || value === null) {
+    return "";
+  }
+
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const text = value.trim().toLowerCase();
+
+  if (!text) {
+    return "";
+  }
+
+  return isIpOrCidr(text) ? text : null;
+}
+
 export const CONTACT_EMAIL_MAX_LENGTH = 120;
+
 
 /** 与 src/lib/mailer.ts 的收件人校验同一口径，避免「看着能存，其实发不出去」。 */
 const CONTACT_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;

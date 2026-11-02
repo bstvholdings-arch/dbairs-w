@@ -93,6 +93,16 @@ export function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // 游戏商回调与玩家进入游戏：同样不带管理员 Cookie。
+  // - /api/games/callback：路由内校验来源 IP 白名单 + HMAC 签名；
+  // - /api/games/launch  ：路由内校验玩家 JWT / 商户代调用身份。
+  if (
+    pathname === "/api/games/callback" ||
+    pathname === "/api/games/launch"
+  ) {
+    return NextResponse.next();
+  }
+
   // AI 对话日志上报接口由外部销售机器人调用，同样没有管理员 Cookie。
   // 路由内部会校验「超管 Cookie」或 x-ai-log-token（AI_LOG_TOKEN），
   // 未配置 token 且非超管时直接 401，因此这里前置放行是安全的。

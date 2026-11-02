@@ -13,7 +13,9 @@ export type PaymentPlayerIdentity = {
 
 export type PaymentPlayerEnvKey =
   | "DEPOSIT_ALLOW_PLAYER_ID"
-  | "WITHDRAWAL_ALLOW_PLAYER_ID";
+  | "WITHDRAWAL_ALLOW_PLAYER_ID"
+  | "GAME_LAUNCH_ALLOW_PLAYER_ID";
+
 
 /**
  * 解析充值 / 提现发起人身份。

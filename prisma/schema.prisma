@@ -41,6 +41,12 @@ model Tenant {
   apiKey          String?
   apiKeyUpdatedAt DateTime?
 
+  // API 集成中心「商户资料（Merchant Profiles）」
+  // backendIp：商户回传资金 / 注单的服务端出口 IP（与全局白名单配合做来源校验）
+  // walletAddress：商户结算收款钱包（USDT TRC20 / ERC20 等，仅展示与人工核对）
+  backendIp     String?
+  walletAddress String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -292,6 +298,15 @@ model GameProvider {
   // 展馆页与游戏目录照旧可用（想彻底下架请改 isActive）。
   // 品牌墙内的顺序同样由 sortOrder 决定：数字越大越靠前。
   showInShowcase  Boolean  @default(true)
+
+  // API 集成中心「游戏商（Game Providers）」对接凭据
+  // apiEndpoint：游戏商提供的接入地址（下单 / 余额 / 同步接口的 base URL）
+  // merchantId ：游戏商分配给平台的商户号
+  // apiSecret  ：游戏商分配的签名密钥，明文只用于服务端签名，列表接口一律下发掩码
+  apiEndpoint String?
+  merchantId  String?
+  apiSecret   String?
+
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 

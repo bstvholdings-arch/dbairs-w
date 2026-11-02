@@ -1,7 +1,12 @@
 import { Prisma } from "@prisma/client";
 import type { NextRequest } from "next/server";
 
-import { readCallbackUrl, readContactEmail } from "@/lib/integrations";
+import {
+  readBackendIp,
+  readCallbackUrl,
+  readContactEmail,
+  readWalletAddress,
+} from "@/lib/integrations";
 import { sendTenantAdminInviteEmail } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
 import { getSuperAdminFromRequest } from "@/lib/super-admin";
@@ -242,6 +247,32 @@ async function updateTenant(
 
       // 空串 = 沿用平台默认回调地址，不存空字符串，避免列表里出现空白项。
       data.apiCallbackUrl = apiCallbackUrl || null;
+    }
+
+    // API 集成中心「商户资料（Merchant Profiles）」：后台出口 IP + 结算钱包。
+    // 两个字段都只是人工核对用的资料，不参与登录 / 结算计算，
+    // 因此允许清空（空串 -> null），但仍做格式校验挡掉明显手误。
+    if (hasOwn(input, "backendIp")) {
+      const backendIp = readBackendIp(input.backendIp);
+
+      if (backendIp === null) {
+        return jsonError("Backend IP 必须是合法的 IPv4 / IPv6 地址或 CIDR 段", 400);
+      }
+
+      data.backendIp = backendIp || null;
+    }
+
+    if (hasOwn(input, "walletAddress")) {
+      const walletAddress = readWalletAddress(input.walletAddress);
+
+      if (walletAddress === null) {
+        return jsonError(
+          "Wallet 地址只能包含字母、数字与 : _ -，且长度不能超过 128 个字符",
+          400,
+        );
+      }
+
+      data.walletAddress = walletAddress || null;
     }
 
     // 分配商户管理员账号：只收邮箱，账号名 / 临时密码由服务端生成。

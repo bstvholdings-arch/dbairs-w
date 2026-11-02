@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // 一次性排障脚本（tmp-*.mts 等）不参与主项目 lint。
+    "tmp-*",
+    "**/tmp-*",
   ]),
 ]);
 
