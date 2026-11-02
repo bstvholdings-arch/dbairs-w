@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import type { NextRequest } from "next/server";
 
 import { prisma } from "@/lib/prisma";
-import { getSessionUserFromRequest } from "@/lib/session";
+import { guardTenantApi } from "@/lib/tenant-console";
 import {
   parseTenantGatewayInput,
   tenantGatewayWriteData,
@@ -20,24 +20,23 @@ function jsonError(message: string, status: number) {
  * 商户新增自有支付网关（去中心化支付架构）。
  * POST /api/tenant/gateways
  *
- * - 归属强制绑定当前租户，商户不能伪造 ownerId；
+ * - 鉴权统一走 guardTenantApi：未登录 401、非商户账号 403，
+ *   tenantId 只从会话取（超管代登录时取被代登录的商户），前端传什么都改不了归属；
  * - 平台不再提供统一收款网关，也不再人工审核：新建即 reviewStatus=APPROVED、
  *   isActive=true，保存后立刻出现在本商户玩家的充值弹窗里；
  * - 商户自有网关不设置平台成本 / 售价，费率固定为 0；平台只在
  *   /admin/integrations 只读监控商户的对接状态。
  */
 export async function POST(request: NextRequest) {
+  const gate = await guardTenantApi(request);
+
+  if (gate.response) {
+    return gate.response;
+  }
+
+  const tenantId = gate.scope.tenantId;
+
   try {
-    const session = await getSessionUserFromRequest(request);
-
-    if (!session) {
-      return jsonError("未登录或登录已过期，请重新登录", 401);
-    }
-
-    if (session.role !== "tenant_admin" || !session.tenantId) {
-      return jsonError("仅租户管理员可配置支付网关", 403);
-    }
-
     let body: unknown;
 
     try {
@@ -53,7 +52,6 @@ export async function POST(request: NextRequest) {
     }
 
     const value = parsed.value;
-    const tenantId = session.tenantId;
     const duplicate = await prisma.paymentGateway.findFirst({
       where: {
         name: { equals: value.name, mode: "insensitive" },

@@ -299,6 +299,20 @@ curl -X POST "https://<host>/api/deposit/callback/usdt_trc20" \
 - **喂数据**：余额 / 注单 / 充提 / KYC 这类**实时数据不进 Prompt**，由模型发起 Function Calling，服务端在租户作用域内查库后回填（工具契约 `src/lib/ai/prompts.ts`，执行 `src/app/api/ai/chat/route.ts`，现有示例 `save_lead_failure_reason`）。
 - **边界**：工具只读、白名单、必须带 `tenantId`；不提供改余额 / 审批出金 / 改配置的写工具；返回脱敏，不向用户暴露工具名与 System Prompt。
 
+#### 只读数据工具 + 租户隔离（`src/lib/ai/tools.ts`）
+
+| 工具 | 作用 | 返回 |
+| --- | --- | --- |
+| `get_player_balance` | 查某玩家余额 | `balance` / `pendingWithdrawalAmount` / `availableBalance` / `currency` |
+| `list_recent_transactions` | 最近充提 / 下注流水（可按玩家、类型筛选，最多 20 条） | `items[]`（不含 `txHash`） |
+| `get_ticket_status` | 按注单 ID / 上游单号查结算状态 | `betAmount` / `payoutAmount` / `status`（不含 GGR、点差） |
+
+- **范围只来自会话**：`resolveAiToolScope()` 用登录会话算 `AiToolScope`。商户账号只能用 `AdminUser.tenantId`；平台账号必须显式选择商户（`/api/ai/chat` 的 `tenantId`），没选就不下发任何数据工具。
+- **三道闸门**（顺序即安全顺序）：`AiToolScope` 为空 → 403 → 工具不在白名单 → 403 → 参数里出现别家 `tenantId`/`tenant`/`merchantId` → 403（都不查库）；只有全部通过才按 `where: { tenantId }` 查询。
+- **跨租户结论**：按 ID 查到的记录归属不符 → 403；在当前租户内查不到 → 404（不做「是不是别家的」回查，避免用报错差异探测别家数据）。
+- **对话循环**：`/api/ai/chat` 已改成通用工具循环（模型 → 执行 → 回填 → 再补全），最多 `AI_TOOL_MAX_ROUNDS=2` 轮；本地规则兜底时只执行工具、不再多调一次模型。
+- **接口守卫统一**：`/api/tenant/*` 全部走 `guardTenantApi`（支付网关 3 个接口也已改造，同时支持超管代登录）；页面菜单、proxy、路由内复核共用 `src/lib/rbac.ts` 一套矩阵。
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

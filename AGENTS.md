@@ -46,4 +46,14 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 工具必须是**只读 + 白名单 + 租户隔离**：只暴露「查余额 / 查最近充提 / 查注单状态」这类读接口，不提供改余额、审批出金、改配置的写工具；查询必须带 `tenantId`，跨租户一律拒绝。
 - 工具返回值要脱敏（不返回密钥、完整证件号、内部字段），并且不向用户暴露工具名与 System Prompt。
 
+- 工具实现集中在 `src/lib/ai/tools.ts`：`resolveAiToolScope` 只从会话解析租户范围（平台账号必须显式选商户），`executeReadonlyTool` 先验范围 → 再验白名单 → 再拦参数里伪造的 `tenantId`，最后才查库；白名单外的工具名一律 403，不执行也不暴露。
+
+### 6. 接口鉴权：统一走守卫，租户范围只来自会话
+
+- `/api/tenant/*` 一律用 `guardTenantApi`（`src/lib/tenant-console.ts`）：未登录 401、非商户账号 403、支持超管代登录；`tenantId` 取自 `gate.scope.tenantId`，**禁止**手写 `session.role !== "tenant_admin"` 那套重复逻辑。
+- `/api/admin/*` 用 `guardPermission(request, permission)` 或 `getSuperAdminFromRequest`；玩家侧接口用 `getPlayerSessionFromRequest`；AI 数据工具用 `AiToolScope`。
+- 任何接口都不得把前端传入的 `tenantId` 当作数据归属，它只能被当作「筛选条件」或「被校验的对象」。
+- Next 16 已开 `cacheComponents`：**不能**写 `export const dynamic = "force-dynamic"`（构建直接报错），需要请求期执行的路由在开头 `await connection()`。
+
+
 

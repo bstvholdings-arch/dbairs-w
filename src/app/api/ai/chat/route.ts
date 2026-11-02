@@ -26,10 +26,7 @@ import {
   loadRecentChatLogs,
   serializeLead,
 } from "@/lib/ai/records";
-import {
-  SAVE_LEAD_FAILURE_REASON_TOOL_NAME,
-  toolsForAgent,
-} from "@/lib/ai/prompts";
+import { SAVE_LEAD_FAILURE_REASON_TOOL_NAME } from "@/lib/ai/prompts";
 import {
   AiProviderError,
   requestChatCompletion,
@@ -37,6 +34,13 @@ import {
   type AiProviderMessage,
 } from "@/lib/ai/provider";
 import { resolveAiConnection } from "@/lib/ai/settings";
+import {
+  AI_TOOL_MAX_ROUNDS,
+  buildAiTools,
+  executeReadonlyTool,
+  isReadonlyToolName,
+  resolveAiToolScope,
+} from "@/lib/ai/tools";
 import { prisma } from "@/lib/prisma";
 import { guardPermission } from "@/lib/session";
 
@@ -47,8 +51,14 @@ import { guardPermission } from "@/lib/session";
  * 1. RBAC（aiConsole，默认仅超管）→ 2. 校验 agentType 并读取该助手的
  *    AgentConfig（System Prompt / 模型 / Token 上限 / 启停状态）
  * → 3. upsert 线索（仅销售场景）→ 4. 用户消息脱敏落库
- * → 5. 按 agentType 读取历史 → 6. 调用模型（仅销冠带战败工具）
- * → 7. 执行工具（写入 status=failed / failReason）→ 8. 助手回复脱敏落库。
+ * → 5. 按 agentType 读取历史 → 6. 调用模型（白名单工具：销冠战败原因 +
+ *    只读数据工具）→ 7. 服务端执行工具并把结果回填给模型再补全一次
+ *    → 8. 助手回复脱敏落库。
+ *
+ * 工具隔离（见 AGENTS.md 第 5 条）：
+ * - 知识库走 RAG（FAQ 检索 ≤3 条拼进 System Prompt），实时数据只走工具；
+ * - 工具执行前先解析会话租户范围（resolveAiToolScope），跨租户一律 403；
+ * - 白名单之外的工具名不执行，也不会向用户暴露工具名与 System Prompt。
  *
  * 上下文隔离：
  * - 正式对话的历史始终按 agentType 查询；有 leadId 时再叠加 leadId 过滤。
@@ -216,6 +226,19 @@ export async function POST(request: NextRequest) {
       return jsonError("tenantId 对应的商户不存在", 404);
     }
 
+    // 工具可用的租户范围：只能来自登录会话（超管再叠加显式选择的商户）。
+    // 越权（跨商户查询）在这里就 403，后面所有工具执行都只用这一个 scope。
+    const scopeResult = await resolveAiToolScope({
+      user: gate.user,
+      requestedTenantId,
+    });
+
+    if (!scopeResult.ok) {
+      return jsonError(scopeResult.message, scopeResult.status);
+    }
+
+    const toolScope = scopeResult.scope;
+
     // 轻量 RAG：先按当前问题召回该助手的 FAQ，再拼进 System Prompt。
     // 未命中或检索异常时 buildFaqSystemPrompt 会原样返回基础 Prompt。
     const faqMatches = await findRelevantAgentFaqs({
@@ -334,7 +357,10 @@ export async function POST(request: NextRequest) {
       ...history,
     ];
 
-    const tools = toolsForAgent(agentType);
+    // 工具白名单：销冠只有战败原因工具；其它助手在没有商户范围时不发数据工具。
+    const tools = buildAiTools(agentType, {
+      hasTenantScope: Boolean(toolScope),
+    });
     let warning: string | null = null;
     let completion: AiCompletion;
 
@@ -359,83 +385,155 @@ export async function POST(request: NextRequest) {
     }
 
     // ------------------------------------------------------------ 工具执行
+    // 通用工具循环：模型给参数 → 服务端执行 → 结果回填 → 再补全一次。
+    // 1. 只有白名单工具会被执行，模型编造的工具名一律 403；
+    // 2. 只读数据工具的 tenantId 永远取自会话（toolScope），不采信模型参数；
+    // 3. 最多 AI_TOOL_MAX_ROUNDS 轮，避免模型无限调用把 token 烧光。
     let failReason: string | null = null;
     let failureReasonSaved = false;
     let leadAfter = lead ? serializeLead(lead) : null;
 
-    const toolCall = completion.toolCalls.find(
-      (call) => call.function.name === SAVE_LEAD_FAILURE_REASON_TOOL_NAME,
-    );
+    for (
+      let round = 0;
+      round < AI_TOOL_MAX_ROUNDS && completion.toolCalls.length > 0;
+      round += 1
+    ) {
+      const toolCalls = completion.toolCalls;
 
-    if (toolCall && agentType === "sales") {
-      const reason = readToolReason(toolCall.function.arguments);
+      // 先把「带工具调用的 assistant 消息」补进上下文，再逐条回填 tool 结果。
+      messages.push({
+        role: "assistant",
+        content: completion.content || null,
+        tool_calls: toolCalls,
+      });
 
-      if (!reason) {
-        warning = [warning, "AI 返回的战败原因为空或格式不合法，本次未写入线索。"]
-          .filter(Boolean)
-          .join(" ");
-      } else {
-        failReason = reason;
+      for (const call of toolCalls) {
+        // 写工具：记录战败原因，仅销冠可用（其它助手拿到这个工具名也不执行）。
+        if (call.function.name === SAVE_LEAD_FAILURE_REASON_TOOL_NAME) {
+          const reason =
+            agentType === "sales"
+              ? readToolReason(call.function.arguments)
+              : null;
 
-        if (!lead) {
-          warning = [
-            warning,
-            "当前对话未绑定线索（缺少品牌名 / 联系方式），战败原因未落库。",
-          ]
-            .filter(Boolean)
-            .join(" ");
-        } else if (lead.status === "success") {
-          warning = [warning, "该线索已标记为成交，未用战败原因覆盖状态。"]
-            .filter(Boolean)
-            .join(" ");
-        } else {
-          const updated = await prisma.leadRecord.update({
-            where: { id: lead.id },
-            data: { status: "failed", failReason: reason },
-            select: leadSelect,
-          });
+          if (!reason) {
+            warning = [
+              warning,
+              "AI 返回的战败原因为空、格式不合法或当前助手无权使用该工具，本次未写入线索。",
+            ]
+              .filter(Boolean)
+              .join(" ");
+          } else {
+            failReason = reason;
 
-          leadAfter = serializeLead(updated);
-          failureReasonSaved = true;
-        }
-      }
+            if (!lead) {
+              warning = [
+                warning,
+                "当前对话未绑定线索（缺少品牌名 / 联系方式），战败原因未落库。",
+              ]
+                .filter(Boolean)
+                .join(" ");
+            } else if (lead.status === "success") {
+              warning = [warning, "该线索已标记为成交，未用战败原因覆盖状态。"]
+                .filter(Boolean)
+                .join(" ");
+            } else {
+              const updated = await prisma.leadRecord.update({
+                where: { id: lead.id },
+                data: { status: "failed", failReason: reason },
+                select: leadSelect,
+              });
 
-      // 云端模型需要第二轮补全，才能基于工具结果给出最终话术；
-      // 本地兜底的 content 已经写好收尾话术，不再重复调用。
-      if (!completion.fallback) {
-        messages.push({
-          role: "assistant",
-          content: completion.content || null,
-          tool_calls: completion.toolCalls,
-        });
-        messages.push({
-          role: "tool",
-          tool_call_id: toolCall.id,
-          content: JSON.stringify({
-            ok: failureReasonSaved,
-            reason: failureReasonSaved ? failReason : null,
-          }),
-        });
-
-        try {
-          completion = await requestChatCompletion(messages, {
-            tools,
-            connection,
-            temperature: 0.45,
-            maxTokens: config.tokenLimit,
-          });
-        } catch (error) {
-          if (!(error instanceof AiProviderError)) {
-            throw error;
+              leadAfter = serializeLead(updated);
+              failureReasonSaved = true;
+            }
           }
 
-          warning = [
-            warning,
-            `工具已执行，但后续回复生成失败：${error.message}`,
-          ]
-            .filter(Boolean)
-            .join(" ");
+          messages.push({
+            role: "tool",
+            tool_call_id: call.id,
+            content: JSON.stringify({
+              ok: failureReasonSaved,
+              reason: failureReasonSaved ? failReason : null,
+            }),
+          });
+
+          continue;
         }
+
+        // 只读数据工具：白名单之外的工具名一律拒绝，连库都不查。
+        if (!isReadonlyToolName(call.function.name)) {
+          messages.push({
+            role: "tool",
+            tool_call_id: call.id,
+            content: JSON.stringify({
+              ok: false,
+              status: 403,
+              error: "该工具不在白名单内，已拒绝执行",
+            }),
+          });
+
+          continue;
+        }
+
+        // 会话没有商户范围时同样 403：模型不得凭空拿到任何一家的实时数据。
+        const outcome = toolScope
+          ? await executeReadonlyTool({
+              name: call.function.name,
+              rawArguments: call.function.arguments,
+              scope: toolScope,
+            })
+          : {
+              payload: {
+                ok: false,
+                status: 403,
+                error: "当前对话未绑定商户，无法查询实时数据",
+              },
+            };
+
+        messages.push({
+          role: "tool",
+          tool_call_id: call.id,
+          content: JSON.stringify(outcome.payload),
+        });
+      }
+
+      // 本地兜底回复已经写好了收尾话术，不再多花一次模型调用。
+      if (completion.fallback) {
+        break;
+      }
+
+      if (round + 1 >= AI_TOOL_MAX_ROUNDS) {
+        warning = [
+          warning,
+          `工具调用已达 ${AI_TOOL_MAX_ROUNDS} 轮上限，本次回答基于已有工具结果。`,
+        ]
+          .filter(Boolean)
+          .join(" ");
+
+        break;
+      }
+
+      // 基于工具结果再补全一次，让模型把结构化数据说成人话。
+      try {
+        completion = await requestChatCompletion(messages, {
+          tools,
+          connection,
+          temperature: agentType === "sales" ? 0.45 : 0.3,
+          maxTokens: config.tokenLimit,
+        });
+      } catch (error) {
+        if (!(error instanceof AiProviderError)) {
+          throw error;
+        }
+
+        warning = [
+          warning,
+          `工具已执行，但后续回复生成失败：${error.message}`,
+        ]
+          .filter(Boolean)
+          .join(" ");
+
+        break;
       }
     }
 

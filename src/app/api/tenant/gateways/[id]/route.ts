@@ -3,7 +3,7 @@ import type { NextRequest } from "next/server";
 import { validateGatewayConfiguration } from "@/lib/payment-gateway";
 import { normalizeGatewayBankDetails } from "@/lib/payment-gateway-bank";
 import { prisma } from "@/lib/prisma";
-import { getSessionUserFromRequest } from "@/lib/session";
+import { guardTenantApi } from "@/lib/tenant-console";
 import {
   parseTenantGatewayInput,
   tenantGatewayWriteData,
@@ -26,9 +26,11 @@ function jsonError(message: string, status: number) {
  * PATCH  /api/tenant/gateways/[id]  —— 启停：{ "isActive": boolean }
  * DELETE /api/tenant/gateways/[id]  —— 删除（已有充值订单的网关只能停用）
  *
- * 安全约定：三个方法都用 { id, ownerId } 双条件查询，
- * 别家商户的网关 id 在这里等价于「不存在」，统一 404，不泄露任何信息；
- * 平台公用网关（isPlatformGateway=true / ownerId=null）商户永远改不动。
+ * 安全约定：
+ * - 鉴权统一走 guardTenantApi（未登录 401 / 非商户账号 403 / 支持超管代登录）；
+ * - 三个方法都用 { id, ownerId } 双条件查询，别家商户的网关 id
+ *   在这里等价于「不存在」，统一 404，不泄露任何信息；
+ * - 平台公用网关（isPlatformGateway=true / ownerId=null）商户永远改不动。
  */
 async function resolveOwnGateway(tenantId: string, id: string) {
   return prisma.paymentGateway.findFirst({
@@ -45,41 +47,14 @@ async function readBody(request: NextRequest) {
   }
 }
 
-/** PUT / PATCH / DELETE 共用的会话校验：只有登录的商户管理员能改自己的通道。 */
-type TenantAdminGate =
-  | { ok: true; tenantId: string }
-  | { ok: false; error: Response };
-
-async function requireTenantAdmin(
-  request: NextRequest,
-): Promise<TenantAdminGate> {
-  const session = await getSessionUserFromRequest(request);
-
-  if (!session) {
-    return {
-      ok: false,
-      error: jsonError("未登录或登录已过期，请重新登录", 401),
-    };
-  }
-
-  if (session.role !== "tenant_admin" || !session.tenantId) {
-    return {
-      ok: false,
-      error: jsonError("仅租户管理员可配置支付网关", 403),
-    };
-  }
-
-  return { ok: true, tenantId: session.tenantId };
-}
-
 export async function PUT(request: NextRequest, context: RouteContext) {
-  const gate = await requireTenantAdmin(request);
+  const gate = await guardTenantApi(request);
 
-  if (!gate.ok) {
-    return gate.error;
+  if (gate.response) {
+    return gate.response;
   }
 
-  const tenantId = gate.tenantId;
+  const tenantId = gate.scope.tenantId;
 
   const { id } = await context.params;
 
@@ -144,13 +119,13 @@ export async function PUT(request: NextRequest, context: RouteContext) {
 }
 
 export async function PATCH(request: NextRequest, context: RouteContext) {
-  const gate = await requireTenantAdmin(request);
+  const gate = await guardTenantApi(request);
 
-  if (!gate.ok) {
-    return gate.error;
+  if (gate.response) {
+    return gate.response;
   }
 
-  const tenantId = gate.tenantId;
+  const tenantId = gate.scope.tenantId;
 
   const { id } = await context.params;
 
@@ -213,13 +188,13 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 }
 
 export async function DELETE(request: NextRequest, context: RouteContext) {
-  const gate = await requireTenantAdmin(request);
+  const gate = await guardTenantApi(request);
 
-  if (!gate.ok) {
-    return gate.error;
+  if (gate.response) {
+    return gate.response;
   }
 
-  const tenantId = gate.tenantId;
+  const tenantId = gate.scope.tenantId;
 
   const { id } = await context.params;
 

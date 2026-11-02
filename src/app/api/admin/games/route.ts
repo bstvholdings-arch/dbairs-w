@@ -1,4 +1,4 @@
-import type { NextRequest } from "next/server";
+import { connection, type NextRequest } from "next/server";
 
 import { gameSelect, readBooleanInput, serializeGame } from "@/lib/game-api";
 import { prisma } from "@/lib/prisma";
@@ -13,8 +13,13 @@ import { getSuperAdminFromRequest } from "@/lib/super-admin";
  *   - isActive：true / false，不传表示全部
  *
  * 与前台 /api/games 的区别：这里包含已下架游戏，供后台上下架与排序管理使用。
+ *
+ * 开头 await connection()：本接口读 Cookie + query，永远不能在构建期预渲染
+ * （cacheComponents 下不能再用 export const dynamic）。
  */
 export async function GET(request: NextRequest) {
+  await connection();
+
   try {
     const admin = await getSuperAdminFromRequest(request);
 

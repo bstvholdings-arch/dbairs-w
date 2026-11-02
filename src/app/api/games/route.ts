@@ -1,4 +1,4 @@
-import type { NextRequest } from "next/server";
+import { connection, type NextRequest } from "next/server";
 
 import { gameSelect, serializeGame } from "@/lib/game-api";
 import { prisma } from "@/lib/prisma";
@@ -12,8 +12,13 @@ import { prisma } from "@/lib/prisma";
  *   - category：按品类筛选（slot / live / fish）
  *
  * 只返回 isActive = true 的游戏，并按 sortOrder 降序排列（越大越靠前）。
+ *
+ * 开头 await connection()：本接口要读 request.nextUrl.searchParams，
+ * 永远不能在构建期预渲染（cacheComponents 下不能再用 export const dynamic）。
  */
 export async function GET(request: NextRequest) {
+  await connection();
+
   try {
     const params = request.nextUrl.searchParams;
     const providerId = params.get("providerId")?.trim() || null;
