@@ -1,0 +1,23 @@
+{
+  // 用工作区的 TypeScript（与 `npm run check` / CI 完全同一版本，当前 5.9.3），
+  // 避免 VS Code 内置 TS 版本不同导致「CLI 0 错误、Problems 面板一片红」。
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+  // ESLint 扩展默认不接管 .ts/.tsx 的语法检查时会出现两边结论不一致，
+  // 这里显式声明校验范围，和 `eslint .` 对齐。
+  "eslint.validate": [
+    "javascript",
+    "javascriptreact",
+    "typescript",
+    "typescriptreact"
+  ],
+  // .next 里是构建产物（含 next-env.d.ts 引用的 .next/types），
+  // 不参与搜索结果，减少无关诊断刷屏。
+  "search.exclude": {
+    "**/.next": true,
+    "**/tsconfig.tsbuildinfo": true
+  },
+  "files.exclude": {
+    "**/*.tsbuildinfo": true
+  }
+}
