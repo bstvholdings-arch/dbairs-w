@@ -1,12 +1,34 @@
+import { headers } from "next/headers";
+
 import { appBaseUrl } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
 import {
   INTEGRATION_ENDPOINTS,
+  baseUrlFromRequestHeaders,
   buildIntegrationUrl,
   maskApiKey,
   maskIntegrationSecret,
   type IntegrationSnapshot,
 } from "@/lib/integrations";
+
+/**
+ * 页面顶部展示的 Public base URL。
+ *
+ * 必须跟着「当前访问的域名」走：同一份代码部署到 staging / 正式域名后，
+ * 这里要自动变化，绝不能把 http://localhost:3000 或旧域名当成对外回调地址
+ * 发给游戏商 / 支付商。请求头拿不到时（脱离请求上下文，例如定时任务）才回退
+ * 到 APP_BASE_URL / NEXT_PUBLIC_APP_URL。
+ */
+async function resolveBaseUrl() {
+  const fallback = appBaseUrl();
+
+  try {
+    return baseUrlFromRequestHeaders(await headers(), fallback);
+  } catch {
+    // headers() 在请求上下文之外会抛错，此时环境变量是唯一可信来源。
+    return fallback;
+  }
+}
 
 /**
  * API 集成中心的数据快照。
@@ -77,7 +99,7 @@ export async function loadIntegrationSnapshot(): Promise<IntegrationSnapshot> {
     }),
   ]);
 
-  const baseUrl = appBaseUrl();
+  const baseUrl = await resolveBaseUrl();
 
   return {
     baseUrl,

@@ -15,8 +15,8 @@ import { matchesSearch, searchDebounceDelay } from "./types";
 /**
  * 页签 4：Merchant Profiles（商户对接资料）。
  *
- * 一行一个下游商户：Backend IP / Wallet Address / Contact Email /
- * 专属回调地址 / 专属 API Key。搜索框是全页最大的一个（large），
+ * 一行一个下游商户：公司名称 / 域名 / Backend IP / 结算钱包 /
+ * 对接邮箱 / 专属 API Key。搜索框是全页最大的一个（large），
  * 商户名、域名、子域名、IP、钱包、邮箱、密钥后 4 位都参与匹配。
  *
  * 重置密钥 / 发送密钥的网络请求由页面外壳负责，本组件只负责呈现与触发，
@@ -103,11 +103,14 @@ export function MerchantsTab({
         </div>
 
         <div className="-mx-5 -mb-5 overflow-x-auto">
-          <table className="w-full min-w-[1120px] text-left">
+          <table className="w-full min-w-[1280px] text-left">
             <thead>
               <tr className="border-y border-[#d4af37]/10 bg-white/[0.02] text-[9px] uppercase tracking-[0.16em] text-neutral-600">
                 <th className="px-5 py-3 font-medium">
-                  {t("integrations.merchants.column.merchant")}
+                  {t("integrations.merchants.column.company")}
+                </th>
+                <th className="px-5 py-3 font-medium">
+                  {t("integrations.merchants.column.domain")}
                 </th>
                 <th className="px-5 py-3 font-medium">
                   {t("integrations.merchants.column.backendIp")}
@@ -130,7 +133,7 @@ export function MerchantsTab({
               {filtered.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={6}
+                    colSpan={7}
                     className="px-5 py-10 text-center text-xs text-neutral-600"
                   >
                     {tenants.length === 0
@@ -157,10 +160,18 @@ export function MerchantsTab({
                         </p>
                         <p
                           className="mt-0.5 truncate font-mono text-[10px] text-neutral-600"
-                          title={`${tenant.subdomain} · ${tenant.domain}`}
+                          title={tenant.subdomain}
+                        >
+                          {tenant.subdomain}
+                        </p>
+                      </td>
+                      <td className="max-w-[200px] px-5 py-3.5">
+                        <span
+                          className="block truncate font-mono text-[11px] text-neutral-300"
+                          title={tenant.domain}
                         >
                           {tenant.domain}
-                        </p>
+                        </span>
                       </td>
                       <td className="px-5 py-3.5">
                         {tenant.backendIp ? (

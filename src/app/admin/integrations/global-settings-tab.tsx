@@ -1,23 +1,30 @@
 "use client";
 
+import { useMemo, useState } from "react";
+
 import { useLanguage } from "@/components/LanguageProvider";
 import type {
   IntegrationEndpointView,
   IntegrationIpRow,
 } from "@/lib/integrations";
+import { useDebouncedValue } from "@/lib/use-debounced-value";
 
 import { IntegrationCard } from "./integration-card";
+import { SearchBox } from "./search-box";
+import { matchesSearch, searchDebounceDelay } from "./types";
 
 /**
  * 页签 1：Global Settings（全局设置）。
  *
  * 三块内容：
  *   A. 系统回调地址（交给游戏商 / 支付商配置的 webhook，可一键复制）
- *   B. 全局 IP 白名单（批量粘贴 IPv4 / IPv6 / CIDR）
+ *   B. 全局 IP 白名单（批量粘贴 IPv4 / IPv6 / CIDR，列表支持按 IP / 备注过滤）
  *   C. 白名单来源 IP 汇总提示
  *
  * 全部状态由页面外壳持有（ipInput / ipNote / addingIp / busyIp / copiedId），
  * 这样切到其它页签再切回来，用户已经粘贴好的内容不会丢。
+ * 例外是「过滤关键词」：它只是本页列表的视图状态，与后端无关，
+ * 与其它三个页签的搜索框保持一致，放在组件内部即可。
  */
 export function GlobalSettingsTab({
   baseUrl,
@@ -52,6 +59,21 @@ export function GlobalSettingsTab({
   const activeEndpoints = endpoints.filter(
     (endpoint) => endpoint.status === "active",
   ).length;
+
+  const [ipQuery, setIpQuery] = useState("");
+
+  const debouncedIpQuery = useDebouncedValue(
+    ipQuery,
+    searchDebounceDelay(ipWhitelist.length),
+  );
+
+  const filteredIps = useMemo(
+    () =>
+      ipWhitelist.filter((row) =>
+        matchesSearch(debouncedIpQuery, [row.ip, row.note]),
+      ),
+    [ipWhitelist, debouncedIpQuery],
+  );
 
   return (
     <div className="space-y-4">
@@ -176,36 +198,71 @@ export function GlobalSettingsTab({
                 {t("integrations.sectionB.empty")}
               </p>
             ) : (
-              <ul className="max-h-56 space-y-1 overflow-y-auto pr-1">
-                {ipWhitelist.map((row) => (
-                  <li
-                    key={row.id}
-                    className="flex items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-2.5 py-1.5"
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate font-mono text-[11px] text-neutral-200">
-                        {row.ip}
-                      </p>
-                      {row.note ? (
-                        <p className="truncate text-[10px] text-neutral-600">
-                          {row.note}
-                        </p>
-                      ) : null}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => onRemoveIp(row)}
-                      disabled={busyIp === row.id}
-                      aria-label={t("integrations.sectionB.removeAria", {
-                        ip: row.ip,
+              <>
+                <div className="mb-2">
+                  <SearchBox
+                    value={ipQuery}
+                    onChange={setIpQuery}
+                    placeholder={t("integrations.sectionB.searchPlaceholder")}
+                    ariaLabel={t("integrations.sectionB.searchAria")}
+                    className="w-full"
+                  />
+                  <div className="mt-2 flex items-center justify-between gap-2">
+                    <span className="text-[10px] text-neutral-600">
+                      {t("integrations.search.matched", {
+                        shown: filteredIps.length,
+                        total: ipWhitelist.length,
                       })}
-                      className="shrink-0 rounded-md border border-white/10 px-2 py-0.5 text-[10px] text-neutral-500 transition-colors hover:border-red-400/30 hover:text-red-300 disabled:opacity-50"
-                    >
-                      ✕
-                    </button>
-                  </li>
-                ))}
-              </ul>
+                    </span>
+                    {ipQuery ? (
+                      <button
+                        type="button"
+                        onClick={() => setIpQuery("")}
+                        className="text-[10px] text-neutral-500 transition-colors hover:text-[#f0d27c]"
+                      >
+                        {t("integrations.search.clear")}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+
+                {filteredIps.length === 0 ? (
+                  <p className="rounded-lg border border-dashed border-white/10 px-3 py-4 text-[11px] leading-5 text-neutral-600">
+                    {t("integrations.sectionB.noMatch")}
+                  </p>
+                ) : (
+                  <ul className="max-h-56 space-y-1 overflow-y-auto pr-1">
+                    {filteredIps.map((row) => (
+                      <li
+                        key={row.id}
+                        className="flex items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-2.5 py-1.5"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate font-mono text-[11px] text-neutral-200">
+                            {row.ip}
+                          </p>
+                          {row.note ? (
+                            <p className="truncate text-[10px] text-neutral-600">
+                              {row.note}
+                            </p>
+                          ) : null}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => onRemoveIp(row)}
+                          disabled={busyIp === row.id}
+                          aria-label={t("integrations.sectionB.removeAria", {
+                            ip: row.ip,
+                          })}
+                          className="shrink-0 rounded-md border border-white/10 px-2 py-0.5 text-[10px] text-neutral-500 transition-colors hover:border-red-400/30 hover:text-red-300 disabled:opacity-50"
+                        >
+                          ✕
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
             )}
           </div>
         </div>

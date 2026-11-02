@@ -144,6 +144,48 @@ export function buildIntegrationUrl(baseUrl: string, path: string) {
   return `${baseUrl.trim().replace(/\/+$/, "")}${path}`;
 }
 
+/** 只需要 get()，这样 Node 的 Headers、Next 的 ReadonlyHeaders 都能直接传进来。 */
+type HeaderReader = { get(name: string): string | null };
+
+/**
+ * 由当前请求头推导「可公开访问的站点地址」——部署上线后自动跟随域名，不写死。
+ *
+ * 优先级：
+ *   1. x-forwarded-host（Vercel / Cloudflare / Nginx 反代的标准写法）
+ *   2. host（直连时的真实域名，本地开发即 localhost:3000）
+ *   3. 两者都没有（脚本 / 后台任务没有请求上下文）→ fallback
+ *
+ * 协议优先取 x-forwarded-proto；缺失时按「host 带端口 → http，不带端口 → https」推断：
+ * 这样本地 localhost:3000、内网 192.168.x.x:3000 复制出去能直接打开，
+ * 线上 example.com 又不会被降级成 http。
+ *
+ * 放在这个文件里是因为它必须是纯函数（不 import next/*），
+ * 服务端页面、Route Handler 与脚本都能共用同一份逻辑。
+ */
+export function baseUrlFromRequestHeaders(
+  headers: HeaderReader,
+  fallback: string,
+): string {
+  const firstValue = (name: string) =>
+    (headers.get(name) ?? "").split(",")[0].trim();
+
+  const host = firstValue("x-forwarded-host") || firstValue("host");
+
+  if (!host) {
+    return fallback.trim().replace(/\/+$/, "") || fallback;
+  }
+
+  const forwardedProto = firstValue("x-forwarded-proto").toLowerCase();
+  const protocol =
+    forwardedProto === "http" || forwardedProto === "https"
+      ? forwardedProto
+      : host.includes(":")
+        ? "http"
+        : "https";
+
+  return `${protocol}://${host}`;
+}
+
 /** 按 id 取回调路由的相对路径（邮件正文里拼完整地址时用）。 */
 export function integrationEndpointPath(id: IntegrationEndpointId) {
   return INTEGRATION_ENDPOINTS.find((endpoint) => endpoint.id === id)?.path ?? "";
