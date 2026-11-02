@@ -8,9 +8,12 @@ import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { useLanguage } from "@/components/LanguageProvider";
 import { PlayerDepositButton } from "@/components/player-deposit-button";
 import { PlayerWithdrawButton } from "@/components/player/withdraw-button";
-import { formatAmount, formatDate } from "@/lib/format";
+import { formatCurrency, normalizeCurrency } from "@/lib/currency";
+import { formatDate } from "@/lib/format";
 import type { TranslationKey } from "@/lib/i18n-types";
 import { playerErrorKey } from "@/lib/player-errors";
+import { availableBalanceToString } from "@/lib/player-balance";
+import { notifyPlayerWalletChanged } from "@/lib/player-wallet-events";
 import type { PlayerProfileData } from "@/lib/player-profile";
 import { readPlayerPassword } from "@/lib/player-validation";
 import { buildStorefrontTheme } from "@/lib/storefront";
@@ -230,18 +233,28 @@ export function PlayerProfileClient({
       }
 
       setBonusClaimed(true);
-      setCurrent((prev) => ({
-        ...prev,
-        summary: {
-          ...prev.summary,
-          balance: data.balance ?? prev.summary.balance,
-          totalRewards: addAmount(
-            prev.summary.totalRewards,
-            data.amount ?? prev.dailyBonus.amount,
-          ),
-        },
-        dailyBonus: { ...prev.dailyBonus, claimedToday: true },
-      }));
+      notifyPlayerWalletChanged();
+      setCurrent((prev) => {
+        const nextBalance = data.balance ?? prev.summary.balance;
+
+        return {
+          ...prev,
+          summary: {
+            ...prev.summary,
+            balance: nextBalance,
+            // 奖励只是加钱，不产生在途提现单，可用余额按同口径重算
+            availableBalance: availableBalanceToString(
+              nextBalance,
+              prev.summary.pendingWithdrawalAmount,
+            ),
+            totalRewards: addAmount(
+              prev.summary.totalRewards,
+              data.amount ?? prev.dailyBonus.amount,
+            ),
+          },
+          dailyBonus: { ...prev.dailyBonus, claimedToday: true },
+        };
+      });
       setToast("player.wallet.bonusSuccess");
       router.refresh();
     } catch {
@@ -318,16 +331,24 @@ export function PlayerProfileClient({
   }
 
   const summary = current.summary;
-  const bonusAmount = formatAmount(current.dailyBonus.amount);
+  // 租户记账货币：玩家中心所有金额（余额 / 统计 / 流水）都按它渲染符号，
+  // 绝不再把 $ 写死。见 src/lib/currency.ts。
+  const walletCurrency = normalizeCurrency(current.player.tenant.currency);
+  const bonusAmount = formatCurrency(current.dailyBonus.amount, walletCurrency);
+  const pendingWithdrawValue = Number(summary.pendingWithdrawalAmount);
+  const hasPendingWithdraw =
+    Number.isFinite(pendingWithdrawValue) && pendingWithdrawValue > 0;
 
   // 运营口径：顶部卡片只呈现正向数字。
-  // 「今日输赢」= 今日派彩 - 今日下注，只有盈利时才显示金额（+$xxx），
-  // 亏损 / 打平一律显示 $0.00 —— 绝不让玩家在自己的中心页上看到亏损数字。
+  // 「今日输赢」= 今日派彩 - 今日下注，只有盈利时才显示金额（+RM xxx），
+  // 亏损 / 打平一律显示 RM 0.00 —— 绝不让玩家在自己的中心页上看到亏损数字。
   const todayNet =
     Number(summary.todayPayout) - Number(summary.todayBetAmount);
   const todayProfit = Number.isFinite(todayNet) && todayNet > 0 ? todayNet : 0;
   const todayProfitValue =
-    todayProfit > 0 ? `+$${formatAmount(todayProfit)}` : "$0.00";
+    todayProfit > 0
+      ? formatCurrency(todayProfit, walletCurrency, { signed: true })
+      : formatCurrency(0, walletCurrency);
 
   return (
     <div
@@ -415,20 +436,32 @@ export function PlayerProfileClient({
             <div className="flex flex-col items-start gap-3 sm:items-end">
               <div className="rounded-xl border border-brand/25 bg-black/30 px-4 py-2.5 text-left sm:text-right">
                 <p className="text-[9px] uppercase tracking-[0.22em] text-neutral-500">
-                  {t("player.wallet.currentBalance")}
+                  {t("player.wallet.availableBalance")}
                 </p>
                 <p className="mt-0.5 font-mono text-2xl font-black tabular-nums text-brand-pale">
-                  ${formatAmount(summary.balance)}
+                  {formatCurrency(summary.availableBalance, walletCurrency)}
                 </p>
+                {hasPendingWithdraw ? (
+                  <p className="mt-1 text-[9px] leading-4 text-neutral-500">
+                    {t("player.wallet.pendingWithdrawHint", {
+                      amount: formatCurrency(pendingWithdrawValue, walletCurrency),
+                    })}
+                  </p>
+                ) : null}
               </div>
               <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                 <PlayerDepositButton
                   playerName={current.player.username}
-                  onDeposited={() => router.refresh()}
+                  onDeposited={() => {
+                    // 充值到账后广播一次：大厅顶栏（若已打开）同步刷新余额
+                    notifyPlayerWalletChanged();
+                    router.refresh();
+                  }}
                 />
                 <PlayerWithdrawButton
                   balance={summary.balance}
                   pendingWithdrawalAmount={summary.pendingWithdrawalAmount}
+                  currency={walletCurrency}
                   kycStatus={current.kyc.status}
                   accounts={current.withdrawalAccounts}
                   playerName={current.player.username}
@@ -472,14 +505,23 @@ export function PlayerProfileClient({
                   累计充值、累计下注、累计派彩一律不展示 —— 玩家算不出「我亏了多少」。 */}
               <div className="mx-auto grid w-full max-w-4xl grid-cols-1 gap-4 sm:grid-cols-3">
                 <HighlightStatCard
-                  label={t("player.wallet.currentBalance")}
-                  value={`$${formatAmount(summary.balance)}`}
-                  hint={t("player.wallet.balanceHint")}
+                  label={t("player.wallet.availableBalance")}
+                  value={formatCurrency(summary.availableBalance, walletCurrency)}
+                  hint={
+                    hasPendingWithdraw
+                      ? t("player.wallet.pendingWithdrawHint", {
+                          amount: formatCurrency(
+                            pendingWithdrawValue,
+                            walletCurrency,
+                          ),
+                        })
+                      : t("player.wallet.balanceHint")
+                  }
                   accent
                 />
                 <HighlightStatCard
                   label={t("player.wallet.totalRewards")}
-                  value={`$${formatAmount(summary.totalRewards)}`}
+                  value={formatCurrency(summary.totalRewards, walletCurrency)}
                   hint={t("player.wallet.rewardsHint")}
                 />
                 <HighlightStatCard
@@ -507,7 +549,9 @@ export function PlayerProfileClient({
                         {t("player.wallet.dailyBonus")}
                       </p>
                       <p className="mt-0.5 font-mono text-xl font-bold tabular-nums text-brand-pale">
-                        +{bonusAmount} USDT
+                        {formatCurrency(current.dailyBonus.amount, walletCurrency, {
+                          signed: true,
+                        })}
                       </p>
                     </div>
                     <button
@@ -617,8 +661,13 @@ export function PlayerProfileClient({
                                     : "text-emerald-300"
                                 }
                               >
-                                {negative ? "-" : "+"}$
-                                {formatAmount(item.amount)}
+                                {formatCurrency(
+                                  negative
+                                    ? -Math.abs(Number(item.amount))
+                                    : Math.abs(Number(item.amount)),
+                                  item.currency,
+                                  { signed: true },
+                                )}
                               </span>
                             </Td>
                             <Td>
@@ -655,7 +704,9 @@ export function PlayerProfileClient({
                         current.deposits.map((item) => (
                           <BodyRow key={item.id}>
                             <Td>{item.gatewayName}</Td>
-                            <Td mono>${formatAmount(item.amount)}</Td>
+                            <Td mono>
+                              {formatCurrency(item.amount, item.currency)}
+                            </Td>
                             <Td>
                               <StatusBadge status={item.status} />
                             </Td>
@@ -687,7 +738,9 @@ export function PlayerProfileClient({
                         current.withdrawals.map((item) => (
                           <BodyRow key={item.id}>
                             <Td mono>{shortValue(item.walletAddress)}</Td>
-                            <Td mono>${formatAmount(item.amount)}</Td>
+                            <Td mono>
+                              {formatCurrency(item.amount, item.currency)}
+                            </Td>
                             <Td>
                               <StatusBadge status={item.status} />
                             </Td>
@@ -707,19 +760,19 @@ export function PlayerProfileClient({
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
                 <StatCard
                   label={t("player.history.totalBets")}
-                  value={`$${formatAmount(summary.totalBetAmount)}`}
+                  value={formatCurrency(summary.totalBetAmount, walletCurrency)}
                 />
                 <StatCard
                   label={t("player.history.totalPayout")}
-                  value={`$${formatAmount(summary.totalPayout)}`}
+                  value={formatCurrency(summary.totalPayout, walletCurrency)}
                 />
                 <StatCard
                   label={t("player.history.totalDeposits")}
-                  value={`$${formatAmount(summary.totalDeposits)}`}
+                  value={formatCurrency(summary.totalDeposits, walletCurrency)}
                 />
                 <StatCard
                   label={t("player.history.totalWithdrawals")}
-                  value={`$${formatAmount(summary.totalWithdrawals)}`}
+                  value={formatCurrency(summary.totalWithdrawals, walletCurrency)}
                 />
               </div>
 
@@ -748,8 +801,12 @@ export function PlayerProfileClient({
                       current.bets.map((item) => (
                         <BodyRow key={item.id}>
                           <Td>{item.providerName}</Td>
-                          <Td mono>${formatAmount(item.betAmount)}</Td>
-                          <Td mono>${formatAmount(item.payoutAmount)}</Td>
+                          <Td mono>
+                            {formatCurrency(item.betAmount, item.currency)}
+                          </Td>
+                          <Td mono>
+                            {formatCurrency(item.payoutAmount, item.currency)}
+                          </Td>
                           <Td mono>
                             <span
                               className={
@@ -758,7 +815,7 @@ export function PlayerProfileClient({
                                   : "text-emerald-300"
                               }
                             >
-                              ${formatAmount(item.ggrAmount)}
+                              {formatCurrency(item.ggrAmount, item.currency)}
                             </span>
                           </Td>
                           <Td>
@@ -803,6 +860,7 @@ export function PlayerProfileClient({
                           id: `deposit-${item.id}`,
                           type: "deposit",
                           amount: item.amount,
+                          currency: item.currency,
                           status: item.status,
                           createdAt: item.createdAt,
                         }))
@@ -811,6 +869,7 @@ export function PlayerProfileClient({
                             id: `withdraw-${item.id}`,
                             type: "withdraw",
                             amount: item.amount,
+                            currency: item.currency,
                             status: item.status,
                             createdAt: item.createdAt,
                           })),
@@ -823,7 +882,9 @@ export function PlayerProfileClient({
                             <Td>
                               {labelFor(TRANSACTION_TYPE_KEYS, item.type, t)}
                             </Td>
-                            <Td mono>${formatAmount(item.amount)}</Td>
+                            <Td mono>
+                              {formatCurrency(item.amount, item.currency)}
+                            </Td>
                             <Td>
                               <StatusBadge status={item.status} />
                             </Td>
@@ -1050,7 +1111,10 @@ export function PlayerProfileClient({
                     />
                     <StatCard
                       label={t("player.referral.rewardTotal")}
-                      value={`$${formatAmount(current.referral.rewardTotal)}`}
+                      value={formatCurrency(
+                        current.referral.rewardTotal,
+                        walletCurrency,
+                      )}
                     />
                     <StatCard
                       label={t("player.referral.rate")}

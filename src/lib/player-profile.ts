@@ -1,6 +1,7 @@
 import type { KycStatus, Prisma } from "@prisma/client";
 
 import type { PlayerSessionInfo } from "./player-session";
+import { availableBalanceToString } from "./player-balance";
 import { listPlayerWithdrawalAccounts } from "./player-withdrawal-accounts";
 import { prisma } from "./prisma";
 import type { PlayerWithdrawalAccountView } from "./withdrawal-accounts";
@@ -81,6 +82,8 @@ export type PlayerProfileData = {
      * 提现弹窗用「balance - pendingWithdrawalAmount」展示真正的可用余额。
      */
     pendingWithdrawalAmount: string;
+    /** 可用余额 = balance - pendingWithdrawalAmount（大厅顶栏 / 玩家中心同口径） */
+    availableBalance: string;
   };
   transactions: PlayerProfileTransaction[];
   deposits: PlayerProfileDeposit[];
@@ -330,6 +333,10 @@ export async function getPlayerProfileData(
       pendingDeposits,
       pendingWithdrawals,
       pendingWithdrawalAmount: decimalSum(pendingWithdrawalAggregate._sum.amount),
+      availableBalance: availableBalanceToString(
+        session.balance,
+        decimalSum(pendingWithdrawalAggregate._sum.amount),
+      ),
     },
     transactions: transactions.map((item) => ({
       id: item.id,

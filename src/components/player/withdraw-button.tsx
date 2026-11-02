@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
 import { PlayerWithdrawModal } from "@/components/player/withdraw-modal";
+import { formatCurrency, normalizeCurrency } from "@/lib/currency";
 import type { PlayerWithdrawalAccountView } from "@/lib/withdrawal-accounts";
 
 /** 与服务端 WITHDRAWAL_MIN_AMOUNT 的默认值保持一致，仅用于按钮高亮 / 置灰判断。 */
@@ -23,6 +24,7 @@ const DEFAULT_MIN_WITHDRAW_AMOUNT = 10;
 export function PlayerWithdrawButton({
   balance,
   pendingWithdrawalAmount,
+  currency,
   kycStatus,
   accounts,
   playerName,
@@ -33,6 +35,8 @@ export function PlayerWithdrawButton({
   balance: string;
   /** 处理中的提现单金额合计（pending 阶段不扣余额，所以要单独扣） */
   pendingWithdrawalAmount: string;
+  /** 租户记账货币（Tenant.currency）：金额符号按它渲染，不写死 $ */
+  currency: string;
   kycStatus: string;
   accounts: PlayerWithdrawalAccountView[];
   playerName: string;
@@ -43,6 +47,7 @@ export function PlayerWithdrawButton({
 }) {
   const { t } = useLanguage();
   const [view, setView] = useState<"closed" | "notice" | "form">("closed");
+  const walletCurrency = normalizeCurrency(currency);
 
   const balanceValue = Number(balance);
   const pendingValue = Number(pendingWithdrawalAmount);
@@ -52,6 +57,7 @@ export function PlayerWithdrawButton({
       (Number.isFinite(pendingValue) ? pendingValue : 0),
   );
 
+  const minAmountLabel = formatCurrency(DEFAULT_MIN_WITHDRAW_AMOUNT, walletCurrency);
   const kycApproved = kycStatus === "APPROVED";
   const enoughBalance = availableBalance >= DEFAULT_MIN_WITHDRAW_AMOUNT;
   const eligible = kycApproved && enoughBalance;
@@ -60,7 +66,7 @@ export function PlayerWithdrawButton({
     ? t("player.withdraw.kycRequired")
     : !enoughBalance
       ? t("player.withdraw.belowMinimum", {
-          min: String(DEFAULT_MIN_WITHDRAW_AMOUNT),
+          min: minAmountLabel,
         })
       : "";
 
@@ -84,6 +90,7 @@ export function PlayerWithdrawButton({
         <WithdrawNotice
           kycApproved={kycApproved}
           availableBalance={availableBalance}
+          currency={walletCurrency}
           onClose={() => setView("closed")}
         />
       ) : null}
@@ -92,6 +99,7 @@ export function PlayerWithdrawButton({
         <PlayerWithdrawModal
           balance={balance}
           pendingWithdrawalAmount={pendingWithdrawalAmount}
+          walletCurrency={walletCurrency}
           accounts={accounts}
           playerName={playerName}
           onClose={() => setView("closed")}
@@ -112,10 +120,12 @@ export function PlayerWithdrawButton({
 function WithdrawNotice({
   kycApproved,
   availableBalance,
+  currency,
   onClose,
 }: {
   kycApproved: boolean;
   availableBalance: number;
+  currency: string;
   onClose: () => void;
 }) {
   const { t } = useLanguage();
@@ -148,13 +158,13 @@ function WithdrawNotice({
         <p className="mt-2 text-[11px] leading-5 text-neutral-300">
           {kycApproved
             ? t("player.withdraw.belowMinimum", {
-                min: String(DEFAULT_MIN_WITHDRAW_AMOUNT),
+                min: formatCurrency(DEFAULT_MIN_WITHDRAW_AMOUNT, currency),
               })
             : t("player.withdraw.kycRequired")}
         </p>
         <p className="mt-1.5 text-[10px] leading-5 text-neutral-500">
           {kycApproved
-            ? `${t("player.withdraw.availableLabel")}: ${availableBalance.toFixed(2)} USDT`
+            ? `${t("player.withdraw.availableLabel")}: ${formatCurrency(availableBalance, currency)}`
             : t("player.withdraw.kycHint")}
         </p>
 

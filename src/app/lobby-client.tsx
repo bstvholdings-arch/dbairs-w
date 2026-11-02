@@ -31,7 +31,10 @@ import { ProviderWall } from "@/components/lobby/provider-wall";
 import { SidebarCasinoAnimation } from "@/components/lobby/sidebar-casino-animation";
 import { SupportChatDialog } from "@/components/lobby/support-chat-dialog";
 import { WinnerTicker } from "@/components/lobby/winner-ticker";
-import { formatAmount, formatInteger } from "@/lib/format";
+import { formatInteger } from "@/lib/format";
+import { formatCurrency, normalizeCurrency } from "@/lib/currency";
+import { availableBalanceToString } from "@/lib/player-balance";
+import { subscribePlayerWalletChanged } from "@/lib/player-wallet-events";
 import { LOBBY_CATEGORY_LABEL_KEYS } from "@/lib/i18n-keys";
 import { LOBBY_BANNERS, type LobbyBanner } from "@/lib/lobby-banners";
 import { selectShowcaseProviders } from "@/lib/provider-showcase";
@@ -61,6 +64,10 @@ export type LobbyPlayerSummary = {
   id: string;
   username: string;
   balance: string;
+  /** 处理中的提现单合计：pending 阶段不扣余额，可用余额要单独减 */
+  pendingWithdrawalAmount: string;
+  /** 可用余额 = balance − 在途提现；顶栏 BALANCE 展示这一项 */
+  availableBalance: string;
   referralCode: string;
 };
 
@@ -114,6 +121,13 @@ export function LobbyClient({
 }) {
   const { t } = useLanguage();
   const router = useRouter();
+
+  // 租户记账货币（Tenant.currency）：大厅顶栏 BALANCE、奖池等所有金额都用它渲染符号，
+  // 不允许再写死 `$`。见 src/lib/currency.ts。
+  const walletCurrency = useMemo(
+    () => normalizeCurrency(storefront.currency),
+    [storefront.currency],
+  );
 
   // 后台装修：主色 + 深浅调节派生出一整套配色与 CSS 变量，直接挂在根节点上。
   // buildStorefrontTheme 会算出 --primary / --primary-soft / --primary-dark（hsl）
@@ -186,6 +200,13 @@ export function LobbyClient({
         id: data.player.id,
         username: data.player.username,
         balance: data.player.balance,
+        pendingWithdrawalAmount: data.player.pendingWithdrawalAmount ?? "0",
+        availableBalance:
+          data.player.availableBalance ??
+          availableBalanceToString(
+            data.player.balance,
+            data.player.pendingWithdrawalAmount,
+          ),
         referralCode: data.player.referralCode,
       });
     } catch {
@@ -222,6 +243,17 @@ export function LobbyClient({
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [refreshPlayer]);
+
+  // 玩家中心（/player/profile）里提现成功后，会广播 wallet-changed 事件：
+  // 大厅顶栏在这里重新拉一次 /api/player/me，余额立刻变成扣减后的可用余额，
+  // 不需要玩家手动刷新页面。
+  useEffect(
+    () =>
+      subscribePlayerWalletChanged(() => {
+        void refreshPlayer();
+      }),
+    [refreshPlayer],
+  );
 
   // 头像下拉：点击外部或按 Esc 关闭。
   useEffect(() => {
@@ -508,8 +540,18 @@ export function LobbyClient({
 
   function handleDepositSuccess(balance?: string | null) {
     if (balance) {
+      // 充值只是加钱，不产生在途提现单：本地先把可用余额一起抬高，避免等接口回来才变。
       setPlayer((current) =>
-        current ? { ...current, balance } : current,
+        current
+          ? {
+              ...current,
+              balance,
+              availableBalance: availableBalanceToString(
+                balance,
+                current.pendingWithdrawalAmount,
+              ),
+            }
+          : current,
       );
     } else {
       void refreshPlayer();
@@ -557,8 +599,11 @@ export function LobbyClient({
     () => ({
       jackpot: {
         label: t("lobby.hero.badge"),
-        value: `$${formatAmount(jackpot.amount)}`,
-        gain: jackpot.gain > 0 ? `+${formatAmount(jackpot.gain)}` : undefined,
+        value: formatCurrency(jackpot.amount, walletCurrency),
+        gain:
+          jackpot.gain > 0
+            ? formatCurrency(jackpot.gain, walletCurrency, { signed: true })
+            : undefined,
       },
       slots: {
         label: "LIVE",
@@ -569,7 +614,7 @@ export function LobbyClient({
         value: t("lobby.gamesCount", { count: cards.length }),
       },
     }),
-    [cards.length, jackpot.amount, jackpot.gain, t, totalOnline],
+    [cards.length, jackpot.amount, jackpot.gain, t, totalOnline, walletCurrency],
   );
 
   // 轮播 CTA：后台配了链接就跳链接，否则走大厅内部动作。
@@ -753,7 +798,7 @@ export function LobbyClient({
                 {playerLoading && !player
                   ? "…"
                   : player
-                    ? `$${formatAmount(player.balance)}`
+                    ? formatCurrency(player.availableBalance, walletCurrency)
                     : "—"}
               </span>
               {player ? null : (

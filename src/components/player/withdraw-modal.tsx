@@ -3,10 +3,12 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
+import { formatCurrency } from "@/lib/currency";
 import { GATEWAY_PROVIDER_LABEL_KEYS } from "@/lib/i18n-keys";
 import type { TFunction } from "@/lib/i18n-types";
 import { formatGatewayRatePercent } from "@/lib/payment-gateway-rates";
 import { playerErrorKey } from "@/lib/player-errors";
+import { notifyPlayerWalletChanged } from "@/lib/player-wallet-events";
 import {
   findWithdrawalCurrencyOptionById,
   withdrawalCurrencyOptionId,
@@ -75,15 +77,12 @@ function shortValue(value: string, head = 10, tail = 8) {
   return `${value.slice(0, head)}…${value.slice(-tail)}`;
 }
 
-/** 展示用金额：最多 6 位小数，去掉多余的尾随 0。 */
+/** 展示用金额：最多 6 位小数，去掉多余的尾随 0；符号由租户 / 通道币种决定。 */
 function formatMoney(value: number, currency: string) {
-  const safe = Number.isFinite(value) ? value : 0;
-  const formatted = new Intl.NumberFormat("en-US", {
-    minimumFractionDigits: 2,
+  return formatCurrency(value, currency, {
     maximumFractionDigits: 6,
-  }).format(safe);
-
-  return `${formatted} ${currency}`.trim();
+    trimZeros: true,
+  });
 }
 
 function providerLabel(providerType: string, t: TFunction) {
@@ -118,6 +117,7 @@ function accountLabel(account: PlayerWithdrawalAccountView, t: TFunction) {
 export function PlayerWithdrawModal({
   balance,
   pendingWithdrawalAmount,
+  walletCurrency,
   accounts,
   playerName,
   onClose,
@@ -127,6 +127,8 @@ export function PlayerWithdrawModal({
   balance: string;
   /** 处理中的提现单金额合计：可用余额 = balance - 这一笔 */
   pendingWithdrawalAmount: string;
+  /** 租户记账货币（Tenant.currency）：余额 / 在途金额的符号按它渲染，不写死 $ */
+  walletCurrency: string;
   accounts: PlayerWithdrawalAccountView[];
   playerName: string;
   onClose: () => void;
@@ -352,6 +354,9 @@ export function PlayerWithdrawModal({
         currency: data.withdrawal.currency,
         walletAddress: data.withdrawal.walletAddress,
       });
+      // 广播钱包变更：大厅顶栏等展示余额的组件会立即重新拉 /api/player/me，
+      // 余额马上变成扣减后的可用余额（含在途提现单）。
+      notifyPlayerWalletChanged();
       onSubmitted(data.availableBalance ?? null);
     } catch {
       setError(t("common.networkError"));
@@ -477,7 +482,7 @@ export function PlayerWithdrawModal({
                     {t("player.withdraw.balanceLabel")}
                   </p>
                   <p className="mt-0.5 font-mono text-sm font-bold tabular-nums text-neutral-200">
-                    {formatMoney(Number(balance), currency || "USDT")}
+                    {formatMoney(Number(balance), walletCurrency)}
                   </p>
                 </div>
                 <div className="text-right">
@@ -485,13 +490,13 @@ export function PlayerWithdrawModal({
                     {t("player.withdraw.availableLabel")}
                   </p>
                   <p className="mt-0.5 font-mono text-sm font-bold tabular-nums text-[#f0d27c]">
-                    {formatMoney(availableBalance, currency || "USDT")}
+                    {formatMoney(availableBalance, walletCurrency)}
                   </p>
                 </div>
                 {pendingValue > 0 ? (
                   <p className="col-span-2 mt-1 text-[10px] leading-4 text-neutral-500">
                     {t("player.withdraw.pendingHint", {
-                      amount: formatMoney(pendingValue, currency || "USDT"),
+                      amount: formatMoney(pendingValue, walletCurrency),
                     })}
                   </p>
                 ) : null}
@@ -547,7 +552,7 @@ export function PlayerWithdrawModal({
                   <div className="mt-1.5 rounded-xl border border-amber-400/25 bg-amber-400/[0.07] px-3.5 py-3">
                     <p className="text-[11px] leading-5 text-amber-200">
                       {t("player.withdraw.walletEmpty", {
-                        currency: currency || "USDT",
+                        currency: currency || walletCurrency,
                       })}
                     </p>
                     <p className="mt-1 text-[10px] leading-4 text-neutral-500">
@@ -568,7 +573,7 @@ export function PlayerWithdrawModal({
                 <span className="flex items-center justify-between gap-2 text-[10px] uppercase tracking-[0.16em] text-neutral-600">
                   <span>
                     {t("player.withdraw.amountLabel", {
-                      currency: currency || "USDT",
+                      currency: currency || walletCurrency,
                     })}
                   </span>
                   <span className="font-mono normal-case tracking-normal text-neutral-700">
@@ -591,6 +596,15 @@ export function PlayerWithdrawModal({
                 />
               </label>
 
+              {currency && currency !== walletCurrency ? (
+                <p className="mt-1.5 text-[10px] leading-4 text-amber-300/80">
+                  {t("player.withdraw.channelCurrencyHint", {
+                    currency,
+                    walletCurrency,
+                  })}
+                </p>
+              ) : null}
+
               {availableBalance > 0 ? (
                 <button
                   type="button"
@@ -607,7 +621,7 @@ export function PlayerWithdrawModal({
                   {t("player.withdraw.amountAll")} ·{" "}
                   {formatMoney(
                     Math.min(availableBalance, Number(limits.max)),
-                    currency || "USDT",
+                    currency || walletCurrency,
                   )}
                 </button>
               ) : null}
@@ -618,7 +632,7 @@ export function PlayerWithdrawModal({
                     {t("player.withdraw.feeLabel")}
                   </dt>
                   <dd className="font-mono tabular-nums text-neutral-300">
-                    {formatMoney(feeValue, currency || "USDT")}
+                    {formatMoney(feeValue, currency || walletCurrency)}
                   </dd>
                 </div>
                 <div className="flex items-center justify-between gap-3">
@@ -626,7 +640,7 @@ export function PlayerWithdrawModal({
                     {t("player.withdraw.receiveLabel")}
                   </dt>
                   <dd className="font-mono font-bold tabular-nums text-[#f0d27c]">
-                    {formatMoney(receiveValue, currency || "USDT")}
+                    {formatMoney(receiveValue, currency || walletCurrency)}
                   </dd>
                 </div>
                 <p className="pt-1 text-[9px] leading-4 text-neutral-600">

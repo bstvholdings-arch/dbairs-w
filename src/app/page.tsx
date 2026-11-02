@@ -45,6 +45,8 @@ export default async function PlayerLobbyPage({
         id: playerSession.id,
         username: playerSession.username,
         balance: playerSession.balance,
+        pendingWithdrawalAmount: playerSession.pendingWithdrawalAmount,
+        availableBalance: playerSession.availableBalance,
         referralCode: playerSession.referralCode,
       }
     : null;
