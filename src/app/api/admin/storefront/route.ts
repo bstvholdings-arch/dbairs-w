@@ -181,7 +181,6 @@ export async function PUT(request: NextRequest) {
     // 同时兼容把新字段放在请求体顶层的写法，方便手工 curl / 旧版后台。
     for (const key of [
       "preset",
-      "gameCardStyle",
       "showTopbarChat",
       "showSidebarCasinoAnim",
       "languageStyle",
@@ -190,6 +189,11 @@ export async function PUT(request: NextRequest) {
         layoutPatch[key] = input[key];
       }
     }
+
+    // 游戏封面风格（gameCardStyle）的写入入口已收回平台：
+    // 只能由超管在【租户管理 → 新增 / 编辑】（POST / PUT /api/tenants）时配置，
+    // 装修页即使被构造请求带上这个字段也必须忽略，保证写入入口唯一。
+    delete layoutPatch.gameCardStyle;
 
     const modules = normalizeLayoutConfig(
       Array.isArray(input.layoutConfig)

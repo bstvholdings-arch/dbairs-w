@@ -7,8 +7,13 @@ import {
   readContactEmail,
   readWalletAddress,
 } from "@/lib/integrations";
+import { isGameCardStyleId } from "@/lib/game-card-styles";
 import { sendTenantAdminInviteEmail } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
+import {
+  normalizeStorefrontLayout,
+  serializeLayoutConfig,
+} from "@/lib/storefront";
 import { getSuperAdminFromRequest } from "@/lib/super-admin";
 import {
   listTenantAdmins,
@@ -24,7 +29,8 @@ import {
   normalizeSubdomain,
   normalizeTenantName,
   parseWithdrawalApprovals,
-  tenantSelect,
+  tenantSelectWithLayout,
+  toTenantPayload,
 } from "@/lib/tenant-api";
 
 type TenantRouteContext = {
@@ -59,7 +65,7 @@ export async function GET(
     const tenant = await prisma.tenant.findUnique({
       where: { id },
       select: {
-        ...tenantSelect,
+        ...tenantSelectWithLayout,
         _count: {
           select: {
             players: true,
@@ -78,7 +84,7 @@ export async function GET(
     const admins = await listTenantAdmins(id);
 
     return Response.json(
-      { tenant: { ...tenant, admins } },
+      { tenant: { ...toTenantPayload(tenant), admins } },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
@@ -116,7 +122,7 @@ async function updateTenant(
 
     const existing = await prisma.tenant.findUnique({
       where: { id },
-      select: tenantSelect,
+      select: tenantSelectWithLayout,
     });
 
     if (!existing) {
@@ -221,6 +227,30 @@ async function updateTenant(
       data.withdrawalRequiredApprovals = approvals;
     }
 
+    /**
+     * 游戏封面风格（Game Card Cover Style）。
+     *
+     * 权限决策：只有超管在【租户管理 → 新增 / 编辑】时能配，商户后台与装修页
+     * 都不提供切换入口（/api/admin/storefront 的写白名单已剔除该字段）。
+     * 值存在 layoutConfig 里，因此只做「读旧 JSON → 覆盖这一个键 → 整体归一化」，
+     * 不会把装修页配置的模块顺序 / 互动组件开关冲掉。
+     */
+    if (hasOwn(input, "gameCardStyle")) {
+      if (!isGameCardStyleId(input.gameCardStyle)) {
+        return jsonError(
+          "游戏封面风格只能是 cyberNeon、royalGold 或 candyPop",
+          400,
+        );
+      }
+
+      const currentLayout = normalizeStorefrontLayout(existing.layoutConfig);
+
+      data.layoutConfig = serializeLayoutConfig({
+        ...currentLayout,
+        gameCardStyle: input.gameCardStyle,
+      });
+    }
+
     // API 集成中心（/admin/integrations）的「编辑对接资料」弹窗：
     // 只允许改对接邮箱与商户专属回调地址，商户专属 API Key 走单独的
     // POST /api/admin/tenants/[id]/reset-key，避免普通编辑把密钥改坏。
@@ -292,7 +322,7 @@ async function updateTenant(
         ? await prisma.tenant.update({
             where: { id },
             data,
-            select: tenantSelect,
+            select: tenantSelectWithLayout,
           })
         : existing;
 
@@ -349,7 +379,7 @@ async function updateTenant(
 
     return Response.json({
       success: true,
-      tenant: { ...tenant, admins },
+      tenant: { ...toTenantPayload(tenant), admins },
       ...(tenantAdmin ? { tenantAdmin } : {}),
     });
   } catch (error) {

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 import { verifyToken } from "@/lib/auth";
+import { GAME_CARD_STYLE_PREVIEW_PATH } from "@/lib/game-card-styles";
 import {
   IMPERSONATION_COOKIE,
   verifyImpersonationTicket,
@@ -159,6 +160,16 @@ export function proxy(request: NextRequest) {
       return NextResponse.redirect(new URL(TENANT_HOME_PATH, request.url));
     }
 
+    return NextResponse.next();
+  }
+
+  // 游戏封面风格预览页（/demo/game-card-styles）：AI 销冠卖站时直接发给
+  // 还没有任何账号的准客户看效果，必须公开可访问。
+  // 该页只渲染真实 GameCard，不查库、不写库、不读会话。
+  if (
+    pathname === GAME_CARD_STYLE_PREVIEW_PATH ||
+    pathname.startsWith(`${GAME_CARD_STYLE_PREVIEW_PATH}/`)
+  ) {
     return NextResponse.next();
   }
 

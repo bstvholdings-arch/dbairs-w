@@ -66,6 +66,7 @@ type AgentConfigSource = {
 
 export function serializeAgentConfig(
   config: AgentConfigSource,
+  options?: { baseUrl?: string | null },
 ): AiAgentConfigSnapshot {
   const agentName = isAiAgentType(config.agentName)
     ? config.agentName
@@ -76,7 +77,8 @@ export function serializeAgentConfig(
     agentType: agentName,
     systemPrompt: config.systemPrompt,
     tactics: config.tactics,
-    effectivePrompt: buildEffectiveSystemPrompt(agentName, config),
+    // 销冠 AI 的「封面风格预览链接」要带当前域名，所以这里透传 baseUrl。
+    effectivePrompt: buildEffectiveSystemPrompt(agentName, config, options),
     model: config.model,
     isEnabled: config.isEnabled,
     tokenLimit: config.tokenLimit,
@@ -149,9 +151,10 @@ export async function ensureAgentConfig(agentType: AiAgentTypeValue) {
 
 export async function getAgentConfigSnapshot(
   agentType: AiAgentTypeValue,
+  options?: { baseUrl?: string | null },
 ): Promise<AiAgentConfigSnapshot> {
   const config = await ensureAgentConfig(agentType);
-  return serializeAgentConfig(config);
+  return serializeAgentConfig(config, options);
 }
 
 /** AI 控制中心：读取 5 个平台助手，缺失时自动补基础配置。 */
@@ -160,7 +163,7 @@ export async function listAgentConfigs(): Promise<AiAgentConfigSnapshot[]> {
     AI_CONSOLE_AGENT_TYPES.map((agentName) => ensureAgentConfig(agentName)),
   );
 
-  return configs.map(serializeAgentConfig);
+  return configs.map((config) => serializeAgentConfig(config));
 }
 
 /** AI 控制中心：保存单个 Agent 的开关、模型、Token 上限与提示词。 */

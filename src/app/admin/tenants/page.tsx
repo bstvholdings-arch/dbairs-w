@@ -1,7 +1,7 @@
 import { connection } from "next/server";
 
 import { prisma } from "@/lib/prisma";
-import { tenantSelect } from "@/lib/tenant-api";
+import { tenantSelectWithLayout, toTenantPayload } from "@/lib/tenant-api";
 import { listTenantAdminAccounts } from "@/lib/tenant-admin-account";
 
 import { TenantsClient } from "./tenants-client";
@@ -20,7 +20,7 @@ export default async function AdminTenantsPage() {
 
   const tenants = await prisma.tenant.findMany({
     orderBy: { createdAt: "desc" },
-    select: tenantSelect,
+    select: tenantSelectWithLayout,
   });
 
   // 每个租户的管理员账号（tenant_admin）：列表里直接显示「是否已分配」，
@@ -29,16 +29,23 @@ export default async function AdminTenantsPage() {
     tenants.map((tenant) => tenant.id),
   );
 
-  const rows: TenantRow[] = tenants.map((tenant) => ({
-    id: tenant.id,
-    name: tenant.name,
-    domain: tenant.domain,
-    subdomain: tenant.subdomain,
-    status: tenant.status,
-    withdrawalRequiredApprovals: tenant.withdrawalRequiredApprovals,
-    createdAt: tenant.createdAt.toISOString(),
-    admins: adminsByTenant.get(tenant.id) ?? [],
-  }));
+  const rows: TenantRow[] = tenants.map((tenant) => {
+    // toTenantPayload 会把 layoutConfig 收敛成 gameCardStyle，不整包传进前端
+    const payload = toTenantPayload(tenant);
+
+    return {
+      id: payload.id,
+      name: payload.name,
+      domain: payload.domain,
+      subdomain: payload.subdomain,
+      status: payload.status,
+      withdrawalRequiredApprovals: payload.withdrawalRequiredApprovals,
+      // 开站 / 编辑弹窗要回填当前封面风格
+      gameCardStyle: payload.gameCardStyle,
+      createdAt: payload.createdAt.toISOString(),
+      admins: adminsByTenant.get(payload.id) ?? [],
+    };
+  });
 
   return <TenantsClient initialTenants={rows} />;
 }

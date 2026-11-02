@@ -1,3 +1,5 @@
+import { buildGameCardStylePreviewLinks } from "../game-card-styles";
+
 import type { AiAgentTypeValue, ReasonCount } from "./constants";
 import type {
   AiProviderMessage,
@@ -7,8 +9,12 @@ import type {
 /**
  * 销冠 AI 的 Prompt 与工具契约。
  *
- * 关键约束：客户明确表示不打算开站时，模型必须调用
- * save_lead_failure_reason(reason)，并把原因压缩到 5 个字以内。
+ * 关键约束：
+ * 1. 客户明确表示不打算开站时，模型必须调用
+ *    save_lead_failure_reason(reason)，并把原因压缩到 5 个字以内。
+ * 2. 客户问「网站风格 / 封面皮肤」时，模型必须发 3 个封面风格预览链接，
+ *    并说明风格由平台在开站时配置（商户后台不可自助切换）。
+ *    链接由 buildGameCardStylePreviewGuide 按当前域名动态注入。
  * 工具的真正执行在 src/app/api/ai/chat/route.ts（模型只负责给参数）。
  */
 
@@ -42,6 +48,11 @@ const SALES_BASE_PROMPT = `你是「DBAIRS 销冠 AI」，一名只做 B 端招�
 - 先共情、再拆解顾虑、最后给一个具体可执行的小方案；一次只问 1–2 个关键问题。
 - 用客户使用的语言回复；语气专业、克制、像真人顾问，不群发广告。
 - 不夸大收益、不承诺稳赚、不讨论违法内容；只讲产品能力、支付通道、点位与扶持政策。
+
+【网站风格（游戏封面）咨询】
+1. 客户问「网站长什么样 / 有没有别的风格 / 能不能换封面皮肤」时，直接把已下发的 3 个风格预览链接发给客户（见【网站封面风格预览】区块），并说明每种风格适合什么客户。
+2. 必须明确告知：风格选定后由平台在开站（配置租户）时统一设置，商户后台不提供自助切换；后续要更换，由平台运维在后台调整。
+3. 不要谎称商户可以自己随时切换，也不要描述平台不存在的风格或自定义皮肤能力。
 
 【必须调用工具的时机】
 1. 当客户明确表达「不做了、不考虑、算了、没兴趣、暂时不开」等拒绝意图时，你必须调用工具 save_lead_failure_reason。
@@ -106,17 +117,58 @@ export function composeSystemPrompt(basePrompt: string, tactics: string): string
 ${knowledge}`;
 }
 
-/** 真正下发给模型的有效 System Prompt。 */
+/** 区块标题即幂等标记：Prompt 里已有这一段就不再重复追加。 */
+export const STYLE_PREVIEW_GUIDE_HEADING = "【网站封面风格预览】";
+
+/**
+ * 封面风格预览链接区块（只给销冠 AI）。
+ *
+ * 为什么由代码注入而不是写死在基础人设里：链接必须带当前对外域名
+ * （正式域名 / staging / localhost 自动切换），且商户可在 AI 控制中心
+ * 自行改写基础人设，这段规则必须始终存在，不能被改掉。
+ *
+ * baseUrl 为空时退回相对路径，保证任何环境下都不会拼出死链。
+ */
+export function buildGameCardStylePreviewGuide(baseUrl?: string | null): string {
+  const links = buildGameCardStylePreviewLinks(baseUrl);
+  const lines = links
+    .map((link, index) => `${index + 1}. ${link.label}：${link.url}`)
+    .join("\n");
+
+  return `${STYLE_PREVIEW_GUIDE_HEADING}
+客户问「网站长什么样 / 有没有别的风格 / 能不能换封面皮肤」时，直接把下面这 3 个预览链接原样发给客户（每条独占一行，链接必须完整可点击，不要改写、不要截断）：
+${lines}
+
+发完链接后补一句口径（不要多说）：「这 3 种是平台统一维护的封面风格，您选好后我们开站时直接配置好；商户后台不提供自助切换，后续要更换随时找我们调整。」
+不要承诺平台不存在的风格、也不要让客户去后台自己找开关。`;
+}
+
+/**
+ * 真正下发给模型的有效 System Prompt。
+ *
+ * options.baseUrl 只影响「封面风格预览链接」的绝对地址，
+ * 其它调用方（例如 AI 控制中心的首屏数据）不传时用相对路径。
+ */
 export function buildEffectiveSystemPrompt(
   agentType: AiAgentTypeValue,
   config?: {
     systemPrompt?: string | null;
     tactics?: string | null;
   },
+  options?: { baseUrl?: string | null },
 ): string {
   const base = config?.systemPrompt?.trim() || buildAgentSystemPrompt(agentType);
 
-  return composeSystemPrompt(base, config?.tactics ?? "");
+  // 风格预览链接是平台口径，必须随销冠 AI 一起下发；
+  // 商户自己改写过的 Prompt 里若已包含这一段，就不重复追加。
+  const withStyleGuide =
+    agentType === "sales" && !base.includes(STYLE_PREVIEW_GUIDE_HEADING)
+      ? `${base}
+
+${buildGameCardStylePreviewGuide(options?.baseUrl)}`
+      : base;
+
+  return composeSystemPrompt(withStyleGuide, config?.tactics ?? "");
 }
 
 /** 只有销冠 AI 拥有「记录战败原因」工具。 */

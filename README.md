@@ -329,7 +329,7 @@ curl -X POST "https://<host>/api/deposit/callback/usdt_trc20" \
 
 ### 游戏封面风格（一套 GameCard + 3 组 token）
 
-`/admin/storefront` 的【游戏封面风格】控制玩家大厅与品牌展馆的游戏卡片外观：
+游戏封面风格由平台在**开站时**决定：入口是超管 `/admin/tenants` 的新建 / 编辑租户弹窗【Game Card Cover Style（游戏封面风格）】。它控制玩家大厅与品牌展馆的游戏卡片外观：
 
 | 风格 | id | 视觉 |
 | --- | --- | --- |
@@ -339,7 +339,9 @@ curl -X POST "https://<host>/api/deposit/callback/usdt_trc20" \
 
 - **一套组件，3 组 token**：token 表在 `src/lib/game-card-styles.ts`（`frame` / `texture` / `hairline` / `scrim` / `edge` / `title` / `provider` / `online` / `hot` / `sweep` / `play` / `veil` + `build(art)` 生成随卡片主色变化的渐变），组件只有 `src/components/lobby/game-card.tsx` 一份，卡片上带 `data-game-card-style="<id>"` 便于排查。
 - **存储**：`Tenant.layoutConfig.gameCardStyle`（JSON 内字段，无需迁移）；老数据缺字段回落 `cyberNeon`（改造前外观不变）。
+- **写入入口唯一**：`POST /api/tenants`、`PUT /api/tenants/[id]`。商户后台（`PATCH /api/tenant/settings`）与 `/admin/storefront` 都会**显式丢弃**该字段：装修页的【游戏封面风格】只读展示 + 跳转入口，`/api/admin/storefront` 的写白名单已剔除并 `delete layoutPatch.gameCardStyle`。
 - **生效链路**：`normalizeStorefrontLayout` → `StorefrontSettings.gameCardStyle` → `LobbyClient` / `ProviderHallClient` 把 `style` 传给 `GameCard`。
+- **AI 销冠发 Demo**：`buildGameCardStylePreviewGuide()` 把 3 个预览链接注入销冠的 System Prompt（链接域名跟随当前请求头，兜底 `APP_BASE_URL`）；预览页 `/demo/game-card-styles` 直接渲染真实 `GameCard`，不是截图。本地规则兜底（`src/lib/ai/fallback.ts`）也认「风格 / 皮肤 / 封面」关键词，同样发链接。
 - **解耦红线**：风格不碰整站主色（`Tenant.themeColor`）与排版模板（`layoutConfig.preset`），三者互不影响。
 
 ### AI 助手喂养（知识库 RAG + 实时数据 Function Calling）

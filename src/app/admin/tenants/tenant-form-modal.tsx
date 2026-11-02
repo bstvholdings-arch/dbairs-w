@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   useEffect,
@@ -10,6 +11,13 @@ import {
 } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
+import {
+  DEFAULT_GAME_CARD_STYLE,
+  GAME_CARD_STYLES,
+  GAME_CARD_STYLE_ORDER,
+  GAME_CARD_STYLE_PREVIEW_PATH,
+  type GameCardStyleId,
+} from "@/lib/game-card-styles";
 import { isValidTenantAdminEmail } from "@/lib/tenant-admin-email";
 
 import {
@@ -50,6 +58,8 @@ export function TenantFormModal({
     status: tenant?.status ?? "active",
     withdrawalRequiredApprovals:
       tenant?.withdrawalRequiredApprovals ?? 1,
+    // 老租户 / 脏数据统一回落到赛博霓虹（= 改造前外观）
+    gameCardStyle: tenant?.gameCardStyle ?? DEFAULT_GAME_CARD_STYLE,
     adminEmail: "",
   });
   const [error, setError] = useState("");
@@ -69,6 +79,9 @@ export function TenantFormModal({
   } | null>(null);
   const [copied, setCopied] = useState(false);
   const [savedDone, setSavedDone] = useState(false);
+
+  // 当前选中的封面风格（下拉框下方的配色示意与说明都用它）
+  const selectedCardStyle = GAME_CARD_STYLES[form.gameCardStyle];
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -167,6 +180,8 @@ export function TenantFormModal({
             subdomain,
             adminEmail,
             withdrawalRequiredApprovals: form.withdrawalRequiredApprovals,
+            // 游戏封面风格：只有这里能写（商户后台与装修页均无入口）
+            gameCardStyle: form.gameCardStyle,
             // 新建租户一律为 active（后端默认值），只有编辑时才提交状态。
             ...(mode === "edit" ? { status: form.status } : {}),
           }),
@@ -444,6 +459,69 @@ export function TenantFormModal({
                     ))}
                   </select>
                 </label>
+              </div>
+
+              {/* 游戏封面风格（Game Card Cover Style）：只在开站 / 编辑租户时可配。
+                  商户后台与装修页都没有入口 —— 撤销商户自助切换是产品决策。 */}
+              <div
+                className="rounded-xl border border-white/[0.08] bg-white/[0.015] p-3.5"
+                data-tenant-game-card-style
+              >
+                <label className="block">
+                  <span className="text-[10px] uppercase tracking-[0.16em] text-neutral-600">
+                    {t("tenants.form.gameCardStyle")}
+                  </span>
+                  <select
+                    value={form.gameCardStyle}
+                    onChange={(event) =>
+                      updateField(
+                        "gameCardStyle",
+                        event.target.value as GameCardStyleId,
+                      )
+                    }
+                    className="mt-1.5 h-10 w-full rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-neutral-200 outline-none transition-colors focus:border-[#d4af37]/50 focus:ring-1 focus:ring-[#d4af37]/30"
+                  >
+                    {GAME_CARD_STYLE_ORDER.map((id) => (
+                      <option key={id} value={id} className="bg-[#0a0a0a]">
+                        {t(GAME_CARD_STYLES[id].labelKey)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                {/* 当前风格的配色示意：颜色与前台卡片同源（GAME_CARD_STYLES.swatch） */}
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="flex shrink-0 gap-1" aria-hidden="true">
+                    {[
+                      selectedCardStyle.swatch.frame,
+                      selectedCardStyle.swatch.glow,
+                      selectedCardStyle.swatch.rim,
+                      selectedCardStyle.swatch.ink,
+                    ].map((color, index) => (
+                      <span
+                        key={`${color}-${index}`}
+                        className="h-4 w-4 rounded-full border border-white/10"
+                        style={{ backgroundColor: color }}
+                      />
+                    ))}
+                  </span>
+                  <p className="text-[10px] leading-4 text-neutral-500">
+                    {t(selectedCardStyle.hintKey)}
+                  </p>
+                </div>
+
+                <p className="mt-1.5 text-[10px] leading-4 text-neutral-600">
+                  {t("tenants.form.gameCardStyleHint")}
+                </p>
+
+                <Link
+                  href={GAME_CARD_STYLE_PREVIEW_PATH}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-2 inline-flex h-7 items-center rounded-lg border border-white/[0.08] px-2.5 text-[10px] text-neutral-400 transition-colors hover:border-[#d4af37]/30 hover:text-[#f0d27c]"
+                >
+                  {t("tenants.form.gameCardStylePreview")}
+                </Link>
               </div>
 
               {/* 新增租户必填：保存时自动建 tenant_admin 账号并把凭据发到该邮箱 */}

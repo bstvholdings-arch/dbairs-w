@@ -1,4 +1,8 @@
 import {
+  buildGameCardStylePreviewLinks,
+} from "../game-card-styles";
+
+import {
   bucketKeyForReason,
   normalizeFailReason,
   type AiAgentTypeValue,
@@ -19,6 +23,7 @@ import type {
  * 没有配置 AI_API_KEY（或模型临时不可用）时，保证整条链路仍然可演示：
  * 识别「拒绝意图 + 价格 / 信任 / 推广」关键词 → 模拟一次
  * save_lead_failure_reason 工具调用 → 给出可读的销售回复。
+ * 客户问「网站风格 / 封面皮肤」时，直接给出 3 个预览链接 + 配置口径。
  *
  * 注意：这只是兜底，不是真正的语义理解；生产环境请配置云端模型。
  */
@@ -32,6 +37,9 @@ const TRUST_PATTERN = /(不信任|不信|不靠谱|担心|怕)/;
 const PROMO_PATTERN = /(不会推|不会推广|不会做|不会引流|不懂推广)/;
 const TRAFFIC_PATTERN =
   /(没流量|无流量|没人|没玩家|没客户|没渠道|没资源|无资源|推广不了)/;
+/** 客户问「网站长什么样 / 有没有别的风格 / 能不能换封面」 */
+const STYLE_QUESTION_PATTERN =
+  /(风格|样式|皮肤|封面|模板|长什么样|好看|配色|外观|style|theme|skin|template)/i;
 
 /** 仅在客户明确拒绝时才返回原因，避免把正常比价误判成战败。 */
 export function detectFailureReason(text: string): string | null {
@@ -102,9 +110,23 @@ function fallbackReplyForReason(reason: string, hasLead: boolean) {
   return reply;
 }
 
+/**
+ * 客户问「网站风格 / 封面皮肤」时的本地兜底：给出 3 个预览链接 + 配置口径。
+ * 与销冠 AI 的 System Prompt 规则保持一致：风格由平台在开站时配置，商户后台不可自助切换。
+ */
+function stylePreviewReply(baseUrl?: string | null) {
+  const links = buildGameCardStylePreviewLinks(baseUrl);
+  const list = links
+    .map((link) => `· ${link.label}：${link.url}`)
+    .join("\n");
+
+  return `网站封面有 3 种风格，您可以先看效果：\n${list}\n\n这 3 种都是平台统一维护的，您选好后我们开站时直接帮您配置好；商户后台不提供自助切换，后续想换随时找我。`;
+}
+
 function qualificationReply(
   agentType: AiAgentTypeValue,
   messages: readonly AiProviderMessage[],
+  baseUrl?: string | null,
 ) {
   if (agentType === "tech") {
     return "收到，我先按常见链路帮您排查：1）确认回调地址公网可达；2）核对签名密钥与时间戳；3）检查网关订单是否已到终态。您把报错信息和订单号发我（不要发密钥），我继续定位。";
@@ -128,6 +150,11 @@ function qualificationReply(
 
   const userTurns = messages.filter((message) => message.role === "user").length;
 
+  // 客户问网站风格 / 封面皮肤：直接给 3 个预览链接（销冠口径，见 prompts.ts）。
+  if (STYLE_QUESTION_PATTERN.test(lastUserMessage(messages))) {
+    return stylePreviewReply(baseUrl);
+  }
+
   if (userTurns <= 1) {
     return "您好，我是 DBAIRS 的招商顾问。您目前是想了解自建站，还是已有站点想换支付 / 游戏商？方便说下主做的市场和现有玩家量级，我按您的体量给一版方案。";
   }
@@ -139,6 +166,8 @@ export function generateFallbackCompletion(input: {
   agentType: AiAgentTypeValue;
   messages: readonly AiProviderMessage[];
   hasLead: boolean;
+  /** 对外站点地址：拼「封面风格预览链接」用，拿不到时用相对路径 */
+  baseUrl?: string | null;
 }): AiCompletion {
   const lastUser = lastUserMessage(input.messages);
   const reason =
@@ -161,7 +190,7 @@ export function generateFallbackCompletion(input: {
   return {
     content: reason
       ? fallbackReplyForReason(reason, input.hasLead)
-      : qualificationReply(input.agentType, input.messages),
+      : qualificationReply(input.agentType, input.messages, input.baseUrl),
     toolCalls,
     model: "local-rules",
     fallback: true,

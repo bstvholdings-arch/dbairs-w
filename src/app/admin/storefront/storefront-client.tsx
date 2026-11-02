@@ -47,10 +47,9 @@ import { ProviderShowcasePanel } from "./provider-showcase-panel";
 import { ThemePreviewCard } from "./theme-preview-card";
 import { ArrowIcon, SectionTitle } from "./ui";
 
-/** 用于判断「有没有未保存改动」的指纹（模板 + 封面风格 + 主色 + 深浅 + 模块开关顺序 + 互动组件） */
+/** 用于判断「有没有未保存改动」的指纹（模板 + 主色 + 深浅 + 模块开关顺序 + 互动组件） */
 function signature(
   preset: StorefrontPresetId,
-  gameCardStyle: GameCardStyleId,
   themeColor: string,
   brightness: number,
   modules: StorefrontModule[],
@@ -62,7 +61,6 @@ function signature(
 ) {
   return [
     `preset:${preset}`,
-    `card:${gameCardStyle}`,
     `${themeColor}@${brightness}`,
     ...modules.map((module) => `${module.id}:${module.visible ? 1 : 0}`),
     `topbarChat:${interactions.showTopbarChat ? 1 : 0}`,
@@ -205,9 +203,15 @@ export function StorefrontClient({
   const [preset, setPreset] = useState<StorefrontPresetId>(
     selected?.preset ?? DEFAULT_STOREFRONT_PRESET,
   );
-  const [gameCardStyle, setGameCardStyle] = useState<GameCardStyleId>(
-    selected?.gameCardStyle ?? DEFAULT_GAME_CARD_STYLE,
-  );
+  /**
+   * 游戏封面风格：**只读**。
+   *
+   * 产品 / 合规决策（见 AGENTS.md 4.1）：风格只能由超管在
+   * 【租户管理 → 新增 / 编辑】时配置，商户后台与装修页都不提供切换入口，
+   * 因此这里没有 setter 的写入路径 —— 只用于把当前风格展示给超管。
+   */
+  const gameCardStyle: GameCardStyleId =
+    selected?.gameCardStyle ?? DEFAULT_GAME_CARD_STYLE;
   const [themeColor, setThemeColor] = useState(
     selected?.themeColor ?? DEFAULT_THEME_COLOR,
   );
@@ -253,7 +257,6 @@ export function StorefrontClient({
     () =>
       signature(
         selected?.preset ?? DEFAULT_STOREFRONT_PRESET,
-        selected?.gameCardStyle ?? DEFAULT_GAME_CARD_STYLE,
         selected?.themeColor ?? DEFAULT_THEME_COLOR,
         selected?.themeBrightness ?? DEFAULT_THEME_BRIGHTNESS,
         selected?.modules ?? defaultModules(),
@@ -268,7 +271,7 @@ export function StorefrontClient({
     [selected],
   );
   const dirty =
-    signature(preset, gameCardStyle, themeColor, brightness, modules, {
+    signature(preset, themeColor, brightness, modules, {
       showTopbarChat,
       showSidebarCasinoAnim,
       languageStyle: normalizedLanguageStyle,
@@ -287,7 +290,6 @@ export function StorefrontClient({
 
     setSelectedId(id);
     setPreset(next.preset);
-    setGameCardStyle(next.gameCardStyle);
     setThemeColor(next.themeColor);
     setBrightness(next.themeBrightness);
     setHexDraft(next.themeColor);
@@ -324,7 +326,6 @@ export function StorefrontClient({
 
   const resetDefaults = useCallback(() => {
     setPreset(DEFAULT_STOREFRONT_PRESET);
-    setGameCardStyle(DEFAULT_GAME_CARD_STYLE);
     setThemeColor(DEFAULT_THEME_COLOR);
     setBrightness(DEFAULT_THEME_BRIGHTNESS);
     setHexDraft(DEFAULT_THEME_COLOR);
@@ -352,9 +353,10 @@ export function StorefrontClient({
           tenantId: selected.id,
           // 服务端会存成 {"hex":"#d4af37","brightness":50}
           themeColor: { hex: themeColor, brightness },
+          // 注意：gameCardStyle 不在这里提交 —— 它只能由【租户管理】的开站弹窗写入，
+          // 服务端也会显式忽略该字段（见 /api/admin/storefront 的写白名单）。
           layoutConfig: {
             preset,
-            gameCardStyle,
             modules,
             showTopbarChat,
             showSidebarCasinoAnim,
@@ -380,7 +382,6 @@ export function StorefrontClient({
         current.map((tenant) => (tenant.id === saved.id ? saved : tenant)),
       );
       setPreset(saved.preset);
-      setGameCardStyle(saved.gameCardStyle);
       setThemeColor(saved.themeColor);
       setBrightness(saved.themeBrightness);
       setHexDraft(saved.themeColor);
@@ -403,7 +404,6 @@ export function StorefrontClient({
     }
   }, [
     brightness,
-    gameCardStyle,
     modules,
     normalizedLanguageStyle,
     preset,
@@ -584,39 +584,40 @@ export function StorefrontClient({
             </div>
           </section>
 
-          {/* ③ 游戏封面风格：一套 GameCard + 3 组 token（不复制组件） */}
+          {/* ③ 游戏封面风格：只读。配置权已收回平台 —— 只能由超管在
+              【租户管理 → 新增 / 编辑】时设置（商户后台无入口），
+              因此这里只展示状态 + 跳转入口，保存按钮不会提交该字段。 */}
           <section
             className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3.5"
             data-game-card-style-picker
+            data-game-card-style-readonly
           >
             <SectionTitle
               title={t("storefront.gameCard.title")}
-              hint={t("storefront.gameCard.hint")}
+              hint={t("storefront.gameCard.readonlyHint")}
             />
 
-            <div className="mt-3 grid gap-2 sm:grid-cols-3">
+            <div className="mt-3 grid gap-2 sm:grid-cols-3" aria-readonly="true">
               {GAME_CARD_STYLE_ORDER.map((id) => {
                 const definition = GAME_CARD_STYLES[id];
                 const active = gameCardStyle === id;
 
                 return (
-                  <button
+                  <div
                     key={id}
-                    type="button"
-                    onClick={() => setGameCardStyle(id)}
-                    aria-pressed={active}
                     data-game-card-style-option={id}
-                    className={`rounded-xl border p-2.5 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-soft/60 ${
+                    aria-current={active ? "true" : undefined}
+                    className={`rounded-xl border p-2.5 ${
                       active
                         ? "border-brand-soft/60 bg-brand/[0.08]"
-                        : "border-white/[0.07] bg-white/[0.015] hover:border-brand/30 hover:bg-brand/[0.04]"
+                        : "border-white/[0.07] bg-white/[0.015] opacity-60"
                     }`}
                   >
                     <GameCardStyleThumb id={id} />
                     <span className="mt-2 flex items-center justify-between gap-2">
                       <span
                         className={`truncate text-[11px] font-semibold ${
-                          active ? "text-brand-soft" : "text-neutral-200"
+                          active ? "text-brand-soft" : "text-neutral-400"
                         }`}
                       >
                         {t(definition.labelKey)}
@@ -630,9 +631,21 @@ export function StorefrontClient({
                     <span className="mt-1 block text-[9px] leading-relaxed text-neutral-500">
                       {t(definition.hintKey)}
                     </span>
-                  </button>
+                  </div>
                 );
               })}
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-[10px] leading-4 text-neutral-500">
+                {t("storefront.gameCard.adminOnly")}
+              </p>
+              <Link
+                href="/admin/tenants"
+                className="inline-flex h-8 items-center rounded-lg border border-white/[0.08] px-3 text-[10px] font-semibold text-neutral-300 transition-colors hover:border-brand/30 hover:text-brand-soft"
+              >
+                {t("storefront.gameCard.manage")}
+              </Link>
             </div>
           </section>
 

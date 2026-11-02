@@ -29,7 +29,7 @@ model Tenant {
   //   {
   //     "modules": [{ "id": "hero", "visible": true }, { "id": "action", "visible": true }, { "id": "provider", "visible": false }],
   //     "preset": "classic",             // 排版模板：classic / cinema / compact / bento / editorial
-  //     "gameCardStyle": "cyberNeon",    // 游戏封面风格：cyberNeon / royalGold / candyPop
+  //     "gameCardStyle": "cyberNeon",    // 游戏封面风格：cyberNeon / royalGold / candyPop（只能由超管在【租户管理 → 新增 / 编辑】写入，商户后台只读）
   //     "showTopbarChat": true,          // 顶栏语言按钮左侧的 AI 客服图标
   //     "showSidebarCasinoAnim": true,   // 侧边栏「斗鸡」下方的娱乐场动态卡片
   //     "languageStyle": "CH/EN"         // 语言按钮中文标签/英文标签，英文固定 EN

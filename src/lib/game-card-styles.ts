@@ -320,3 +320,38 @@ export function gameCardStyle(value: unknown): GameCardStyleDefinition {
   return GAME_CARD_STYLES[normalizeGameCardStyle(value)];
 }
 
+/**
+ * 3 种风格的真人可看预览页（公众可访问，直接渲染前台同一份 GameCard）。
+ *
+ * 合规 / 权限决策：风格只能由平台在【租户管理 → 开站 / 编辑】时配置，
+ * 商户后台没有自助切换入口。因此「卖站」阶段靠 AI 销冠把这一页的锚点链接
+ * 发给客户选，客户选好后由平台在开站时统一写入 Tenant.layoutConfig。
+ */
+export const GAME_CARD_STYLE_PREVIEW_PATH = "/demo/game-card-styles";
+
+/** 发给客户 / 写进 Prompt 时用的中文标签（与后台下拉的中文一致） */
+export const GAME_CARD_STYLE_PREVIEW_LABELS: Record<GameCardStyleId, string> = {
+  cyberNeon: "Cyber Neon 赛博霓虹（默认）",
+  royalGold: "Royal Gold 黑金尊享",
+  candyPop: "Candy Pop 糖果明亮",
+};
+
+/**
+ * 3 个预览链接：每种种风格一个锚点，指向同一个预览页。
+ *
+ * baseUrl 由调用方按「当前请求域名 → APP_BASE_URL」的优先级推导；
+ * 推导不到时退回相对路径，保证本地兜底回复里也不会出现拼错的绝对地址。
+ */
+export function buildGameCardStylePreviewLinks(
+  baseUrl?: string | null,
+): { id: GameCardStyleId; label: string; url: string }[] {
+  const origin = (baseUrl ?? "").trim().replace(/\/+$/, "");
+
+  return GAME_CARD_STYLE_ORDER.map((id) => ({
+    id,
+    label: GAME_CARD_STYLE_PREVIEW_LABELS[id],
+    url: `${origin}${GAME_CARD_STYLE_PREVIEW_PATH}#${id}`,
+  }));
+}
+
+

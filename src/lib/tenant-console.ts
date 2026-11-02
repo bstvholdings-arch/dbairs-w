@@ -1048,10 +1048,15 @@ export async function saveTenantSiteSettings(input: {
   }
 
   if (input.layout !== undefined) {
-    const patch =
+    const patch: Record<string, unknown> =
       input.layout && typeof input.layout === "object" && !Array.isArray(input.layout)
-        ? (input.layout as Record<string, unknown>)
+        ? { ...(input.layout as Record<string, unknown>) }
         : {};
+
+    // 游戏封面风格是平台配置项（合规决策，见 AGENTS.md 4.1）：
+    // 只能由超管在【租户管理 → 新增 / 编辑租户】时写入。
+    // 商户后台即使构造请求带上这个字段也必须忽略，否则等于开了后门。
+    delete patch.gameCardStyle;
 
     data.layoutConfig = serializeLayoutConfig(
       normalizeStorefrontLayout({ ...current.layout, ...patch }),

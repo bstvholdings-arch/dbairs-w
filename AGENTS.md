@@ -44,7 +44,9 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 3 种风格（`cyberNeon` 赛博霓虹 / `royalGold` 黑金尊享 / `candyPop` 糖果明亮）**必须是同一个 `src/components/lobby/game-card.tsx`**，差异只允许来自 `src/lib/game-card-styles.ts` 的 `tokens`（固定 class）与 `build(art)`（随卡片主色变化的渐变）。
 - **禁止**为某个风格复制一份 `GameCard`，也禁止在组件里写 `if (style === "...")` 分支堆样式：加 / 改风格 = 改那一张 token 表。
 - 风格只管卡片视觉（底色 / 边框 / 光效 / 文字色 / 扫光 / 徽章配色）；整站主色仍只由 `Tenant.themeColor` 决定，排版仍只由 `layoutConfig.preset` 决定，数据与交互（在线人数跳动、点开游戏）一份。
-- 存储：`Tenant.layoutConfig.gameCardStyle`（JSON 内字段，无需迁移）；脏数据 / 老租户缺字段回落 `cyberNeon`（= 改造前外观）。后台入口 `/admin/storefront` 的【游戏封面风格】，保存仍走 `PUT /api/admin/storefront`。
+- 存储：`Tenant.layoutConfig.gameCardStyle`（JSON 内字段，无需迁移）；脏数据 / 老租户缺字段回落 `cyberNeon`（= 改造前外观）。
+- **配置权限已收回平台（不可回退）**：唯一写入口是超管【租户管理 → 新建 / 编辑租户】弹窗的下拉（`POST /api/tenants`、`PUT /api/tenants/[id]` 的 `gameCardStyle`）。商户后台（`PATCH /api/tenant/settings` 的 `layout` patch）与装修页（`PUT /api/admin/storefront`）**必须显式忽略该字段**，页面也只做只读展示；否则等于给商户开了绕过权限的后门。
+- 卖站阶段由 AI 销冠发 Demo：`src/lib/ai/prompts.ts` 的 `buildGameCardStylePreviewGuide()` 在销冠 System Prompt 里注入 3 个真实渲染的预览链接（`/demo/game-card-styles#cyberNeon|royalGold|candyPop`，`src/app/demo/game-card-styles/` 复用同一个 `GameCard`），并明确「选好后由平台开站时配置」。
 - 大厅 `/` 与品牌展馆 `/provider/[code]` 必须共用同一个 `StorefrontSettings.gameCardStyle`，否则玩家点进品牌馆会「换了个封面风格」。
 
 ### 5. AI 助手喂养：知识库走 RAG，实时数据走 Function Calling

@@ -1,25 +1,28 @@
 import { Prisma } from "@prisma/client";
 import type { NextRequest } from "next/server";
 
+import {
+  DEFAULT_GAME_CARD_STYLE,
+  isGameCardStyleId,
+} from "@/lib/game-card-styles";
 import { sendTenantAdminInviteEmail } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
 import { TENANT_ROLE } from "@/lib/rbac";
+import {
+  normalizeStorefrontLayout,
+  serializeLayoutConfig,
+} from "@/lib/storefront";
 import { getSuperAdminFromRequest } from "@/lib/super-admin";
 import {
   provisionTenantAdminAccount,
   readTenantAdminEmail,
   type TenantAdminProvisionResult,
 } from "@/lib/tenant-admin-account";
-
-const tenantSelect = {
-  id: true,
-  name: true,
-  domain: true,
-  subdomain: true,
-  status: true,
-  withdrawalRequiredApprovals: true,
-  createdAt: true,
-} satisfies Prisma.TenantSelect;
+import {
+  tenantSelectWithLayout,
+  toTenantPayload,
+  type TenantSelectRow,
+} from "@/lib/tenant-api";
 
 // 域名允许用户粘贴完整 URL，入库前统一为小写 host。
 const DOMAIN_PATTERN =
@@ -53,11 +56,12 @@ export async function GET(request: NextRequest) {
 
     const tenants = await prisma.tenant.findMany({
       orderBy: { createdAt: "desc" },
-      select: tenantSelect,
+      select: tenantSelectWithLayout,
     });
 
     return Response.json(
-      { tenants },
+      // 只把 layoutConfig 里的 gameCardStyle 抽出来，整份装修配置不外泄
+      { tenants: tenants.map(toTenantPayload) },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
@@ -77,7 +81,7 @@ type TenantAdminCreated = Extract<
 type CreateTenantWithAdminResult =
   | {
       ok: true;
-      tenant: Prisma.TenantGetPayload<{ select: typeof tenantSelect }>;
+      tenant: TenantSelectRow;
       provision: TenantAdminCreated;
     }
   | { ok: false; message: string };
@@ -95,6 +99,8 @@ async function createTenantWithAdmin(input: {
   withdrawalRequiredApprovals: number;
   planId: string;
   adminEmail: string;
+  /** 开站时选定的游戏封面风格（写进 layoutConfig，前台大厅与品牌展馆共用） */
+  layoutConfig: ReturnType<typeof serializeLayoutConfig>;
 }): Promise<CreateTenantWithAdminResult> {
   try {
     const created = await prisma.$transaction(async (tx) => {
@@ -105,8 +111,9 @@ async function createTenantWithAdmin(input: {
           subdomain: input.subdomain,
           withdrawalRequiredApprovals: input.withdrawalRequiredApprovals,
           planId: input.planId,
+          layoutConfig: input.layoutConfig,
         },
-        select: tenantSelect,
+        select: tenantSelectWithLayout,
       });
 
       const provision = await provisionTenantAdminAccount(
@@ -224,6 +231,21 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // 开站时选定的游戏封面风格：显式传了就必须合法（避免脏数据落到前台），
+    // 不传则用默认的赛博霓虹（= 改造前外观）。
+    const rawGameCardStyle = input.gameCardStyle;
+
+    if (rawGameCardStyle !== undefined && !isGameCardStyleId(rawGameCardStyle)) {
+      return jsonError(
+        "游戏封面风格只能是 cyberNeon、royalGold 或 candyPop",
+        400,
+      );
+    }
+
+    const gameCardStyle = isGameCardStyleId(rawGameCardStyle)
+      ? rawGameCardStyle
+      : DEFAULT_GAME_CARD_STYLE;
+
     const [domainExists, subdomainExists, emailOwner] = await Promise.all([
       prisma.tenant.findFirst({
         where: { domain: { equals: domain, mode: "insensitive" } },
@@ -271,6 +293,11 @@ export async function POST(request: NextRequest) {
       withdrawalRequiredApprovals,
       planId: defaultPlan?.id ?? "unassigned",
       adminEmail,
+      // 只写这一项，其余装修字段由 normalizeStorefrontLayout 补默认值，
+      // 与「老租户缺字段」走同一套容错逻辑。
+      layoutConfig: serializeLayoutConfig(
+        normalizeStorefrontLayout({ gameCardStyle }),
+      ),
     });
 
     if (!created.ok) {
@@ -289,7 +316,10 @@ export async function POST(request: NextRequest) {
     return Response.json(
       {
         success: true,
-        tenant: { ...created.tenant, admins: [created.provision.account] },
+        tenant: {
+          ...toTenantPayload(created.tenant),
+          admins: [created.provision.account],
+        },
         tenantAdmin: {
           status: "created",
           username: created.provision.account.username,

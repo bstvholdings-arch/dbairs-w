@@ -1,3 +1,5 @@
+import type { GameCardStyleId } from "@/lib/game-card-styles";
+
 export const WITHDRAWAL_APPROVAL_OPTIONS = [1, 2, 3] as const;
 
 export const TENANT_STATUS_OPTIONS = [
@@ -5,7 +7,6 @@ export const TENANT_STATUS_OPTIONS = [
   { value: "trial", labelKey: "tenant.status.trial" },
   { value: "suspended", labelKey: "tenant.status.suspended" },
 ] as const;
-
 /** 租户管理员账号（tenant_admin）的只读摘要，用于列表展示。 */
 export type TenantAdminBadge = {
   id: string;
@@ -20,6 +21,8 @@ export type TenantRow = {
   subdomain: string;
   status: string;
   withdrawalRequiredApprovals: number;
+  /** 游戏封面风格（存在 Tenant.layoutConfig 里，前台大厅与品牌展馆共用） */
+  gameCardStyle: GameCardStyleId;
   createdAt: string;
   admins: TenantAdminBadge[];
 };
@@ -52,6 +55,12 @@ export type TenantFormValues = {
   subdomain: string;
   status: string;
   withdrawalRequiredApprovals: number;
+  /**
+   * 游戏封面风格（Game Card Cover Style）。
+   * 只有超管在开站 / 编辑租户时能配：商户后台不提供自助切换，
+   * 风格决定大厅与品牌展馆的卡片视觉（见 src/lib/game-card-styles.ts）。
+   */
+  gameCardStyle: GameCardStyleId;
   /**
    * 商户管理员邮箱（AdminUser.email，同时是登录账号）。
    * 新增租户时必填：后端用它创建 tenant_admin 账号并发送开通邮件；

@@ -41,6 +41,8 @@ import {
   isReadonlyToolName,
   resolveAiToolScope,
 } from "@/lib/ai/tools";
+import { baseUrlFromRequestHeaders } from "@/lib/integrations";
+import { appBaseUrl } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
 import { guardPermission } from "@/lib/session";
 
@@ -210,7 +212,15 @@ export async function POST(request: NextRequest) {
   const clientHistory = readHistory(body.history);
 
   try {
-    const config = await getAgentConfigSnapshot(agentType);
+    // 销冠 AI 的「封面风格预览链接」必须是对外可点开的绝对地址：
+    // 优先用本次请求的域名（staging / 正式域名自动跟随），拿不到才回退 APP_BASE_URL。
+    const publicBaseUrl = baseUrlFromRequestHeaders(
+      request.headers,
+      appBaseUrl(),
+    );
+    const config = await getAgentConfigSnapshot(agentType, {
+      baseUrl: publicBaseUrl,
+    });
 
     if (!config.isEnabled) {
       return jsonError(
@@ -381,6 +391,8 @@ export async function POST(request: NextRequest) {
         agentType,
         messages,
         hasLead: Boolean(lead),
+        // 兜底回复同样要能给出封面风格预览链接（绝对地址）
+        baseUrl: publicBaseUrl,
       });
     }
 
