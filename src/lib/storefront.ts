@@ -705,6 +705,11 @@ export type StorefrontSettings = {
   /** 租户名，后台预览时显示「当前正在装修：xxx」 */
   tenantName: string | null;
   /**
+   * 租户品牌 Logo（Tenant.logoUrl，已校验：http(s) 绝对地址或 / 开头的站内路径）。
+   * null = 商户没配 Logo，大厅顶栏用「商户名首字母」生成占位图，见 src/app/lobby-client.tsx。
+   */
+  tenantLogoUrl: string | null;
+  /**
    * 租户记账货币（Tenant.currency，已归一化，默认 MYR）。
    * 大厅顶栏 BALANCE、玩家中心所有金额都用它渲染符号，见 src/lib/currency.ts。
    */
@@ -728,4 +733,50 @@ export type StorefrontSettings = {
   /** 语言按钮文案，形如 CH/EN */
   languageStyle: string;
 };
+
+/** 品牌 Logo 地址长度上限：超过基本可以判定为脏数据或粘贴错误 */
+export const TENANT_LOGO_URL_MAX_LENGTH = 2048;
+
+/**
+ * 校验并归一化商户品牌 Logo 地址（Tenant.logoUrl）。
+ *
+ * 只接受两种写法，其余一律当作「未配置」返回 null：
+ * 1. http(s) 绝对地址 —— 商户把 Logo 传到图床 / CDN；
+ * 2. 以 `/` 开头的站内路径 —— 放在 public/ 下的静态资源（如 /brand/winvora.png）。
+ *
+ * 刻意不支持 `data:` / `javascript:` / 协议相对地址（`//host/x.png` 会被当成外站）：
+ * 这些值最终会直接进 `<img src>`，放开等于给后台表单留一个注入面。
+ *
+ * 前台渲染（大厅顶栏）与后台保存（/api/tenant/settings 的 PATCH）共用同一个函数，
+ * 保证「后台存进去的值」和「前台认的值」永远同一口径。
+ */
+export function normalizeTenantLogoUrl(raw: unknown): string | null {
+  if (typeof raw !== "string") {
+    return null;
+  }
+
+  const trimmed = raw.trim();
+
+  if (!trimmed || trimmed.length > TENANT_LOGO_URL_MAX_LENGTH) {
+    return null;
+  }
+
+  if (trimmed.startsWith("/")) {
+    // `//evil.com/logo.png` 是协议相对地址，指向外站，不算站内资源
+    return trimmed.startsWith("//") ? null : trimmed;
+  }
+
+  try {
+    const url = new URL(trimmed);
+
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return null;
+    }
+
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 

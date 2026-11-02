@@ -52,6 +52,12 @@ model Tenant {
   backendIp     String?
   walletAddress String?
 
+  // 玩家大厅顶部品牌展示（白标）：商户自己的 Logo 图片地址
+  // logoUrl：http(s) 绝对地址或 / 开头的站内路径（如 /brand/winvora.png），
+  //          留空则前台用「商户名首字母」生成占位图（见 src/app/lobby-client.tsx）。
+  //          读写与校验统一走 src/lib/storefront.ts 的 normalizeTenantLogoUrl()。
+  logoUrl String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

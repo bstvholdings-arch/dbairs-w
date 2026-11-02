@@ -8,7 +8,7 @@ import {
 
 /**
  * GET   /api/tenant/settings —— 当前商户的站点设置（皮肤 + 大厅模块开关）
- * PATCH /api/tenant/settings —— 保存皮肤 / 模块开关
+ * PATCH /api/tenant/settings —— 保存皮肤 / 模块开关 / 品牌 Logo
  *
  * 只能改自己的租户：where 固定使用会话里的 tenantId，
  * 请求体里的 tenantId / id 一律忽略（不存在「改别人站」的入口）。
@@ -66,6 +66,8 @@ export async function PATCH(request: NextRequest) {
       tenantId: gate.scope.tenantId,
       themeColor: input.themeColor,
       layout: input.layout,
+      // 玩家大厅顶栏的白标 Logo：空字符串 = 清空，前台退回商户名首字母占位
+      logoUrl: input.logoUrl,
     });
 
     if (!result.ok) {

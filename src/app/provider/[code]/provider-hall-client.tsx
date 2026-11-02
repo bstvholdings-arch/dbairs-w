@@ -60,6 +60,7 @@ export function ProviderHallClient({
   themeColor,
   themeBrightness,
   languageStyle,
+  brandName,
 }: {
   providerName: string;
   cards: LobbyGameCard[];
@@ -72,6 +73,8 @@ export function ProviderHallClient({
   themeBrightness: number;
   /** 后台装修的语言按钮文案，形如 CH/EN */
   languageStyle: string;
+  /** 当前商户品牌名（Tenant.name），页脚版权行用它，白标站不能露出平台名 */
+  brandName: string;
 }) {
   const { t } = useLanguage();
   const brand = providerBrand(providerName);
@@ -406,7 +409,7 @@ export function ProviderHallClient({
         <footer className="mt-8 border-t border-white/[0.05] pt-5">
           <div className="flex flex-col items-center justify-between gap-2 text-[10px] text-neutral-600 sm:flex-row">
             <span className="uppercase tracking-[0.2em]">
-              © {FOOTER_YEAR} DB AIRS
+              © {FOOTER_YEAR} {brandName}
             </span>
             <span>{t("lobby.footer.notice")}</span>
           </div>

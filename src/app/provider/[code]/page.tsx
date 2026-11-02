@@ -69,18 +69,33 @@ async function resolveProviderHall(code: string): Promise<ProviderHall | null> {
   };
 }
 
+/** 平台兜底品牌名：只有「连商户名都没取到」时才出现在标题 / 页脚里 */
+const PLATFORM_BRAND_NAME = "DB AIRS";
+
 export async function generateMetadata({
   params,
+  searchParams,
 }: {
   params: Promise<{ code: string }>;
+  searchParams: Promise<{ tenant?: string | string[] }>;
 }): Promise<Metadata> {
   const { code } = await params;
-  const hall = await resolveProviderHall(code);
+  const query = await searchParams;
+  const rawTenant = Array.isArray(query.tenant) ? query.tenant[0] : query.tenant;
+  const tenantKey =
+    typeof rawTenant === "string" && rawTenant.trim() ? rawTenant.trim() : null;
+
+  // 展馆页的标题同样跟着当前商户走（白标站不能露出平台名）
+  const [hall, storefront] = await Promise.all([
+    resolveProviderHall(code),
+    loadStorefront(tenantKey),
+  ]);
   const name = hall?.name ?? code;
+  const brandName = storefront.tenantName?.trim() || PLATFORM_BRAND_NAME;
 
   return {
-    title: `${name} Hall | DB AIRS`,
-    description: `Play every ${name} slot, live and fishing game inside the DB AIRS ${name} hall.`,
+    title: `${name} Hall | ${brandName}`,
+    description: `Play every ${name} slot, live and fishing game inside the ${brandName} ${name} hall.`,
   };
 }
 
@@ -119,6 +134,7 @@ export default async function ProviderHallPage({
       themeColor={storefront.themeColor}
       themeBrightness={storefront.themeBrightness}
       languageStyle={storefront.languageStyle}
+      brandName={storefront.tenantName?.trim() || PLATFORM_BRAND_NAME}
     />
   );
 }

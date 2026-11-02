@@ -18,6 +18,7 @@ import {
 } from "./session";
 import {
   normalizeStorefrontLayout,
+  normalizeTenantLogoUrl,
   parseThemeSetting,
   readThemeSettingInput,
   serializeLayoutConfig,
@@ -953,6 +954,8 @@ export async function loadTenantAiLogs(input: {
 export type TenantSiteSettings = {
   tenantId: string;
   tenantName: string;
+  /** 白标品牌 Logo（Tenant.logoUrl，已校验）；null = 未配置，前台用商户名首字母占位 */
+  logoUrl: string | null;
   domain: string;
   subdomain: string;
   status: string;
@@ -978,6 +981,7 @@ async function readTenantSettings(
       status: true,
       themeColor: true,
       layoutConfig: true,
+      logoUrl: true,
       updatedAt: true,
     },
   });
@@ -989,6 +993,7 @@ async function readTenantSettings(
   return {
     tenantId: tenant.id,
     tenantName: tenant.name,
+    logoUrl: normalizeTenantLogoUrl(tenant.logoUrl),
     domain: tenant.domain,
     subdomain: tenant.subdomain,
     status: tenant.status,
@@ -1011,12 +1016,15 @@ export async function loadTenantSiteSettings(
  *   不静默改成默认金色；未传则保留数据库原值；
  * - layout：只覆盖请求里出现的字段（modules / showTopbarChat /
  *   showSidebarCasinoAnim），其余沿用原值，避免把没传的开关重置成默认；
+ * - logoUrl：传 null / 空字符串表示清空（前台退回商户名首字母占位），
+ *   传值则必须是 normalizeTenantLogoUrl 认可的结果，非法直接 400；
  * - where 固定用会话里的 tenantId，商户无法改别人的站。
  */
 export async function saveTenantSiteSettings(input: {
   tenantId: string;
   themeColor?: unknown;
   layout?: unknown;
+  logoUrl?: unknown;
 }): Promise<TenantSettingsResult> {
   const current = await readTenantSettings(input.tenantId);
 
@@ -1048,6 +1056,28 @@ export async function saveTenantSiteSettings(input: {
     data.layoutConfig = serializeLayoutConfig(
       normalizeStorefrontLayout({ ...current.layout, ...patch }),
     );
+  }
+
+  if (input.logoUrl !== undefined) {
+    // 空值 = 明确要清掉 Logo，前台自动退回「商户名首字母」占位图
+    if (
+      input.logoUrl === null ||
+      (typeof input.logoUrl === "string" && input.logoUrl.trim() === "")
+    ) {
+      data.logoUrl = null;
+    } else {
+      const logoUrl = normalizeTenantLogoUrl(input.logoUrl);
+
+      if (!logoUrl) {
+        return {
+          ok: false,
+          error:
+            "Logo 必须是 http(s) 开头的图片地址，或以 / 开头的站内路径（如 /brand/logo.png）",
+        };
+      }
+
+      data.logoUrl = logoUrl;
+    }
   }
 
   if (Object.keys(data).length === 0) {

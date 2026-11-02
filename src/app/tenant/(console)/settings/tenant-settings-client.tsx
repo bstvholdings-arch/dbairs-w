@@ -5,10 +5,12 @@ import { useEffect, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
 import {
+  TENANT_LOGO_URL_MAX_LENGTH,
   THEME_BRIGHTNESS_MAX,
   THEME_BRIGHTNESS_MIN,
   THEME_COLOR_PRESETS,
   isValidThemeColor,
+  normalizeTenantLogoUrl,
 } from "@/lib/storefront";
 import type { TenantSiteSettings } from "@/lib/tenant-console";
 
@@ -29,6 +31,8 @@ export function TenantSettingsView({
   const [languageStyle, setLanguageStyle] = useState(
     settings.layout.languageStyle,
   );
+  // 白标品牌 Logo：大厅顶栏优先渲染它，留空则用商户名首字母占位
+  const [logoUrl, setLogoUrl] = useState(settings.logoUrl ?? "");
   const [saving, setSaving] = useState(false);
   const [banner, setBanner] = useState<{
     tone: "ok" | "error";
@@ -39,11 +43,30 @@ export function TenantSettingsView({
     document.title = t("tenantSettings.documentTitle");
   }, [t]);
 
+  // 预览图换地址后允许重试加载：记「失败的那个地址」而不是布尔值，
+  // 换 URL 时自动重新尝试，不必用 effect 重置状态。
+  const [brokenPreviewUrl, setBrokenPreviewUrl] = useState<string | null>(null);
+
+  // 预览口径与玩家大厅顶栏完全一致：能通过校验就显示图，否则显示商户名首字母
+  const previewLogoUrl = normalizeTenantLogoUrl(logoUrl);
+  const previewLogoBroken =
+    previewLogoUrl !== null && brokenPreviewUrl === previewLogoUrl;
+  const brandInitial = (
+    Array.from(settings.tenantName.trim())[0] ?? "D"
+  ).toUpperCase();
+
   async function handleSave() {
     const nextHex = hex.trim().toLowerCase();
 
     if (!isValidThemeColor(nextHex)) {
       setBanner({ tone: "error", text: t("tenantSettings.error.invalidColor") });
+      return;
+    }
+
+    const nextLogoUrl = logoUrl.trim();
+
+    if (nextLogoUrl && !normalizeTenantLogoUrl(nextLogoUrl)) {
+      setBanner({ tone: "error", text: t("tenantSettings.brand.invalidLogo") });
       return;
     }
 
@@ -63,6 +86,8 @@ export function TenantSettingsView({
             showSidebarCasinoAnim,
             languageStyle,
           },
+          // 空字符串 = 清空 Logo，前台自动退回商户名首字母占位
+          logoUrl: nextLogoUrl,
         }),
       });
       const payload = (await response.json().catch(() => null)) as {
@@ -82,6 +107,7 @@ export function TenantSettingsView({
         setHex(payload.settings.themeColor.hex);
         setBrightness(payload.settings.themeColor.brightness);
         setLanguageStyle(payload.settings.layout.languageStyle);
+        setLogoUrl(payload.settings.logoUrl ?? "");
       }
 
       setBanner({ tone: "ok", text: t("tenantSettings.banner.saved") });
@@ -142,6 +168,52 @@ export function TenantSettingsView({
             </div>
           ))}
         </dl>
+      </section>
+
+      <section className="mt-4 rounded-2xl border border-[#d4af37]/10 bg-[#0a0a0a]/70 p-5">
+        <h2 className="text-sm font-medium text-neutral-200">
+          {t("tenantSettings.brand.title")}
+        </h2>
+        <p className="mt-1 text-[10px] text-neutral-600">
+          {t("tenantSettings.brand.subtitle")}
+        </p>
+
+        <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-center">
+          {/* 预览：与玩家大厅顶栏同一套规则（有 Logo 显示图，没有则商户名首字母） */}
+          <div className="flex h-16 w-full items-center justify-center rounded-xl border border-[#d4af37]/15 bg-black/50 px-4 sm:w-44">
+            {previewLogoUrl && !previewLogoBroken ? (
+              // 商户 Logo 可能来自任意图床，next/image 的固定域名白名单管不住
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={previewLogoUrl}
+                alt={settings.tenantName}
+                draggable={false}
+                onError={() => setBrokenPreviewUrl(previewLogoUrl)}
+                className="h-12 w-auto max-w-full object-contain"
+              />
+            ) : (
+              <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-[#f5e6b8] via-[#d4af37] to-[#8a6d1f] text-2xl font-black text-[#171105]">
+                {brandInitial}
+              </span>
+            )}
+          </div>
+
+          <label className="block min-w-0 flex-1 text-[10px] uppercase tracking-[0.16em] text-neutral-600">
+            {t("tenantSettings.brand.logoLabel")}
+            <input
+              value={logoUrl}
+              onChange={(event) => setLogoUrl(event.target.value)}
+              maxLength={TENANT_LOGO_URL_MAX_LENGTH}
+              spellCheck={false}
+              placeholder={t("tenantSettings.brand.logoPlaceholder")}
+              className="mt-1.5 h-9 w-full rounded-lg border border-white/[0.08] bg-black/40 px-3 text-xs text-neutral-200 focus:border-[#d4af37]/45 focus:outline-none"
+            />
+          </label>
+        </div>
+
+        <p className="mt-2 text-[10px] leading-5 text-neutral-600">
+          {t("tenantSettings.brand.logoHint")}
+        </p>
       </section>
 
       <section className="mt-4 rounded-2xl border border-[#d4af37]/10 bg-[#0a0a0a]/70 p-5">

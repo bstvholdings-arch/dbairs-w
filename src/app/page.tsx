@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { connection } from "next/server";
 
 import { loadLobbyData } from "@/lib/lobby-data";
@@ -6,11 +7,24 @@ import { loadStorefront } from "@/lib/storefront-data";
 
 import { LobbyClient, type LobbyPlayerSummary } from "./lobby-client";
 
-export const metadata = {
-  title: "DB AIRS | Player Lobby",
-  description:
-    "DB AIRS player lobby: hot slots, live casino and fishing games in one black-gold neon hall.",
-};
+/** 平台兜底品牌名：只有「连商户名都没取到」时才会出现在标题里 */
+const PLATFORM_BRAND_NAME = "DB AIRS";
+
+/**
+ * 标签页标题必须跟着当前租户走：白标站如果标题写着平台名，
+ * 玩家一眼就能看出这是套壳站。品牌名解析口径与大厅顶栏完全一致
+ * （?tenant= → 访问域名 → 已登录商户 → 默认租户），见 lib/storefront-data.ts。
+ * loadStorefront 用 React cache 包过，与下面页面主体共用同一次查询。
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const storefront = await loadStorefront();
+  const brandName = storefront.tenantName?.trim() || PLATFORM_BRAND_NAME;
+
+  return {
+    title: `${brandName} | Player Lobby`,
+    description: `${brandName} player lobby: hot slots, live casino and fishing games in one hall.`,
+  };
+}
 
 export const instant = false;
 
