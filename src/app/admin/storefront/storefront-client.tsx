@@ -5,6 +5,12 @@ import { useCallback, useMemo, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
 import {
+  DEFAULT_GAME_CARD_STYLE,
+  GAME_CARD_STYLES,
+  GAME_CARD_STYLE_ORDER,
+  type GameCardStyleId,
+} from "@/lib/game-card-styles";
+import {
   buildStorefrontTheme,
   DEFAULT_STOREFRONT_LANGUAGE_STYLE,
   DEFAULT_STOREFRONT_MODULES,
@@ -41,9 +47,10 @@ import { ProviderShowcasePanel } from "./provider-showcase-panel";
 import { ThemePreviewCard } from "./theme-preview-card";
 import { ArrowIcon, SectionTitle } from "./ui";
 
-/** 用于判断「有没有未保存改动」的指纹（模板 + 主色 + 深浅 + 模块开关顺序 + 互动组件） */
+/** 用于判断「有没有未保存改动」的指纹（模板 + 封面风格 + 主色 + 深浅 + 模块开关顺序 + 互动组件） */
 function signature(
   preset: StorefrontPresetId,
+  gameCardStyle: GameCardStyleId,
   themeColor: string,
   brightness: number,
   modules: StorefrontModule[],
@@ -55,6 +62,7 @@ function signature(
 ) {
   return [
     `preset:${preset}`,
+    `card:${gameCardStyle}`,
     `${themeColor}@${brightness}`,
     ...modules.map((module) => `${module.id}:${module.visible ? 1 : 0}`),
     `topbarChat:${interactions.showTopbarChat ? 1 : 0}`,
@@ -133,6 +141,41 @@ function PresetThumb({
 }
 
 /**
+ * 游戏封面风格缩略图：只画「卡片的视觉语言」（底色 / 边框 / 中央图形 / 文字条），
+ * 颜色直接取自 GAME_CARD_STYLES 的 swatch，因此缩略图与前台卡片永远同源。
+ */
+function GameCardStyleThumb({ id }: { id: GameCardStyleId }) {
+  const { swatch } = GAME_CARD_STYLES[id];
+
+  return (
+    <div
+      aria-hidden="true"
+      className="relative h-24 w-full overflow-hidden rounded-lg border"
+      style={{ backgroundColor: swatch.frame, borderColor: swatch.rim }}
+    >
+      <span
+        className="absolute inset-0"
+        style={{
+          backgroundImage: `radial-gradient(75% 60% at 50% 26%, ${swatch.glow}55 0%, transparent 72%)`,
+        }}
+      />
+      <span
+        className="absolute left-1/2 top-[34%] h-7 w-7 -translate-x-1/2 -translate-y-1/2 rounded-full border"
+        style={{ borderColor: swatch.rim, backgroundColor: `${swatch.glow}22` }}
+      />
+      <span
+        className="absolute inset-x-2 bottom-4 h-1.5 rounded-full"
+        style={{ backgroundColor: swatch.ink }}
+      />
+      <span
+        className="absolute inset-x-2 bottom-1.5 h-1 w-8 rounded-full"
+        style={{ backgroundColor: swatch.rim }}
+      />
+    </div>
+  );
+}
+
+/**
  * 后台【前台装修】可视化编辑器。
  *
  * 左侧是配置（租户 / 主色 / 三大模块的开关与顺序），右侧是真实前台的 iframe 预览。
@@ -161,6 +204,9 @@ export function StorefrontClient({
 
   const [preset, setPreset] = useState<StorefrontPresetId>(
     selected?.preset ?? DEFAULT_STOREFRONT_PRESET,
+  );
+  const [gameCardStyle, setGameCardStyle] = useState<GameCardStyleId>(
+    selected?.gameCardStyle ?? DEFAULT_GAME_CARD_STYLE,
   );
   const [themeColor, setThemeColor] = useState(
     selected?.themeColor ?? DEFAULT_THEME_COLOR,
@@ -207,6 +253,7 @@ export function StorefrontClient({
     () =>
       signature(
         selected?.preset ?? DEFAULT_STOREFRONT_PRESET,
+        selected?.gameCardStyle ?? DEFAULT_GAME_CARD_STYLE,
         selected?.themeColor ?? DEFAULT_THEME_COLOR,
         selected?.themeBrightness ?? DEFAULT_THEME_BRIGHTNESS,
         selected?.modules ?? defaultModules(),
@@ -221,7 +268,7 @@ export function StorefrontClient({
     [selected],
   );
   const dirty =
-    signature(preset, themeColor, brightness, modules, {
+    signature(preset, gameCardStyle, themeColor, brightness, modules, {
       showTopbarChat,
       showSidebarCasinoAnim,
       languageStyle: normalizedLanguageStyle,
@@ -240,6 +287,7 @@ export function StorefrontClient({
 
     setSelectedId(id);
     setPreset(next.preset);
+    setGameCardStyle(next.gameCardStyle);
     setThemeColor(next.themeColor);
     setBrightness(next.themeBrightness);
     setHexDraft(next.themeColor);
@@ -276,6 +324,7 @@ export function StorefrontClient({
 
   const resetDefaults = useCallback(() => {
     setPreset(DEFAULT_STOREFRONT_PRESET);
+    setGameCardStyle(DEFAULT_GAME_CARD_STYLE);
     setThemeColor(DEFAULT_THEME_COLOR);
     setBrightness(DEFAULT_THEME_BRIGHTNESS);
     setHexDraft(DEFAULT_THEME_COLOR);
@@ -305,6 +354,7 @@ export function StorefrontClient({
           themeColor: { hex: themeColor, brightness },
           layoutConfig: {
             preset,
+            gameCardStyle,
             modules,
             showTopbarChat,
             showSidebarCasinoAnim,
@@ -330,6 +380,7 @@ export function StorefrontClient({
         current.map((tenant) => (tenant.id === saved.id ? saved : tenant)),
       );
       setPreset(saved.preset);
+      setGameCardStyle(saved.gameCardStyle);
       setThemeColor(saved.themeColor);
       setBrightness(saved.themeBrightness);
       setHexDraft(saved.themeColor);
@@ -352,6 +403,7 @@ export function StorefrontClient({
     }
   }, [
     brightness,
+    gameCardStyle,
     modules,
     normalizedLanguageStyle,
     preset,
@@ -532,7 +584,59 @@ export function StorefrontClient({
             </div>
           </section>
 
-          {/* ③ 主题配色引擎：15 色预设 + 深浅滑动条 + 实时预览卡片 */}
+          {/* ③ 游戏封面风格：一套 GameCard + 3 组 token（不复制组件） */}
+          <section
+            className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3.5"
+            data-game-card-style-picker
+          >
+            <SectionTitle
+              title={t("storefront.gameCard.title")}
+              hint={t("storefront.gameCard.hint")}
+            />
+
+            <div className="mt-3 grid gap-2 sm:grid-cols-3">
+              {GAME_CARD_STYLE_ORDER.map((id) => {
+                const definition = GAME_CARD_STYLES[id];
+                const active = gameCardStyle === id;
+
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setGameCardStyle(id)}
+                    aria-pressed={active}
+                    data-game-card-style-option={id}
+                    className={`rounded-xl border p-2.5 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-soft/60 ${
+                      active
+                        ? "border-brand-soft/60 bg-brand/[0.08]"
+                        : "border-white/[0.07] bg-white/[0.015] hover:border-brand/30 hover:bg-brand/[0.04]"
+                    }`}
+                  >
+                    <GameCardStyleThumb id={id} />
+                    <span className="mt-2 flex items-center justify-between gap-2">
+                      <span
+                        className={`truncate text-[11px] font-semibold ${
+                          active ? "text-brand-soft" : "text-neutral-200"
+                        }`}
+                      >
+                        {t(definition.labelKey)}
+                      </span>
+                      {active ? (
+                        <span className="shrink-0 rounded-full border border-brand/40 bg-brand/15 px-1.5 py-px text-[9px] font-bold text-brand-soft">
+                          {t("storefront.gameCard.active")}
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="mt-1 block text-[9px] leading-relaxed text-neutral-500">
+                      {t(definition.hintKey)}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          {/* ④ 主题配色引擎：15 色预设 + 深浅滑动条 + 实时预览卡片 */}
           <section
             className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3.5"
             data-theme-engine
@@ -690,7 +794,7 @@ export function StorefrontClient({
             </div>
           </section>
 
-          {/* ④ 模块开关 + 排序 */}
+          {/* ⑤ 模块开关 + 排序 */}
           <section className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3.5">
             <SectionTitle
               title={t("storefront.modules.title")}
@@ -772,7 +876,7 @@ export function StorefrontClient({
             </ol>
           </section>
 
-          {/* ⑤ 互动组件：顶栏 AI 客服 / 侧边栏娱乐场动效 / 语言按钮文案 */}
+          {/* ⑥ 互动组件：顶栏 AI 客服 / 侧边栏娱乐场动效 / 语言按钮文案 */}
           <section className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3.5">
             <SectionTitle
               title={t("storefront.interactions.title")}
@@ -856,7 +960,7 @@ export function StorefrontClient({
 
 
 
-        {/* ⑥ 真实前台预览：直接 iframe 大厅本身，保存后 key 变化 → 重新加载 */}
+        {/* ⑦ 真实前台预览：直接 iframe 大厅本身，保存后 key 变化 → 重新加载 */}
         <aside className="space-y-2.5">
           <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -906,7 +1010,7 @@ export function StorefrontClient({
         </aside>
       </div>
 
-      {/* ⑦ 游戏商商标网格：Logo + 显示开关 + 上下移动，保存后前台品牌墙立即按新顺序渲染 */}
+      {/* ⑧ 游戏商商标网格：Logo + 显示开关 + 上下移动，保存后前台品牌墙立即按新顺序渲染 */}
       <ProviderShowcasePanel
         initialProviders={initialProviders}
         onSaved={() => setPreviewKey((current) => current + 1)}

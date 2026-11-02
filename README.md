@@ -327,6 +327,21 @@ curl -X POST "https://<host>/api/deposit/callback/usdt_trc20" \
 - **存储**：`Tenant.layoutConfig.preset`（JSON 内字段，无需迁移）；老数据缺 `preset` 自动回落 `classic`，外观不变。保存仍走 `PUT /api/admin/storefront`（服务端逐字段归一化，脏值回落 `classic`）。
 - **解耦红线**：模板只管排版；配色仍只由 `Tenant.themeColor` 决定，模块开关与顺序仍只由 `Tenant.layoutConfig.modules` 决定。
 
+### 游戏封面风格（一套 GameCard + 3 组 token）
+
+`/admin/storefront` 的【游戏封面风格】控制玩家大厅与品牌展馆的游戏卡片外观：
+
+| 风格 | id | 视觉 |
+| --- | --- | --- |
+| 赛博霓虹（默认） | `cyberNeon` | 深色底 + 悬停青 / 粉双色荧光 + 高对比渐变 |
+| 黑金尊享 | `royalGold` | 纯黑底 + 极细暗金边框 + 悬停金属扫光 + 全金文字 |
+| 糖果明亮 | `candyPop` | 浅色糖果渐变 + 加宽圆角白边 + 深色文字，无扫光 |
+
+- **一套组件，3 组 token**：token 表在 `src/lib/game-card-styles.ts`（`frame` / `texture` / `hairline` / `scrim` / `edge` / `title` / `provider` / `online` / `hot` / `sweep` / `play` / `veil` + `build(art)` 生成随卡片主色变化的渐变），组件只有 `src/components/lobby/game-card.tsx` 一份，卡片上带 `data-game-card-style="<id>"` 便于排查。
+- **存储**：`Tenant.layoutConfig.gameCardStyle`（JSON 内字段，无需迁移）；老数据缺字段回落 `cyberNeon`（改造前外观不变）。
+- **生效链路**：`normalizeStorefrontLayout` → `StorefrontSettings.gameCardStyle` → `LobbyClient` / `ProviderHallClient` 把 `style` 传给 `GameCard`。
+- **解耦红线**：风格不碰整站主色（`Tenant.themeColor`）与排版模板（`layoutConfig.preset`），三者互不影响。
+
 ### AI 助手喂养（知识库 RAG + 实时数据 Function Calling）
 
 - **喂知识**：`/admin/ai-console` 的 FAQ 抽屉按 `agentType` 维护 `AgentFaq`（`tenantId=null` 为平台级，指定商户时可同时命中平台级 + 商户级）。`src/lib/ai/faqs.ts` 的 `findRelevantAgentFaqs()` 先 `contains` 召回候选、再按命中位置加权排序，最多注入 3 条（`buildFaqSystemPrompt()`）。

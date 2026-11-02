@@ -18,6 +18,7 @@ import {
 import { ProviderBrandMark } from "@/components/lobby/provider-brand";
 import { ProviderWall } from "@/components/lobby/provider-wall";
 import { formatInteger } from "@/lib/format";
+import type { GameCardStyleId } from "@/lib/game-card-styles";
 import { LOBBY_CATEGORY_LABEL_KEYS } from "@/lib/i18n-keys";
 import {
   LOBBY_FEATURE_CONTENT,
@@ -59,6 +60,7 @@ export function ProviderHallClient({
   onlineTotals,
   themeColor,
   themeBrightness,
+  gameCardStyle,
   languageStyle,
   brandName,
 }: {
@@ -71,6 +73,8 @@ export function ProviderHallClient({
   themeColor: string;
   /** 后台装修的深浅调节 0-100（50 = 色号原样） */
   themeBrightness: number;
+  /** 后台装修的游戏封面风格（与大厅同源，见 lib/game-card-styles.ts） */
+  gameCardStyle: GameCardStyleId;
   /** 后台装修的语言按钮文案，形如 CH/EN */
   languageStyle: string;
   /** 当前商户品牌名（Tenant.name），页脚版权行用它，白标站不能露出平台名 */
@@ -368,7 +372,11 @@ export function ProviderHallClient({
           <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4 sm:gap-3 lg:grid-cols-5 xl:grid-cols-6">
             {cards.map((card) => (
               <li key={card.id}>
-                <GameCard card={card} onPlay={() => setConnectingGame(card)} />
+                <GameCard
+                  card={card}
+                  style={gameCardStyle}
+                  onPlay={() => setConnectingGame(card)}
+                />
               </li>
             ))}
           </ul>

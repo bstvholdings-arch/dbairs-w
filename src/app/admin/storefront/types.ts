@@ -1,5 +1,7 @@
+import type { GameCardStyleId } from "@/lib/game-card-styles";
 import type { StorefrontModule } from "@/lib/storefront";
 import type { StorefrontPresetId } from "@/lib/storefront-presets";
+
 
 /** 后台装修页用的租户行（只在装修页读取装修相关字段） */
 export type StorefrontTenantRow = {
@@ -14,6 +16,8 @@ export type StorefrontTenantRow = {
   themeBrightness: number;
   /** 已归一化的排版模板（一套组件 + 5 组 layout token） */
   preset: StorefrontPresetId;
+  /** 已归一化的游戏封面风格（一套 GameCard + 3 组 token） */
+  gameCardStyle: GameCardStyleId;
   /** 已归一化的模块开关与顺序 */
   modules: StorefrontModule[];
   /** 顶栏语言按钮左侧是否显示 AI 客服图标 */

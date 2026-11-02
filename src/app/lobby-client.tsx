@@ -1141,7 +1141,11 @@ export function LobbyClient({
               <ul className="grid grid-cols-3 gap-[var(--sf-game-gap,0.75rem)] sm:grid-cols-4 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
                 {visibleGames.map((card) => (
                   <li key={card.id} className="min-w-0">
-                    <GameCard card={card} onPlay={() => openGame(card)} />
+                    <GameCard
+                      card={card}
+                      style={storefront.gameCardStyle}
+                      onPlay={() => openGame(card)}
+                    />
                   </li>
                 ))}
               </ul>

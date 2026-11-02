@@ -61,6 +61,7 @@ function serializeTenant(row: {
     themeColor: theme.hex,
     themeBrightness: theme.brightness,
     preset: layout.preset,
+    gameCardStyle: layout.gameCardStyle,
     modules: layout.modules,
     showTopbarChat: layout.showTopbarChat,
     showSidebarCasinoAnim: layout.showSidebarCasinoAnim,
@@ -180,6 +181,7 @@ export async function PUT(request: NextRequest) {
     // 同时兼容把新字段放在请求体顶层的写法，方便手工 curl / 旧版后台。
     for (const key of [
       "preset",
+      "gameCardStyle",
       "showTopbarChat",
       "showSidebarCasinoAnim",
       "languageStyle",

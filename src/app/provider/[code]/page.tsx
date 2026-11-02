@@ -132,6 +132,7 @@ export default async function ProviderHallPage({
       onlineTotals={hall.onlineTotals}
       themeColor={storefront.themeColor}
       themeBrightness={storefront.themeBrightness}
+      gameCardStyle={storefront.gameCardStyle}
       languageStyle={storefront.languageStyle}
       brandName={resolveBrandName(storefront.tenantName)}
     />

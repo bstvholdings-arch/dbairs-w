@@ -39,6 +39,14 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 分栏只在 `lg`(≥1024px) 生效，手机永远纵向堆叠；后台关掉 Hero 时必须自动退回堆叠（见 `globals.css` 里的 `:has()` 规则），不能留半列空白。
 - 模板 id 归一化必须容错：脏数据回落到 `classic`，老租户（`layoutConfig` 无 `preset`）升级后外观不变。
 
+### 4.1 游戏封面风格：一套 GameCard + 3 组 token
+
+- 3 种风格（`cyberNeon` 赛博霓虹 / `royalGold` 黑金尊享 / `candyPop` 糖果明亮）**必须是同一个 `src/components/lobby/game-card.tsx`**，差异只允许来自 `src/lib/game-card-styles.ts` 的 `tokens`（固定 class）与 `build(art)`（随卡片主色变化的渐变）。
+- **禁止**为某个风格复制一份 `GameCard`，也禁止在组件里写 `if (style === "...")` 分支堆样式：加 / 改风格 = 改那一张 token 表。
+- 风格只管卡片视觉（底色 / 边框 / 光效 / 文字色 / 扫光 / 徽章配色）；整站主色仍只由 `Tenant.themeColor` 决定，排版仍只由 `layoutConfig.preset` 决定，数据与交互（在线人数跳动、点开游戏）一份。
+- 存储：`Tenant.layoutConfig.gameCardStyle`（JSON 内字段，无需迁移）；脏数据 / 老租户缺字段回落 `cyberNeon`（= 改造前外观）。后台入口 `/admin/storefront` 的【游戏封面风格】，保存仍走 `PUT /api/admin/storefront`。
+- 大厅 `/` 与品牌展馆 `/provider/[code]` 必须共用同一个 `StorefrontSettings.gameCardStyle`，否则玩家点进品牌馆会「换了个封面风格」。
+
 ### 5. AI 助手喂养：知识库走 RAG，实时数据走 Function Calling
 
 - 喂养只喂「知识」，不喂「数据」：FAQ 知识库按 `agentType` 隔离（`AgentFaq`，`tenantId=null` 为平台级），检索命中后拼进 System Prompt（`src/lib/ai/faqs.ts` 的 `findRelevantAgentFaqs` / `buildFaqSystemPrompt`），最多注入 3 条。

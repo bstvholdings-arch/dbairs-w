@@ -1,8 +1,13 @@
 import type { TranslationKey } from "@/lib/i18n-types";
 import {
+  normalizeGameCardStyle,
+  type GameCardStyleId,
+} from "@/lib/game-card-styles";
+import {
   normalizeStorefrontPreset,
   type StorefrontPresetId,
 } from "@/lib/storefront-presets";
+
 
 /**
  * 前台装修（Storefront Settings）的纯函数层。
@@ -46,6 +51,11 @@ export type StorefrontLayout = {
    * 只改排版（宽度 / 间距 / 主视觉高度 / 分栏），不改配色与模块开关顺序。
    */
   preset: StorefrontPresetId;
+  /**
+   * 游戏封面视觉风格：一套 GameCard + 3 组 token，见 src/lib/game-card-styles.ts。
+   * 只改卡片的底色 / 边框 / 光效 / 文字色，不改数据与整站主色。
+   */
+  gameCardStyle: GameCardStyleId;
   modules: StorefrontModule[];
   /** 顶栏语言按钮左侧是否显示 AI 客服图标 */
   showTopbarChat: boolean;
@@ -398,6 +408,7 @@ export function normalizeStorefrontLayout(raw: unknown): StorefrontLayout {
 
   return {
     preset: normalizeStorefrontPreset(record.preset),
+    gameCardStyle: normalizeGameCardStyle(record.gameCardStyle),
     modules: normalizeLayoutConfig(raw),
     showTopbarChat: record.showTopbarChat !== false,
     showSidebarCasinoAnim: record.showSidebarCasinoAnim !== false,
@@ -724,6 +735,12 @@ export type StorefrontSettings = {
    * CSS 见 src/app/globals.css 的排版模板区块。
    */
   preset: StorefrontPresetId;
+  /**
+   * 游戏封面视觉风格（一套 GameCard + 3 组 token）。
+   * 大厅与品牌展馆的游戏卡片通过它决定底色 / 边框 / 光效 / 文字色，
+   * 见 src/lib/game-card-styles.ts。
+   */
+  gameCardStyle: GameCardStyleId;
   /** 三大模块的开关与顺序（数组顺序即页面顺序） */
   modules: StorefrontModule[];
   /** 顶栏语言按钮左侧是否显示 AI 客服图标 */

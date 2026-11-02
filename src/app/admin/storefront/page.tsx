@@ -83,6 +83,7 @@ export default async function AdminStorefrontPage({
       themeColor: theme.hex,
       themeBrightness: theme.brightness,
       preset: layout.preset,
+      gameCardStyle: layout.gameCardStyle,
       modules: layout.modules,
       showTopbarChat: layout.showTopbarChat,
       showSidebarCasinoAnim: layout.showSidebarCasinoAnim,
