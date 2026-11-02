@@ -284,6 +284,21 @@ curl -X POST "https://<host>/api/deposit/callback/usdt_trc20" \
   - 后台控制台（`/admin`、`/tenant` 的财务汇总）仍是平台视角的 `$` 展示，如需按租户币种请复用 `formatCurrency` 逐步替换。
 - **表结构增量**：`prisma/tenant-currency.sql`（幂等，`ALTER TABLE "Tenant" ADD COLUMN IF NOT EXISTS "currency"`，默认 `MYR`）；正常 `npx prisma db push` 会自动建列，只跑 SQL 的环境可用 `npm run db:sql prisma/tenant-currency.sql`，随后 `npx prisma generate`（Supabase 连接池上 `db push` 有时会卡在 shadow database，这条路径更稳）。
 
+### 前台排版模板（一套组件 + 5 组 layout token）
+
+`/admin/storefront` 支持 5 种前台排版：`classic`（经典大厅）/ `cinema`（巨幕影院）/ `compact`（紧凑信息流）/ `bento`（卡片拼贴）/ `editorial`（双栏画报）。
+
+- **一套组件，5 组 token**：模板定义在 `src/lib/storefront-presets.ts`（内容区宽度 / 模块间距 / 主视觉高度 / 面板圆角 / 卡片间距 / `mode`）；大厅组件树、数据流只有一份，**不存在 5 套独立布局**。
+- **消费方式**：大厅根节点挂 `data-storefront-preset` + `--sf-shell-max` / `--sf-module-gap` / `--sf-hero-h(-sm/-lg)` / `--sf-panel-radius` / `--sf-game-gap`；组件用 `var(--sf-xxx, 默认值)` 取值。`bento` / `editorial` 的分栏规则在 `src/app/globals.css` 末尾（仅 `≥1024px` 生效，用 `:has()` 判断 Hero 是否存在，关掉 Hero 自动退回堆叠）。
+- **存储**：`Tenant.layoutConfig.preset`（JSON 内字段，无需迁移）；老数据缺 `preset` 自动回落 `classic`，外观不变。保存仍走 `PUT /api/admin/storefront`（服务端逐字段归一化，脏值回落 `classic`）。
+- **解耦红线**：模板只管排版；配色仍只由 `Tenant.themeColor` 决定，模块开关与顺序仍只由 `Tenant.layoutConfig.modules` 决定。
+
+### AI 助手喂养（知识库 RAG + 实时数据 Function Calling）
+
+- **喂知识**：`/admin/ai-console` 的 FAQ 抽屉按 `agentType` 维护 `AgentFaq`（`tenantId=null` 为平台级，指定商户时可同时命中平台级 + 商户级）。`src/lib/ai/faqs.ts` 的 `findRelevantAgentFaqs()` 先 `contains` 召回候选、再按命中位置加权排序，最多注入 3 条（`buildFaqSystemPrompt()`）。
+- **喂数据**：余额 / 注单 / 充提 / KYC 这类**实时数据不进 Prompt**，由模型发起 Function Calling，服务端在租户作用域内查库后回填（工具契约 `src/lib/ai/prompts.ts`，执行 `src/app/api/ai/chat/route.ts`，现有示例 `save_lead_failure_reason`）。
+- **边界**：工具只读、白名单、必须带 `tenantId`；不提供改余额 / 审批出金 / 改配置的写工具；返回脱敏，不向用户暴露工具名与 System Prompt。
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

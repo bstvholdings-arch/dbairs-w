@@ -1,4 +1,8 @@
 import type { TranslationKey } from "@/lib/i18n-types";
+import {
+  normalizeStorefrontPreset,
+  type StorefrontPresetId,
+} from "@/lib/storefront-presets";
 
 /**
  * 前台装修（Storefront Settings）的纯函数层。
@@ -35,8 +39,13 @@ export const DEFAULT_STOREFRONT_LANGUAGE_STYLE = "CH/EN";
 export const DEFAULT_STOREFRONT_TOPBAR_CHAT = true;
 export const DEFAULT_STOREFRONT_SIDEBAR_CASINO = true;
 
-/** Tenant.layoutConfig 归一化后的完整形状（模块顺序 + 互动组件开关） */
+/** Tenant.layoutConfig 归一化后的完整形状（版式模板 + 模块顺序 + 互动组件开关） */
 export type StorefrontLayout = {
+  /**
+   * 排版模板：一套组件 + 5 组 layout token，见 src/lib/storefront-presets.ts。
+   * 只改排版（宽度 / 间距 / 主视觉高度 / 分栏），不改配色与模块开关顺序。
+   */
+  preset: StorefrontPresetId;
   modules: StorefrontModule[];
   /** 顶栏语言按钮左侧是否显示 AI 客服图标 */
   showTopbarChat: boolean;
@@ -381,12 +390,14 @@ export function parseLanguageStyle(raw: unknown): { zh: string; en: string } {
  *
  * 兼容历史结构：
  * - 裸数组 / `{ modules: [...] }` 只包含模块顺序；
+ * - 缺失的 preset 回落到经典版式（老租户升级后外观不变）；
  * - 新增的互动组件开关缺失时默认开启，只有明确写成 false 才关闭。
  */
 export function normalizeStorefrontLayout(raw: unknown): StorefrontLayout {
   const record = isRecord(raw) ? raw : {};
 
   return {
+    preset: normalizeStorefrontPreset(record.preset),
     modules: normalizeLayoutConfig(raw),
     showTopbarChat: record.showTopbarChat !== false,
     showSidebarCasinoAnim: record.showSidebarCasinoAnim !== false,
@@ -702,6 +713,12 @@ export type StorefrontSettings = {
   themeColor: string;
   /** 深浅调节 0-100（50 = 色号原样） */
   themeBrightness: number;
+  /**
+   * 排版模板（一套组件 + 5 组 layout token）。
+   * 大厅根节点会挂 `data-storefront-preset` 与对应的 --sf-* 变量，
+   * CSS 见 src/app/globals.css 的排版模板区块。
+   */
+  preset: StorefrontPresetId;
   /** 三大模块的开关与顺序（数组顺序即页面顺序） */
   modules: StorefrontModule[];
   /** 顶栏语言按钮左侧是否显示 AI 客服图标 */

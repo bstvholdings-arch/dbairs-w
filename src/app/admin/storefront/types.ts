@@ -1,4 +1,5 @@
 import type { StorefrontModule } from "@/lib/storefront";
+import type { StorefrontPresetId } from "@/lib/storefront-presets";
 
 /** 后台装修页用的租户行（只在装修页读取装修相关字段） */
 export type StorefrontTenantRow = {
@@ -11,6 +12,8 @@ export type StorefrontTenantRow = {
   themeColor: string;
   /** 深浅调节：0-100，50 = 色号原样 */
   themeBrightness: number;
+  /** 已归一化的排版模板（一套组件 + 5 组 layout token） */
+  preset: StorefrontPresetId;
   /** 已归一化的模块开关与顺序 */
   modules: StorefrontModule[];
   /** 顶栏语言按钮左侧是否显示 AI 客服图标 */

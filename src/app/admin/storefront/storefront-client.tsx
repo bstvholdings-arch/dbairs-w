@@ -25,6 +25,12 @@ import {
   type StorefrontModule,
   type StorefrontModuleId,
 } from "@/lib/storefront";
+import {
+  DEFAULT_STOREFRONT_PRESET,
+  STOREFRONT_PRESETS,
+  STOREFRONT_PRESET_ORDER,
+  type StorefrontPresetId,
+} from "@/lib/storefront-presets";
 
 import type {
   StorefrontProviderRow,
@@ -35,8 +41,9 @@ import { ProviderShowcasePanel } from "./provider-showcase-panel";
 import { ThemePreviewCard } from "./theme-preview-card";
 import { ArrowIcon, SectionTitle } from "./ui";
 
-/** 用于判断「有没有未保存改动」的指纹（主色 + 深浅 + 模块开关顺序 + 互动组件） */
+/** 用于判断「有没有未保存改动」的指纹（模板 + 主色 + 深浅 + 模块开关顺序 + 互动组件） */
 function signature(
+  preset: StorefrontPresetId,
   themeColor: string,
   brightness: number,
   modules: StorefrontModule[],
@@ -47,6 +54,7 @@ function signature(
   },
 ) {
   return [
+    `preset:${preset}`,
     `${themeColor}@${brightness}`,
     ...modules.map((module) => `${module.id}:${module.visible ? 1 : 0}`),
     `topbarChat:${interactions.showTopbarChat ? 1 : 0}`,
@@ -57,6 +65,71 @@ function signature(
 
 function defaultModules() {
   return DEFAULT_STOREFRONT_MODULES.map((module) => ({ ...module }));
+}
+
+/**
+ * 模板缩略图：只画「排布关系」，不复制真实大厅的组件树。
+ *
+ * 高度比例直接取自 token（heroHeight.lg / moduleGap / mode），
+ * 因此以后调 token，缩略图会自动跟着变，不会出现「缩略图与前台不一致」。
+ */
+function PresetThumb({
+  id,
+  active,
+}: {
+  id: StorefrontPresetId;
+  active: boolean;
+}) {
+  const { tokens } = STOREFRONT_PRESETS[id];
+  const heroRatio = Number.parseInt(tokens.heroHeight.lg, 10) || 330;
+  const block = active ? "bg-brand/50" : "bg-white/[0.12]";
+  const cta = active ? "bg-brand-soft/80" : "bg-white/25";
+
+  return (
+    <div
+      aria-hidden="true"
+      className="flex h-14 w-full rounded-lg border border-white/[0.07] bg-black/40 p-1.5"
+      style={{ gap: tokens.moduleGap }}
+    >
+      {tokens.mode === "bento" ? (
+        <div
+          className="grid flex-1 grid-cols-2"
+          style={{ gap: tokens.moduleGap }}
+        >
+          <span
+            className={`col-span-2 rounded ${block}`}
+            style={{ flexBasis: 0 }}
+          />
+          <span className={`rounded ${cta}`} />
+          <span className={`rounded ${block}`} />
+        </div>
+      ) : tokens.mode === "editorial" ? (
+        <div
+          className="grid flex-1 grid-cols-[1.55fr_1fr]"
+          style={{ gap: tokens.moduleGap }}
+        >
+          <span className={`row-span-2 rounded ${block}`} />
+          <span className={`rounded ${cta}`} />
+          <span className={`rounded ${block}`} />
+        </div>
+      ) : (
+        <div className="flex flex-1 flex-col" style={{ gap: tokens.moduleGap }}>
+          <span
+            className={`rounded ${block}`}
+            style={{ flexBasis: 0, flexGrow: heroRatio }}
+          />
+          <span
+            className={`rounded ${cta}`}
+            style={{ flexBasis: 0, flexGrow: 45 }}
+          />
+          <span
+            className={`rounded ${block}`}
+            style={{ flexBasis: 0, flexGrow: 110 }}
+          />
+        </div>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -86,6 +159,9 @@ export function StorefrontClient({
     [selectedId, tenants],
   );
 
+  const [preset, setPreset] = useState<StorefrontPresetId>(
+    selected?.preset ?? DEFAULT_STOREFRONT_PRESET,
+  );
   const [themeColor, setThemeColor] = useState(
     selected?.themeColor ?? DEFAULT_THEME_COLOR,
   );
@@ -130,6 +206,7 @@ export function StorefrontClient({
   const baseline = useMemo(
     () =>
       signature(
+        selected?.preset ?? DEFAULT_STOREFRONT_PRESET,
         selected?.themeColor ?? DEFAULT_THEME_COLOR,
         selected?.themeBrightness ?? DEFAULT_THEME_BRIGHTNESS,
         selected?.modules ?? defaultModules(),
@@ -144,7 +221,7 @@ export function StorefrontClient({
     [selected],
   );
   const dirty =
-    signature(themeColor, brightness, modules, {
+    signature(preset, themeColor, brightness, modules, {
       showTopbarChat,
       showSidebarCasinoAnim,
       languageStyle: normalizedLanguageStyle,
@@ -162,6 +239,7 @@ export function StorefrontClient({
     }
 
     setSelectedId(id);
+    setPreset(next.preset);
     setThemeColor(next.themeColor);
     setBrightness(next.themeBrightness);
     setHexDraft(next.themeColor);
@@ -197,6 +275,7 @@ export function StorefrontClient({
   }
 
   const resetDefaults = useCallback(() => {
+    setPreset(DEFAULT_STOREFRONT_PRESET);
     setThemeColor(DEFAULT_THEME_COLOR);
     setBrightness(DEFAULT_THEME_BRIGHTNESS);
     setHexDraft(DEFAULT_THEME_COLOR);
@@ -225,6 +304,7 @@ export function StorefrontClient({
           // 服务端会存成 {"hex":"#d4af37","brightness":50}
           themeColor: { hex: themeColor, brightness },
           layoutConfig: {
+            preset,
             modules,
             showTopbarChat,
             showSidebarCasinoAnim,
@@ -249,6 +329,7 @@ export function StorefrontClient({
       setTenants((current) =>
         current.map((tenant) => (tenant.id === saved.id ? saved : tenant)),
       );
+      setPreset(saved.preset);
       setThemeColor(saved.themeColor);
       setBrightness(saved.themeBrightness);
       setHexDraft(saved.themeColor);
@@ -273,6 +354,7 @@ export function StorefrontClient({
     brightness,
     modules,
     normalizedLanguageStyle,
+    preset,
     selected,
     showSidebarCasinoAnim,
     showTopbarChat,
@@ -397,7 +479,60 @@ export function StorefrontClient({
               })}
             </div>
           </section>
-          {/* ② 主题配色引擎：15 色预设 + 深浅滑动条 + 实时预览卡片 */}
+
+          {/* ② 排版模板：一套组件 + 5 组 layout token（不做 5 套独立布局） */}
+          <section
+            className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3.5"
+            data-storefront-preset-picker
+          >
+            <SectionTitle
+              title={t("storefront.preset.title")}
+              hint={t("storefront.preset.hint")}
+            />
+
+            <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              {STOREFRONT_PRESET_ORDER.map((id) => {
+                const definition = STOREFRONT_PRESETS[id];
+                const active = preset === id;
+
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setPreset(id)}
+                    aria-pressed={active}
+                    data-storefront-preset-option={id}
+                    className={`rounded-xl border p-2.5 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-soft/60 ${
+                      active
+                        ? "border-brand-soft/60 bg-brand/[0.08]"
+                        : "border-white/[0.07] bg-white/[0.015] hover:border-brand/30 hover:bg-brand/[0.04]"
+                    }`}
+                  >
+                    <PresetThumb id={id} active={active} />
+                    <span className="mt-2 flex items-center justify-between gap-2">
+                      <span
+                        className={`truncate text-[11px] font-semibold ${
+                          active ? "text-brand-soft" : "text-neutral-200"
+                        }`}
+                      >
+                        {t(definition.labelKey)}
+                      </span>
+                      {active ? (
+                        <span className="shrink-0 rounded-full border border-brand/40 bg-brand/15 px-1.5 py-px text-[9px] font-bold text-brand-soft">
+                          {t("storefront.preset.active")}
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="mt-1 block text-[9px] leading-relaxed text-neutral-500">
+                      {t(definition.hintKey)}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          {/* ③ 主题配色引擎：15 色预设 + 深浅滑动条 + 实时预览卡片 */}
           <section
             className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3.5"
             data-theme-engine
@@ -555,7 +690,7 @@ export function StorefrontClient({
             </div>
           </section>
 
-          {/* ③ 模块开关 + 排序 */}
+          {/* ④ 模块开关 + 排序 */}
           <section className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3.5">
             <SectionTitle
               title={t("storefront.modules.title")}
@@ -637,7 +772,7 @@ export function StorefrontClient({
             </ol>
           </section>
 
-          {/* ④ 互动组件：顶栏 AI 客服 / 侧边栏娱乐场动效 / 语言按钮文案 */}
+          {/* ⑤ 互动组件：顶栏 AI 客服 / 侧边栏娱乐场动效 / 语言按钮文案 */}
           <section className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3.5">
             <SectionTitle
               title={t("storefront.interactions.title")}
@@ -721,7 +856,7 @@ export function StorefrontClient({
 
 
 
-        {/* ④ 真实前台预览：直接 iframe 大厅本身，保存后 key 变化 → 重新加载 */}
+        {/* ⑥ 真实前台预览：直接 iframe 大厅本身，保存后 key 变化 → 重新加载 */}
         <aside className="space-y-2.5">
           <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -771,7 +906,7 @@ export function StorefrontClient({
         </aside>
       </div>
 
-      {/* ④ 游戏商商标网格：Logo + 显示开关 + 上下移动，保存后前台品牌墙立即按新顺序渲染 */}
+      {/* ⑦ 游戏商商标网格：Logo + 显示开关 + 上下移动，保存后前台品牌墙立即按新顺序渲染 */}
       <ProviderShowcasePanel
         initialProviders={initialProviders}
         onSaved={() => setPreviewKey((current) => current + 1)}

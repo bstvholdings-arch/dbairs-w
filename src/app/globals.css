@@ -651,3 +651,67 @@ button:not(:disabled):hover .withdrawal-button-sheen {
   }
 }
 
+/*
+ * ============================================================
+ * 前台排版模板（Storefront Layout Presets）
+ * ============================================================
+ *
+ * 架构红线：**一套组件 + 5 组 layout token**。
+ * 大厅永远只有一份组件树、一份数据流；模板只做两件事：
+ *   1. 根节点挂 `data-storefront-preset` + 一组 --sf-* 版式变量
+ *      （宽度 / 间距 / 主视觉高度 / 面板圆角 / 卡片间距，见
+ *        src/lib/storefront-presets.ts）；
+ *   2. 本节 3 条容器规则，把「纵向堆叠」换成「拼贴 / 分栏」。
+ *
+ * 因此：调模板 = 改 token 或这几条规则，绝不允许复制前台组件。
+ * 分栏只在 lg(1024px) 以上生效，手机永远纵向堆叠（小屏硬分栏必炸）。
+ * 用 :has() 判断主视觉是否存在：后台把 Hero 关掉时自动退回堆叠，
+ * 不会留下半列空白。
+ */
+
+/* 网格 / flex 子项统一 min-width: 0，避免品牌墙宽内容把分栏撑破 */
+[data-storefront-modules] > [data-module] {
+  min-width: 0;
+}
+
+@media (min-width: 1024px) {
+  /* 卡片拼贴：主视觉独占一行，功能岛与品牌墙左右各占一半 */
+  [data-storefront-preset="bento"]
+    [data-storefront-modules]:has(> [data-module="hero"]) {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+
+  [data-storefront-preset="bento"]
+    [data-storefront-modules]:has(> [data-module="hero"])
+    > [data-module="hero"] {
+    grid-column: 1 / -1;
+  }
+
+  /* 双栏画报：主视觉占左大栏（跨两行），其余模块沿右侧纵排 */
+  [data-storefront-preset="editorial"]
+    [data-storefront-modules]:has(> [data-module="hero"]) {
+    display: grid;
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+    align-items: start;
+  }
+
+  [data-storefront-preset="editorial"]
+    [data-storefront-modules]:has(> [data-module="hero"])
+    > [data-module="hero"] {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+
+  [data-storefront-preset="editorial"]
+    [data-storefront-modules]:has(> [data-module="hero"])
+    > [data-module="action"],
+  [data-storefront-preset="editorial"]
+    [data-storefront-modules]:has(> [data-module="hero"])
+    > [data-module="provider"] {
+    grid-column: 2;
+  }
+}
+
+

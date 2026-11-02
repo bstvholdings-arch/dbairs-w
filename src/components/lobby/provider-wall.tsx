@@ -46,7 +46,7 @@ export function ProviderWall({
   return (
     <section
       aria-label={t("lobby.providers.title")}
-      className="relative overflow-hidden rounded-2xl border border-brand/15 bg-[#070707]/80 p-2.5 sm:p-3.5"
+      className="relative overflow-hidden rounded-[var(--sf-panel-radius,1rem)] border border-brand/15 bg-[#070707]/80 p-2.5 sm:p-3.5"
     >
       <div
         aria-hidden="true"

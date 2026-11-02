@@ -58,6 +58,7 @@ import {
   type StorefrontModuleId,
   type StorefrontSettings,
 } from "@/lib/storefront";
+import { buildStorefrontPresetStyle } from "@/lib/storefront-presets";
 
 /** 大厅顶栏需要的玩家摘要；余额已由服务端序列化成字符串。 */
 export type LobbyPlayerSummary = {
@@ -139,6 +140,13 @@ export function LobbyClient({
         brightness: storefront.themeBrightness,
       }),
     [storefront.themeBrightness, storefront.themeColor],
+  );
+
+  // 排版模板：与配色完全解耦。模板只往根节点补一组 --sf-* 版式变量，
+  // 组件树、数据流一份不动，具体分栏规则见 globals.css 的排版模板区块。
+  const presetStyle = useMemo(
+    () => buildStorefrontPresetStyle(storefront.preset),
+    [storefront.preset],
   );
 
   // 只渲染开启的模块，数组顺序就是页面顺序
@@ -737,7 +745,8 @@ export function LobbyClient({
   return (
     <div
       className="relative min-h-screen bg-[#040404] font-sans text-neutral-200"
-      style={theme.style as CSSProperties}
+      style={{ ...theme.style, ...presetStyle } as CSSProperties}
+      data-storefront-preset={storefront.preset}
       data-theme-color={theme.brand}
       data-theme-brightness={theme.brightness}
       data-theme-primary={theme.primary}
@@ -965,14 +974,17 @@ export function LobbyClient({
         </div>
       </header>
 
-      <main className="relative mx-auto w-full max-w-[1600px] px-3 pb-12 pt-4 sm:px-5 lg:px-8">
+      <main className="relative mx-auto w-full max-w-[var(--sf-shell-max,1600px)] px-3 pb-12 pt-4 sm:px-5 lg:px-8">
         {/*
           ② ③ ④ 可选模块区：Hero 轮播 / 核心功能岛 / 品牌墙。
           显示与顺序完全由后台【前台装修】的 layoutConfig 决定（Tenant.layoutConfig），
           这里不再写死顺序，改顺序只需要在后台点上移 / 下移。
         */}
         {visibleModules.length > 0 ? (
-          <div className="flex flex-col gap-4 sm:gap-5" data-storefront-modules>
+          <div
+            className="flex flex-col gap-[var(--sf-module-gap,1.25rem)]"
+            data-storefront-modules
+          >
             {visibleModules.map((id) => renderStorefrontModule(id))}
           </div>
         ) : null}
@@ -1079,7 +1091,7 @@ export function LobbyClient({
                 </button>
               </div>
             ) : (
-              <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4 sm:gap-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
+              <ul className="grid grid-cols-3 gap-[var(--sf-game-gap,0.75rem)] sm:grid-cols-4 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
                 {visibleGames.map((card) => (
                   <li key={card.id} className="min-w-0">
                     <GameCard card={card} onPlay={() => openGame(card)} />

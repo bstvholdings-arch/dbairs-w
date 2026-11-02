@@ -16,6 +16,7 @@ import {
   parseThemeSetting,
   type StorefrontSettings,
 } from "@/lib/storefront";
+import { DEFAULT_STOREFRONT_PRESET } from "@/lib/storefront-presets";
 
 /**
  * 前台装修配置的读取层（只在服务端跑）。
@@ -49,6 +50,7 @@ export const FALLBACK_STOREFRONT: StorefrontSettings = {
   currency: DEFAULT_CURRENCY,
   themeColor: DEFAULT_THEME_COLOR,
   themeBrightness: DEFAULT_THEME_BRIGHTNESS,
+  preset: DEFAULT_STOREFRONT_PRESET,
   modules: DEFAULT_STOREFRONT_MODULES.map((module) => ({ ...module })),
   showTopbarChat: DEFAULT_STOREFRONT_TOPBAR_CHAT,
   showSidebarCasinoAnim: DEFAULT_STOREFRONT_SIDEBAR_CASINO,
@@ -67,6 +69,7 @@ function toSettings(row: StorefrontTenantRow): StorefrontSettings {
     currency: normalizeCurrency(row.currency),
     themeColor: theme.hex,
     themeBrightness: theme.brightness,
+    preset: layout.preset,
     modules: layout.modules,
     showTopbarChat: layout.showTopbarChat,
     showSidebarCasinoAnim: layout.showSidebarCasinoAnim,

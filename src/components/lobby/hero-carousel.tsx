@@ -111,7 +111,10 @@ export function HeroCarousel({
         }
       }}
     >
-      <div className="relative h-[250px] w-full sm:h-[286px] lg:h-[330px]">
+      <div
+        className="relative h-[var(--sf-hero-h,250px)] w-full sm:h-[var(--sf-hero-h-sm,286px)] lg:h-[var(--sf-hero-h-lg,330px)]"
+        data-hero-stage
+      >
         {banners.map((banner, slideIndex) => {
           const active = slideIndex === index;
           const metric = metrics[banner.id];
