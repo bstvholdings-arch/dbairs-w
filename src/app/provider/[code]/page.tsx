@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
 
+import { resolveBrandName } from "@/lib/brand";
 import { loadLobbyData } from "@/lib/lobby-data";
 import {
   buildCardsFromRecords,
@@ -69,9 +70,6 @@ async function resolveProviderHall(code: string): Promise<ProviderHall | null> {
   };
 }
 
-/** 平台兜底品牌名：只有「连商户名都没取到」时才出现在标题 / 页脚里 */
-const PLATFORM_BRAND_NAME = "DB AIRS";
-
 export async function generateMetadata({
   params,
   searchParams,
@@ -91,7 +89,7 @@ export async function generateMetadata({
     loadStorefront(tenantKey),
   ]);
   const name = hall?.name ?? code;
-  const brandName = storefront.tenantName?.trim() || PLATFORM_BRAND_NAME;
+  const brandName = resolveBrandName(storefront.tenantName);
 
   return {
     title: `${name} Hall | ${brandName}`,
@@ -134,7 +132,7 @@ export default async function ProviderHallPage({
       themeColor={storefront.themeColor}
       themeBrightness={storefront.themeBrightness}
       languageStyle={storefront.languageStyle}
-      brandName={storefront.tenantName?.trim() || PLATFORM_BRAND_NAME}
+      brandName={resolveBrandName(storefront.tenantName)}
     />
   );
 }

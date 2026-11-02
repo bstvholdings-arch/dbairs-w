@@ -14,6 +14,7 @@ import {
 
 import { useLanguage } from "@/components/LanguageProvider";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import { TenantBrandLockup } from "@/components/brand/tenant-brand";
 import { LobbyActionBar, type LobbyActionId } from "@/components/lobby/action-bar";
 import { PlayerDepositModal } from "@/components/player/deposit-modal";
 import {
@@ -32,6 +33,7 @@ import { SidebarCasinoAnimation } from "@/components/lobby/sidebar-casino-animat
 import { SupportChatDialog } from "@/components/lobby/support-chat-dialog";
 import { WinnerTicker } from "@/components/lobby/winner-ticker";
 import { formatInteger } from "@/lib/format";
+import { resolveBrandName } from "@/lib/brand";
 import { formatCurrency, normalizeCurrency } from "@/lib/currency";
 import { availableBalanceToString } from "@/lib/player-balance";
 import { subscribePlayerWalletChanged } from "@/lib/player-wallet-events";
@@ -95,12 +97,6 @@ const FOOTER_YEAR = new Date().getFullYear();
 
 
 /**
- * 品牌兜底名：只有「连商户名都没取到」时才会显示它。
- * 正常情况顶栏必须显示当前租户的 Tenant.name（白标），不允许把平台名写死在组件里。
- */
-const PLATFORM_BRAND_NAME = "DB AIRS";
-
-/**
  * 玩家前台大厅（Player Lobby）。
  * 服务端已经按 isActive / sortOrder 取好「游戏商 + 游戏」，首屏直接渲染；
  * 客户端再异步刷新一次公开接口，后台同步或上下架游戏后无需硬刷新即可生效。
@@ -159,23 +155,10 @@ export function LobbyClient({
   // Logo 与名称都来自当前租户（Tenant.logoUrl / Tenant.name），由
   // lib/storefront-data.ts 按「?tenant= → 访问域名 → 已登录商户 → 默认租户」
   // 解析后随 storefront 一起下发，所以同一个构建既能服务 winvora.cc 也能服务别家域名。
-  // 只有连商户名都取不到时，才回落到平台名。
-  const brandName = storefront.tenantName?.trim() || PLATFORM_BRAND_NAME;
-  const brandLogoUrl = storefront.tenantLogoUrl;
-  // 占位图取商户名首字母：Array.from 保证中文 / emoji 不会被切成半个字符
-  const brandInitial = useMemo(() => {
-    const [first] = Array.from(brandName);
-
-    return (first ?? "D").toUpperCase();
-  }, [brandName]);
-
-  // Logo 是外链图片，可能 404 / 被墙 / 证书过期：加载失败时静默退回首字母占位图，
-  // 绝不能留一个破图占位把整个顶栏撑变形。
-  // 这里记的是「加载失败的那个地址」而不是布尔值：商户换 Logo 后自动重新尝试，
-  // 不需要 effect 去重置状态（React Compiler 也不允许在 effect 里同步 setState）。
-  const [brokenLogoUrl, setBrokenLogoUrl] = useState<string | null>(null);
-  const brandLogoBroken =
-    brandLogoUrl !== null && brokenLogoUrl === brandLogoUrl;
+  // 只有连商户名都取不到时，resolveBrandName 才回落到平台名。
+  // 渲染统一交给 TenantBrandLockup（加载失败回退、首字母占位都在组件内），
+  // 页脚版权行与充值弹窗页脚复用同一个 brandName，避免各写一份出现穿帮。
+  const brandName = resolveBrandName(storefront.tenantName);
 
   // 只渲染开启的模块，数组顺序就是页面顺序
   const visibleModules = useMemo(
@@ -794,39 +777,17 @@ export function LobbyClient({
       <header className="sticky top-0 z-40 border-b border-brand/10 bg-[#050505]/85 backdrop-blur-xl">
         <div className="mx-auto flex w-full max-w-[1600px] flex-wrap items-center gap-x-4 gap-y-2.5 px-3 py-3 sm:px-5 lg:px-8">
           {/*
-            品牌区（白标）：Logo + 商户名。
-            Logo 高度 44px（sm 以上 48px），有 logoUrl 就渲染商户自己的图，
-            没配则用商户名首字母做同尺寸占位图，二者视觉重量一致。
+            品牌区（白标）：Logo + 商户名，统一由 TenantBrandLockup 渲染。
+            lg 档 = Logo 44px（sm 以上 48px）+ 商户名 text-xl/2xl，
+            没配 Logo 时用商户名首字母做同尺寸金色占位图，二者视觉重量一致。
           */}
-          <div className="flex min-w-0 items-center gap-3 sm:gap-4">
-            {brandLogoUrl && !brandLogoBroken ? (
-              // 商户 Logo 来自任意图床 / CDN，next/image 的固定域名白名单管不住
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={brandLogoUrl}
-                alt={brandName}
-                draggable={false}
-                onError={() => setBrokenLogoUrl(brandLogoUrl)}
-                className="h-11 w-auto max-w-[168px] shrink-0 object-contain drop-shadow-[0_0_20px_var(--sf-a45)] sm:h-12 sm:max-w-[224px]"
-              />
-            ) : (
-              <span
-                aria-hidden="true"
-                className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-brand-pale via-brand to-brand-deep text-2xl font-black leading-none tracking-tight text-brand-ink shadow-[0_0_34px_-8px_var(--sf-a95)] sm:h-12 sm:w-12"
-              >
-                {brandInitial}
-                <span className="absolute inset-0 rounded-xl ring-1 ring-inset ring-white/30" />
-              </span>
-            )}
-            <span className="min-w-0 leading-none">
-              <span className="block truncate bg-gradient-to-r from-brand-pale via-brand-soft to-brand-deep bg-clip-text text-xl font-black tracking-[0.06em] text-transparent sm:text-2xl">
-                {brandName}
-              </span>
-              <span className="mt-1.5 hidden text-[8px] uppercase tracking-[0.34em] text-neutral-600 sm:block">
-                {t("lobby.brandTagline")}
-              </span>
-            </span>
-          </div>
+          <TenantBrandLockup
+            brandName={brandName}
+            logoUrl={storefront.tenantLogoUrl}
+            size="lg"
+            tagline={t("lobby.brandTagline")}
+            taglineClassName="hidden sm:block"
+          />
 
           {/* 余额 + 搜索：移动端整行换到第二排，桌面端与品牌区同一条水平中线 */}
           <div className="order-3 flex w-full items-center gap-2 sm:order-2 sm:w-auto sm:flex-1">
@@ -1175,6 +1136,7 @@ export function LobbyClient({
         <PlayerDepositModal
           open
           playerName={player.username}
+          brandName={brandName}
           onClose={closePlayerDeposit}
           onDeposited={handleDepositSuccess}
         />

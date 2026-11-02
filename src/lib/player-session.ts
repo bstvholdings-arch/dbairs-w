@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import type { NextRequest } from "next/server";
 
 import { normalizeCurrency } from "./currency";
+import { normalizeTenantLogoUrl } from "./storefront";
 import { PLAYER_TOKEN_COOKIE, verifyPlayerToken } from "./player-auth";
 import { availableBalanceToString } from "./player-balance";
 import { prisma } from "./prisma";
@@ -32,6 +33,8 @@ export type PlayerSessionInfo = {
     themeColor: string;
     /** 租户记账货币（MYR / USD / USDT…），金额符号统一走 src/lib/currency.ts */
     currency: string;
+    /** 商户品牌 Logo：玩家中心 / 实名认证顶栏渲染它，没配则用商户名首字母 */
+    logoUrl: string | null;
   };
 };
 
@@ -78,6 +81,7 @@ async function resolvePlayerSession(
             status: true,
             themeColor: true,
             currency: true,
+            logoUrl: true,
           },
         },
       },
@@ -121,6 +125,8 @@ async function resolvePlayerSession(
       status: player.tenant.status,
       themeColor: player.tenant.themeColor,
       currency: normalizeCurrency(player.tenant.currency),
+      // 白标品牌：后台填了非法地址（javascript: 等）一律当未配置，退回首字母占位
+      logoUrl: normalizeTenantLogoUrl(player.tenant.logoUrl),
     },
   };
 }

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
+import { resolveBrandName } from "@/lib/brand";
 import { formatCurrency } from "@/lib/currency";
 import { GATEWAY_PROVIDER_LABEL_KEYS } from "@/lib/i18n-keys";
 import type { TFunction } from "@/lib/i18n-types";
@@ -120,6 +121,7 @@ export function PlayerWithdrawModal({
   walletCurrency,
   accounts,
   playerName,
+  brandName,
   onClose,
   onSubmitted,
   onManageAccounts,
@@ -131,6 +133,8 @@ export function PlayerWithdrawModal({
   walletCurrency: string;
   accounts: PlayerWithdrawalAccountView[];
   playerName: string;
+  /** 商户品牌名（Tenant.name）：只用于弹窗页脚署名，缺省回退平台名 */
+  brandName?: string;
   onClose: () => void;
   onSubmitted: (availableBalance?: string | null) => void;
   onManageAccounts: () => void;
@@ -670,7 +674,9 @@ export function PlayerWithdrawModal({
 
         <div className="border-t border-[#d4af37]/10 bg-[#060606] px-5 py-3">
           <p className="text-center text-[9px] uppercase tracking-[0.18em] text-neutral-700">
-            DBAIRS · Withdraw
+            {t("player.withdraw.brandFooter", {
+              brand: resolveBrandName(brandName),
+            })}
           </p>
         </div>
       </section>

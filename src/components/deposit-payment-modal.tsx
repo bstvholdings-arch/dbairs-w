@@ -4,6 +4,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { useEffect, useId, useState, type FormEvent } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
+import { resolveBrandName } from "@/lib/brand";
 import { formatCurrency } from "@/lib/currency";
 import {
   GATEWAY_BANK_FIELD_LABEL_KEYS,
@@ -162,12 +163,15 @@ export function DepositPaymentModal({
   playerId,
   playerName,
   gateways,
+  brandName,
   onClose,
   onDepositSuccess,
 }: {
   playerId?: string;
   playerName: string;
   gateways: DepositGatewayOption[];
+  /** 商户品牌名（Tenant.name）：只用于弹窗页脚署名，缺省回退平台名 */
+  brandName?: string;
   onClose: () => void;
   onDepositSuccess?: (balance?: string | null) => void;
 }) {
@@ -813,7 +817,9 @@ export function DepositPaymentModal({
 
         <div className="border-t border-[#d4af37]/10 bg-[#060606] px-5 py-3">
           <p className="text-center text-[9px] uppercase tracking-[0.18em] text-neutral-700">
-            DBAIRS · Payment Gateway
+            {t("player.payment.brandFooter", {
+              brand: resolveBrandName(brandName),
+            })}
           </p>
         </div>
       </section>

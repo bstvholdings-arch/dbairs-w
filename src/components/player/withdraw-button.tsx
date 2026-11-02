@@ -28,6 +28,7 @@ export function PlayerWithdrawButton({
   kycStatus,
   accounts,
   playerName,
+  brandName,
   onWithdrawn,
   onManageAccounts,
   className,
@@ -40,6 +41,8 @@ export function PlayerWithdrawButton({
   kycStatus: string;
   accounts: PlayerWithdrawalAccountView[];
   playerName: string;
+  /** 商户品牌名（Tenant.name）：透传给提现弹窗做页脚署名 */
+  brandName?: string;
   onWithdrawn: () => void;
   /** 点「去绑定提现账号」时由玩家中心切换到安全 Tab */
   onManageAccounts: () => void;
@@ -102,6 +105,7 @@ export function PlayerWithdrawButton({
           walletCurrency={walletCurrency}
           accounts={accounts}
           playerName={playerName}
+          brandName={brandName}
           onClose={() => setView("closed")}
           onSubmitted={() => onWithdrawn()}
           onManageAccounts={() => {

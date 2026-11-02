@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { connection } from "next/server";
 
@@ -5,14 +6,27 @@ import {
   PlayerProfileClient,
   type PlayerProfileTab,
 } from "./player-profile-client";
+import { resolveBrandName } from "@/lib/brand";
 import { getPlayerProfileData } from "@/lib/player-profile";
 import { getPlayerSessionFromCookies } from "@/lib/player-session";
+import { loadStorefront } from "@/lib/storefront-data";
 
-export const metadata = {
-  title: "Player Center | DB AIRS",
-  description:
-    "Manage your DB AIRS wallet, deposit history, security and referral rewards.",
-};
+/**
+ * 标签页标题跟着当前商户走（白标站不能写死平台名）。
+ * loadStorefront 已用 React cache 包过，与页面主体共用同一次查询。
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  // cacheComponents 下 headers() 属于请求期数据：显式 connection() 后再取，构建期不会误预渲染
+  await connection();
+
+  const storefront = await loadStorefront();
+  const brand = resolveBrandName(storefront.tenantName);
+
+  return {
+    title: `Player Center | ${brand}`,
+    description: `Manage your ${brand} wallet, deposit history, security and referral rewards.`,
+  };
+}
 
 export const instant = false;
 

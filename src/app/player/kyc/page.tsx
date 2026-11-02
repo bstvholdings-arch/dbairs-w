@@ -1,17 +1,31 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { connection } from "next/server";
 
+import { resolveBrandName } from "@/lib/brand";
 import { playerKycFileUrl } from "@/lib/kyc-storage";
 import { getPlayerSessionFromCookies } from "@/lib/player-session";
 import { prisma } from "@/lib/prisma";
+import { loadStorefront } from "@/lib/storefront-data";
 
 import { PlayerKycClient } from "./player-kyc-client";
 
-export const metadata = {
-  title: "Identity Verification | DBAIRS",
-  description:
-    "Submit identity documents to unlock withdrawals on this site.",
-};
+/**
+ * 标签页标题跟着当前商户走（白标站不能写死平台名）。
+ * loadStorefront 已用 React cache 包过，与页面主体共用同一次查询。
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  // cacheComponents 下 headers() 属于请求期数据：显式 connection() 后再取，构建期不会误预渲染
+  await connection();
+
+  const storefront = await loadStorefront();
+  const brand = resolveBrandName(storefront.tenantName);
+
+  return {
+    title: `Identity Verification | ${brand}`,
+    description: `Submit identity documents to unlock withdrawals on ${brand}.`,
+  };
+}
 
 export const instant = false;
 
@@ -48,6 +62,7 @@ export default async function PlayerKycPage() {
     <PlayerKycClient
       themeColor={session.tenant.themeColor}
       tenantName={session.tenant.name}
+      tenantLogoUrl={session.tenant.logoUrl}
       playerName={session.username}
       kyc={
         record

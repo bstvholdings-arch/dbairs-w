@@ -65,7 +65,7 @@ function AuthShell({ children }: { children: ReactNode }) {
             </span>
             <span>
               <span className="block text-sm font-bold tracking-[0.22em] text-[#f5efe0] transition-colors group-hover:text-[#f0d27c]">
-                {t("player.auth.brandTitle")}
+                {t("passwordReset.brandTitle")}
               </span>
               <span className="mt-0.5 block text-[9px] uppercase tracking-[0.24em] text-[#d4af37]/55">
                 {t("passwordReset.brandSubtitle")}

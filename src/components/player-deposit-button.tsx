@@ -27,11 +27,14 @@ type FlowStatus = "loading" | "ready" | "error";
 export function PlayerDepositFlow({
   open,
   playerName,
+  brandName,
   onClose,
   onDeposited,
 }: {
   open: boolean;
   playerName: string;
+  /** 商户品牌名（Tenant.name）：透传给收银台弹窗做页脚署名 */
+  brandName?: string;
   onClose: () => void;
   onDeposited?: (balance?: string | null) => void;
 }) {
@@ -44,6 +47,7 @@ export function PlayerDepositFlow({
   return (
     <PlayerDepositSession
       playerName={playerName}
+      brandName={brandName}
       onClose={onClose}
       onDeposited={onDeposited}
     />
@@ -52,10 +56,12 @@ export function PlayerDepositFlow({
 
 function PlayerDepositSession({
   playerName,
+  brandName,
   onClose,
   onDeposited,
 }: {
   playerName: string;
+  brandName?: string;
   onClose: () => void;
   onDeposited?: (balance?: string | null) => void;
 }) {
@@ -143,6 +149,7 @@ function PlayerDepositSession({
       <DepositPaymentModal
         playerName={playerName}
         gateways={gateways}
+        brandName={brandName}
         onDepositSuccess={(balance) => onDeposited?.(balance)}
         onClose={onClose}
       />
@@ -205,11 +212,14 @@ function PlayerDepositSession({
  */
 export function PlayerDepositButton({
   playerName,
+  brandName,
   onDeposited,
   className,
   label,
 }: {
   playerName: string;
+  /** 商户品牌名（Tenant.name）：透传给收银台弹窗做页脚署名 */
+  brandName?: string;
   onDeposited?: (balance?: string | null) => void;
   className?: string;
   label?: string;
@@ -232,6 +242,7 @@ export function PlayerDepositButton({
       <PlayerDepositFlow
         open={open}
         playerName={playerName}
+        brandName={brandName}
         onClose={() => setOpen(false)}
         onDeposited={(balance) => {
           setOpen(false);

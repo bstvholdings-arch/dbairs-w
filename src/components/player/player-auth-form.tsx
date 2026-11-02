@@ -6,6 +6,8 @@ import { useEffect, useMemo, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import { TenantBrandLockup } from "@/components/brand/tenant-brand";
+import { resolveBrandName } from "@/lib/brand";
 import type { TranslationKey } from "@/lib/i18n-types";
 import { playerErrorKey } from "@/lib/player-errors";
 import {
@@ -52,21 +54,37 @@ function safeNextPath(value: string) {
 /**
  * 玩家登录 / 注册表单。
  * 与后台管理员登录完全独立：成功后只写 httpOnly `player_token`，不碰管理员会话。
+ *
+ * 白标：品牌名 / Logo / 主色全部由页面层从当前租户传入（Tenant.name / logoUrl / themeColor），
+ * 组件内不写任何平台品牌字面量；拿不到租户时才由 resolveBrandName 回退平台名。
  */
 export function PlayerAuthForm({
   mode,
   nextPath,
   site,
   referralCode,
+  brandName,
+  brandLogoUrl,
+  themeColor,
 }: {
   mode: AuthMode;
   nextPath: string;
   site: string;
   referralCode: string;
+  /** 商户品牌名（Tenant.name） */
+  brandName: string;
+  /** 商户品牌 Logo（Tenant.logoUrl），未配置 / 加载失败退回首字母占位 */
+  brandLogoUrl: string | null;
+  /** 商户主色（Tenant.themeColor），保证登录页与大厅同色 */
+  themeColor: string;
 }) {
   const router = useRouter();
   const { t } = useLanguage();
-  const theme = useMemo(() => buildStorefrontTheme(PLAYER_DEFAULT_THEME), []);
+  const brand = resolveBrandName(brandName);
+  const theme = useMemo(
+    () => buildStorefrontTheme(themeColor || PLAYER_DEFAULT_THEME),
+    [themeColor],
+  );
 
   const safeNext = safeNextPath(nextPath);
   const [identifier, setIdentifier] = useState("");
@@ -93,10 +111,13 @@ export function PlayerAuthForm({
     findPlayerPhoneCountry(phoneCountry) ?? PLAYER_PHONE_COUNTRIES[0];
 
   useEffect(() => {
-    document.title = isRegister
-      ? t("player.auth.registerDocumentTitle")
-      : t("player.auth.loginDocumentTitle");
-  }, [isRegister, t]);
+    document.title = t(
+      isRegister
+        ? "player.auth.registerDocumentTitle"
+        : "player.auth.loginDocumentTitle",
+      { brand },
+    );
+  }, [brand, isRegister, t]);
 
   function buildHref(target: AuthMode) {
     const params = new URLSearchParams();
@@ -255,21 +276,13 @@ export function PlayerAuthForm({
       <header className="relative z-10 border-b border-brand/10 bg-[#050505]/80 backdrop-blur-xl">
         <div className="mx-auto flex w-full max-w-[1400px] items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
           <Link href="/" className="flex items-center gap-2.5">
-            <span className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-brand-pale via-brand to-brand-deep text-[11px] font-black tracking-tight text-brand-ink shadow-[0_0_28px_-8px_var(--sf-a95)]">
-              DB
-              <span
-                aria-hidden="true"
-                className="absolute inset-0 rounded-xl ring-1 ring-inset ring-white/30"
-              />
-            </span>
-            <span className="leading-none">
-              <span className="block bg-gradient-to-r from-brand-pale via-brand-soft to-brand-deep bg-clip-text text-[15px] font-black tracking-[0.24em] text-transparent">
-                DB AIRS
-              </span>
-              <span className="mt-1.5 block text-[8px] uppercase tracking-[0.34em] text-neutral-600">
-                {t("player.auth.eyebrow")}
-              </span>
-            </span>
+            <TenantBrandLockup
+              brandName={brand}
+              logoUrl={brandLogoUrl}
+              size="md"
+              tagline={t("player.auth.eyebrow")}
+              taglineClassName="block"
+            />
           </Link>
 
           <div className="flex items-center gap-2">
@@ -290,7 +303,7 @@ export function PlayerAuthForm({
             {t("player.auth.eyebrow")}
           </p>
           <h1 className="mt-4 max-w-lg text-4xl font-black leading-tight text-neutral-50">
-            {t("player.auth.brandTitle")}
+            {brand}
           </h1>
           <p className="mt-4 max-w-md text-sm leading-6 text-neutral-400">
             {t("player.auth.brandSubtitle")}

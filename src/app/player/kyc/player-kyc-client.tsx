@@ -6,6 +6,7 @@ import { useMemo, useRef, useState } from "react";
 
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { useLanguage } from "@/components/LanguageProvider";
+import { TenantBrandLockup } from "@/components/brand/tenant-brand";
 import { formatDate } from "@/lib/format";
 import type { TranslationKey } from "@/lib/i18n-types";
 import { buildStorefrontTheme } from "@/lib/storefront";
@@ -78,11 +79,14 @@ function statusLabelKey(status: string): TranslationKey {
 export function PlayerKycClient({
   themeColor,
   tenantName,
+  tenantLogoUrl,
   playerName,
   kyc: initialKyc,
 }: {
   themeColor: string;
   tenantName: string;
+  /** 商户品牌 Logo（Tenant.logoUrl）；没配则由 TenantBrandLockup 用商户名首字母占位 */
+  tenantLogoUrl: string | null;
   playerName: string;
   kyc: PlayerKycRecord | null;
 }) {
@@ -232,17 +236,14 @@ export function PlayerKycClient({
       <header className="sticky top-0 z-40 border-b border-brand/10 bg-[#050505]/85 backdrop-blur-xl">
         <div className="mx-auto flex w-full max-w-[1100px] items-center justify-between gap-3 px-4 py-3 sm:px-6">
           <Link href="/" className="flex items-center gap-2.5">
-            <span className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-brand-pale via-brand to-brand-deep text-[11px] font-black tracking-tight text-brand-ink shadow-[0_0_28px_-8px_var(--sf-a95)]">
-              DB
-            </span>
-            <span className="leading-none">
-              <span className="block bg-gradient-to-r from-brand-pale via-brand-soft to-brand-deep bg-clip-text text-[15px] font-black tracking-[0.24em] text-transparent">
-                DB AIRS
-              </span>
-              <span className="mt-1.5 block truncate text-[8px] uppercase tracking-[0.3em] text-neutral-600">
-                {tenantName}
-              </span>
-            </span>
+            {/* 顶栏品牌：Logo + 商户名，小字标出本页性质（实名认证） */}
+            <TenantBrandLockup
+              brandName={tenantName}
+              logoUrl={tenantLogoUrl}
+              size="md"
+              tagline={t("player.kyc.eyebrow")}
+              taglineClassName="block"
+            />
           </Link>
 
           <div className="flex items-center gap-2">

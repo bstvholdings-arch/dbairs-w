@@ -6,8 +6,10 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { useLanguage } from "@/components/LanguageProvider";
+import { TenantBrandLockup } from "@/components/brand/tenant-brand";
 import { PlayerDepositButton } from "@/components/player-deposit-button";
 import { PlayerWithdrawButton } from "@/components/player/withdraw-button";
+import { resolveBrandName } from "@/lib/brand";
 import { formatCurrency, normalizeCurrency } from "@/lib/currency";
 import { formatDate } from "@/lib/format";
 import type { TranslationKey } from "@/lib/i18n-types";
@@ -177,8 +179,10 @@ export function PlayerProfileClient({
   }
 
   useEffect(() => {
-    document.title = t("player.profile.documentTitle");
-  }, [t]);
+    document.title = t("player.profile.documentTitle", {
+      brand: resolveBrandName(current.player.tenant.name),
+    });
+  }, [current.player.tenant.name, t]);
 
   useEffect(() => {
     if (!toast) {
@@ -368,21 +372,14 @@ export function PlayerProfileClient({
       <header className="sticky top-0 z-40 border-b border-brand/10 bg-[#050505]/85 backdrop-blur-xl">
         <div className="mx-auto flex w-full max-w-[1400px] items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
           <Link href="/" className="flex items-center gap-2.5">
-            <span className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-brand-pale via-brand to-brand-deep text-[11px] font-black tracking-tight text-brand-ink shadow-[0_0_28px_-8px_var(--sf-a95)]">
-              DB
-              <span
-                aria-hidden="true"
-                className="absolute inset-0 rounded-xl ring-1 ring-inset ring-white/30"
-              />
-            </span>
-            <span className="leading-none">
-              <span className="block bg-gradient-to-r from-brand-pale via-brand-soft to-brand-deep bg-clip-text text-[15px] font-black tracking-[0.24em] text-transparent">
-                DB AIRS
-              </span>
-              <span className="mt-1.5 block text-[8px] uppercase tracking-[0.34em] text-neutral-600">
-                {t("player.profile.eyebrow")}
-              </span>
-            </span>
+            {/* 顶栏品牌：Logo + 商户名（Tenant.name / logoUrl），不再写死平台名 */}
+            <TenantBrandLockup
+              brandName={current.player.tenant.name}
+              logoUrl={current.player.tenant.logoUrl}
+              size="md"
+              tagline={t("player.profile.eyebrow")}
+              taglineClassName="block"
+            />
           </Link>
 
           <div className="flex items-center gap-2">
@@ -452,6 +449,7 @@ export function PlayerProfileClient({
               <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                 <PlayerDepositButton
                   playerName={current.player.username}
+                  brandName={current.player.tenant.name}
                   onDeposited={() => {
                     // 充值到账后广播一次：大厅顶栏（若已打开）同步刷新余额
                     notifyPlayerWalletChanged();
@@ -465,6 +463,7 @@ export function PlayerProfileClient({
                   kycStatus={current.kyc.status}
                   accounts={current.withdrawalAccounts}
                   playerName={current.player.username}
+                  brandName={current.player.tenant.name}
                   onWithdrawn={() => router.refresh()}
                   onManageAccounts={() => setTab("security")}
                 />

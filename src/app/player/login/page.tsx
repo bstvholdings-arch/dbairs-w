@@ -1,13 +1,28 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { connection } from "next/server";
 
 import { PlayerAuthForm } from "@/components/player/player-auth-form";
+import { resolveBrandName } from "@/lib/brand";
 import { getPlayerSessionFromCookies } from "@/lib/player-session";
+import { loadStorefront } from "@/lib/storefront-data";
 
-export const metadata = {
-  title: "Player Login | DB AIRS",
-  description: "Sign in to your DB AIRS player wallet and game history.",
-};
+/**
+ * 标签页标题跟着当前商户走（白标站不能写死平台名）。
+ * loadStorefront 已用 React cache 包过，与页面主体共用同一次查询。
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  // cacheComponents 下 headers() 属于请求期数据：显式 connection() 后再取，构建期不会误预渲染
+  await connection();
+
+  const storefront = await loadStorefront();
+  const brand = resolveBrandName(storefront.tenantName);
+
+  return {
+    title: `Player Login | ${brand}`,
+    description: `Sign in to your ${brand} player wallet and game history.`,
+  };
+}
 
 export const instant = false;
 
@@ -45,12 +60,18 @@ export default async function PlayerLoginPage({
     redirect(nextPath || "/");
   }
 
+  // 品牌名 / Logo / 主色都来自当前访问的租户，未登录也能正确白标
+  const storefront = await loadStorefront();
+
   return (
     <PlayerAuthForm
       mode="login"
       nextPath={nextPath}
       site={readParam(params.site)}
       referralCode=""
+      brandName={resolveBrandName(storefront.tenantName)}
+      brandLogoUrl={storefront.tenantLogoUrl}
+      themeColor={storefront.themeColor}
     />
   );
 }
