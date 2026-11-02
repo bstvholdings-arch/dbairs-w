@@ -312,6 +312,7 @@ curl -X POST "https://<host>/api/deposit/callback/usdt_trc20" \
 - **跨租户结论**：按 ID 查到的记录归属不符 → 403；在当前租户内查不到 → 404（不做「是不是别家的」回查，避免用报错差异探测别家数据）。
 - **对话循环**：`/api/ai/chat` 已改成通用工具循环（模型 → 执行 → 回填 → 再补全），最多 `AI_TOOL_MAX_ROUNDS=2` 轮；本地规则兜底时只执行工具、不再多调一次模型。
 - **接口守卫统一**：`/api/tenant/*` 全部走 `guardTenantApi`（支付网关 3 个接口也已改造，同时支持超管代登录）；页面菜单、proxy、路由内复核共用 `src/lib/rbac.ts` 一套矩阵。
+- **回归测试**：`npm run ai:isolation:check`（`scripts/check-ai-isolation.ts`）直接断言上面三道闸门 + 脱敏 + 工具下发，共 19 项，任一项失败即退出码 1。只读、不调模型、不需要 API Key，只依赖 `DATABASE_URL`（需 ≥2 个租户，否则直接失败而不是跳过）。改过 `src/lib/ai/tools.ts` 或任何 `where` 条件后跑一遍——红了就是漏风了。刻意**不**并入 `npm run check`：它要连库，塞进去会让无库环境（CI / 新克隆）假红。
 
 ## Learn More
 
