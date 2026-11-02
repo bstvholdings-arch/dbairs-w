@@ -52,6 +52,9 @@ export default async function FinancePage() {
       role={user.role}
       username={user.username}
       tenantName={user.tenant?.name}
+      previewTenantKey={
+        isTenantScope ? (user.tenant?.subdomain || user.tenantId) : null
+      }
     >
       <FinanceView
         isPlatformScope={!isTenantScope}

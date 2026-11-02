@@ -114,6 +114,7 @@ export function LobbyClient({
   initialGames,
   storefront,
   initialPlayer = null,
+  previewTenantKey = null,
 }: {
   initialProviders: LobbyProviderOption[];
   initialGames: LobbyGameRecord[];
@@ -121,6 +122,12 @@ export function LobbyClient({
   storefront: StorefrontSettings;
   /** 服务端预取的当前玩家，避免首屏先显示「登录 / 注册」再跳成头像 */
   initialPlayer?: LobbyPlayerSummary | null;
+  /**
+   * 本次访问的 `?tenant=`（后台【预览前台】/ 联调用）。
+   * 非空表示「预览模式」：所有站内跳转都要带上它，否则点到二级页
+   * （展馆 / 登录 / 玩家中心）就会丢掉租户上下文、回落到别家站点。
+   */
+  previewTenantKey?: string | null;
 }) {
   const { t } = useLanguage();
   const router = useRouter();
@@ -531,13 +538,46 @@ export function LobbyClient({
     setSupportChatOpen(true);
   }
 
+  /**
+   * 预览模式下给任意站内地址补上 `?tenant=`（幂等：已有则覆盖）。
+   * 非预览模式（玩家通过自己的白标域名访问）原样返回，不污染 URL。
+   */
+  function withTenant(href: string): string {
+    if (!previewTenantKey) {
+      return href;
+    }
+
+    const [path, search = ""] = href.split("?");
+    const params = new URLSearchParams(search);
+
+    params.set("tenant", previewTenantKey);
+
+    // 登录 / 注册页读的是 site（与大屏脚本、后台链接保持同一口径），两个都带上最稳
+    if (path.startsWith("/player/login") || path.startsWith("/player/register")) {
+      params.set("site", previewTenantKey);
+    }
+
+    return `${path}?${params.toString()}`;
+  }
+
+  /** 预览模式下的「大厅首页」地址（登录成功后回到这里，不能丢掉 tenant） */
+  const lobbyHomeHref = withTenant("/");
+  const loginHref = withTenant(
+    `/player/login?next=${encodeURIComponent(lobbyHomeHref)}`,
+  );
+  const registerHref = withTenant(
+    `/player/register?next=${encodeURIComponent(lobbyHomeHref)}`,
+  );
+
   /** 未登录先去登录 / 注册，登录后回到大厅原地址（保留 tenant / 筛选参数）。 */
   function redirectToPlayerAuth(mode: "login" | "register", nextPath?: string) {
     const here = `${window.location.pathname}${window.location.search}`;
     const next = nextPath ?? (here.startsWith("/") ? here : "/");
     const query = new URLSearchParams({ next });
-    // 多租户：把当前 ?tenant= 原样传给登录 / 注册，避免回落到第一个站点。
-    const site = new URLSearchParams(window.location.search).get("tenant");
+    // 多租户：把当前 ?tenant= 原样传给登录 / 注册，避免回落到别家站点。
+    const site =
+      previewTenantKey ??
+      new URLSearchParams(window.location.search).get("tenant");
 
     if (site?.trim()) {
       query.set("site", site.trim());
@@ -747,6 +787,7 @@ export function LobbyClient({
             <ProviderWall
               providers={showcaseProviders}
               onlineByProvider={providerOnline}
+              tenantKey={previewTenantKey}
             />
           </div>
         );
@@ -905,7 +946,7 @@ export function LobbyClient({
               ) : (
                 <div className="flex items-center gap-1.5">
                   <Link
-                    href="/player/login?next=%2F"
+                    href={loginHref}
                     onClick={(event) => {
                       event.preventDefault();
                       redirectToPlayerAuth("login");
@@ -915,7 +956,7 @@ export function LobbyClient({
                     {t("lobby.login")}
                   </Link>
                   <Link
-                    href="/player/register?next=%2F"
+                    href={registerHref}
                     onClick={(event) => {
                       event.preventDefault();
                       redirectToPlayerAuth("register");
@@ -946,7 +987,7 @@ export function LobbyClient({
 
                   <Link
                     role="menuitem"
-                    href="/player/profile"
+                    href={withTenant("/player/profile")}
                     onClick={() => setAccountMenuOpen(false)}
                     className="mt-1 flex items-center justify-between rounded-lg px-3 py-2 text-[11px] text-neutral-300 transition-colors hover:bg-brand/10 hover:text-brand-pale"
                   >
@@ -955,7 +996,7 @@ export function LobbyClient({
                   </Link>
                   <Link
                     role="menuitem"
-                    href="/player/profile?tab=referral"
+                    href={withTenant("/player/profile?tab=referral")}
                     onClick={() => setAccountMenuOpen(false)}
                     className="flex items-center justify-between rounded-lg px-3 py-2 text-[11px] text-neutral-300 transition-colors hover:bg-brand/10 hover:text-brand-pale"
                   >

@@ -23,6 +23,7 @@ export function ProviderWall({
   providers,
   onlineByProvider,
   activeProviderId,
+  tenantKey,
   heading = true,
 }: {
   providers: LobbyProviderOption[];
@@ -30,6 +31,11 @@ export function ProviderWall({
   onlineByProvider: Map<string, number>;
   /** 当前所在游戏商（展馆页高亮用） */
   activeProviderId?: string;
+  /**
+   * 预览模式下的 `?tenant=`：跳转展馆时拼进 URL，避免丢掉租户上下文。
+   * 玩家通过自己域名访问时为空，URL 保持干净。
+   */
+  tenantKey?: string | null;
   /** 是否渲染品牌墙标题栏 */
   heading?: boolean;
 }) {
@@ -96,7 +102,7 @@ export function ProviderWall({
               >
                 <button
                   type="button"
-                  onClick={() => router.push(providerHallHref(provider.name))}
+                  onClick={() => router.push(providerHallHref(provider.name, tenantKey))}
                   aria-label={`${provider.name} · ${t("lobby.providers.open")}`}
                   className={`group relative flex h-[92px] w-full items-center gap-3 overflow-hidden rounded-2xl border px-3.5 text-left transition-all duration-300 hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-soft/70 sm:h-[108px] lg:h-[116px] ${
                     active

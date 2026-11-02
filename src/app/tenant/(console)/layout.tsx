@@ -40,6 +40,9 @@ export default async function TenantLayout({
       role="tenant_admin"
       username={user.username}
       tenantName={scope.tenant.name}
+      // 【预览前台】跳 /?tenant=... 用的就是它：子域名优先，没配则用 id，
+      // 这样无论本地还是线上都能精确锁定「当前这家」的前台。
+      previewTenantKey={scope.tenant.subdomain || scope.tenant.id}
       impersonation={scope.impersonation}
     >
       {children}

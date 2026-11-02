@@ -195,6 +195,40 @@ Nodemailer 通道留了接入位置（`sendWithNodemailer`，注释里写了要�
 - 页面顶部常驻安全横幅（`src/components/impersonation-banner.tsx`）：显示「操作人 + 目标商户」，点「退出代登录」调用 `DELETE /api/admin/impersonation`，只清票据并回到 `/admin/tenants`；
 - 票据必须由 Route Handler 下发（Server Component 不能写 Cookie），所以入口是「先跳接口、再跳页面」；每次进入 / 退出都会在服务端打印 `[impersonate]` 审计日志。
 
+### 前台租户上下文：`?tenant=` → 域名 → 会话 → 代登录票据（找不到就 404）
+
+同一个构建要同时服务 N 个白标站，所以「这次访问属于哪个租户」只能由 `src/lib/storefront-data.ts` 统一解析，玩家可见页面一律走 `requireStorefront()`：
+
+1. `?tenant=<id | 子域名 | 域名>` —— 后台【预览前台】与联调用。**传了就必须命中，命中不了直接「站点不存在」，绝不回落到别家**；
+2. 访问域名 / 子域名（`Tenant.domain`、`Tenant.subdomain`）—— 真正的白标访问；
+3. 已登录的商户账号（会话里的 `tenantId`）；
+4. 超管代登录票据（`dba_impersonate`，校验签名 + `adminId`）—— 代登录期间直接敲 `/` 看到的必须是**被代登录的那家**；
+5. `.env` 的 `DEFAULT_TENANT`（可填 id / 子域名 / 域名）—— 唯一允许的「本地默认站点」显式配置；
+6. 全部落空 → `notFound()` 渲染 `src/app/not-found.tsx` 的「站点不存在 / Site not found」。
+
+配套约束：
+
+- 代码里**不允许**再出现 `winvora` 之类的商户名当兜底；`resolvePlayerTenant()`（注册 / 登录）同样删掉了「库里最早创建的租户」兜底，拿不到租户就返回 `tenant_unavailable`；
+- 商户后台 Header 的【预览前台】跳的是 `/?tenant=<subdomain 优先，没有则 id>`（`ConsoleShell` 的 `previewTenantKey`，由 `tenant/(console)/layout.tsx` 下发）；平台后台（`/admin`、`/finance` 平台范围）没有归属租户，**不渲染**这个入口；
+- 预览模式下，大厅里所有站内跳转（品牌馆、登录 / 注册、玩家中心、返回大厅）都会自动带上 `?tenant=`，避免点进二级页丢掉上下文；
+- 注意：`cacheComponents` 是流式渲染，`notFound()` 若在响应开始输出后才抛出，HTTP 状态会是 200 + `<meta name="robots" content="noindex">`（Next 官方行为，见 `node_modules/next/dist/docs/.../loading.md` 的 Status codes）。页面内容仍是「站点不存在」，不会被搜索引擎收录；需要严格 404 状态码时只能在 `proxy.ts` 里做（Edge 环境下没有数据库连接，本仓库没有这么做）。
+
+本地切换商户 A / B 的前台：
+
+```bash
+# 1) 直连（不需要域名、不需要代登录）
+http://localhost:3000/?tenant=abc      # 商户 A 的大厅
+http://localhost:3000/?tenant=winvora  # 商户 B 的大厅
+http://localhost:3000/?tenant=no-such  # → 站点不存在（不会再显示成别人家）
+
+# 2) 后台入口：超管 /admin/tenants → 「进入后台」→ 商户后台顶部【预览前台】
+#    新标签页地址形如 /?tenant=abc，顶栏 Logo / 名称 / 主色 / 选项卡标题都跟着走
+
+# 3) 想直接打开裸 `/` 也能看到一个固定站点（仅限本地开发）：在 .env 里加
+DEFAULT_TENANT=winvora
+#    不配 = 裸 `/` 返回「站点不存在」，这是刻意设计，避免把陌生域名解析成别人的站
+```
+
 ### 去中心化支付架构：商户自行对接支付商（平台只读监控）
 
 包网平台**不再提供统一的收款网关**：收款的 API Endpoint、收款钱包地址与 API Secret 全部由商户自己在商户后台配置，平台既不代收也不再配置任何收款钱包，只负责监控商户的对接状态。

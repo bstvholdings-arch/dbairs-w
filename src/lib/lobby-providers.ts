@@ -68,9 +68,22 @@ export function providerSlug(name: string): string {
   return slug || `provider-${hashKey(name).toString(36)}`;
 }
 
-/** 展馆地址：品牌墙点击 / 服务端解析都走这一个函数，避免两边规则不一致。 */
-export function providerHallHref(name: string): string {
-  return `${PROVIDER_HALL_PREFIX}/${providerSlug(name)}`;
+/**
+ * 展馆地址：品牌墙点击 / 服务端解析都走这一个函数，避免两边规则不一致。
+ *
+ * `tenantKey` 非空时（后台【预览前台】的预览模式）会把租户标识带进 URL，
+ * 否则从预览大厅点进品牌馆就会丢掉租户上下文 —— 那是「代登录 abc 却看到
+ * winvora」同类 Bug 的另一半。
+ */
+export function providerHallHref(name: string, tenantKey?: string | null): string {
+  const href = `${PROVIDER_HALL_PREFIX}/${providerSlug(name)}`;
+  const key = typeof tenantKey === "string" ? tenantKey.trim() : "";
+
+  if (!key) {
+    return href;
+  }
+
+  return `${href}?tenant=${encodeURIComponent(key)}`;
 }
 
 /** 品牌缩写：多词取首字母（PG Soft → PG），单词取前两位（scr888h5 → SC）。 */

@@ -87,6 +87,12 @@ export function PlayerAuthForm({
   );
 
   const safeNext = safeNextPath(nextPath);
+  // 预览模式（后台【预览前台】带 ?tenant= → 本页 ?site=）回大厅时必须带回租户标识，
+  // 否则「返回大厅 / 点 Logo」会跳到一个没有租户上下文的 `/`，直接 404 站点不存在。
+  const trimmedSite = site.trim();
+  const lobbyHref = trimmedSite
+    ? `/?tenant=${encodeURIComponent(trimmedSite)}`
+    : "/";
   const [identifier, setIdentifier] = useState("");
   const [username, setUsername] = useState("");
   const [phoneCountry, setPhoneCountry] = useState<string>(
@@ -275,7 +281,7 @@ export function PlayerAuthForm({
 
       <header className="relative z-10 border-b border-brand/10 bg-[#050505]/80 backdrop-blur-xl">
         <div className="mx-auto flex w-full max-w-[1400px] items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
-          <Link href="/" className="flex items-center gap-2.5">
+          <Link href={lobbyHref} className="flex items-center gap-2.5">
             <TenantBrandLockup
               brandName={brand}
               logoUrl={brandLogoUrl}
@@ -288,7 +294,7 @@ export function PlayerAuthForm({
           <div className="flex items-center gap-2">
             <LanguageSwitcher />
             <Link
-              href="/"
+              href={lobbyHref}
               className="hidden h-9 items-center rounded-full border border-white/[0.08] px-4 text-[11px] font-semibold text-neutral-400 transition-colors hover:border-brand/30 hover:text-brand-soft sm:inline-flex"
             >
               {t("player.auth.backToLobby")}

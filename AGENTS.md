@@ -55,5 +55,15 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 任何接口都不得把前端传入的 `tenantId` 当作数据归属，它只能被当作「筛选条件」或「被校验的对象」。
 - Next 16 已开 `cacheComponents`：**不能**写 `export const dynamic = "force-dynamic"`（构建直接报错），需要请求期执行的路由在开头 `await connection()`。
 
+### 7. 前台租户上下文：只认 `?tenant=` / 域名 / 会话 / 代登录票据，找不到就 404
+
+- 玩家可见页面（`/`、`/provider/[code]`、`/player/*`）一律用 `src/lib/storefront-data.ts` 的 `requireStorefront()`；解析顺序：`?tenant=` → 访问域名/子域名 → 商户会话 → 超管代登录票据 → `.env` 的 `DEFAULT_TENANT` → **都没有就 `notFound()`**。
+- `?tenant=` 传了就**必须**命中，命中不了直接「站点不存在」，**禁止**回落到「最早创建的 active 租户」——「代登录 abc 点【预览前台】却看到 winvora」就是这么来的。
+- 禁止任何硬编码商户名兜底（`winvora` 等只允许出现在注释 / 示例 / README 里）；`resolvePlayerTenant()`（注册 / 登录）同样不得回落到任意租户，否则会把玩家注册进别家商户。
+- 商户后台 Header 的【预览前台】必须带 `/?tenant=<subdomain || id>`（`ConsoleShell` 的 `previewTenantKey` 由 `tenant/(console)/layout.tsx` 下发）；平台范围后台没有归属租户，不渲染该入口。预览模式下大厅的所有站内跳转（品牌馆 / 登录 / 注册 / 玩家中心）都要透传 `?tenant=`。
+- `loadStorefront()` 只允许后台页面使用（需要「默认选中某个租户」，允许回落最早 active 租户），玩家面不得调用。
+- 流式渲染下 `notFound()` 的 HTTP 状态可能是 200 + `noindex`（Next 官方行为），这是已知取舍；文案见 `src/app/not-found.tsx`（`site.notFound.*`，中英并列，不依赖 `useLanguage`）。
+
+
 
 

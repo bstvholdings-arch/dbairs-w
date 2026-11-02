@@ -99,11 +99,12 @@ async function findTenantByHost(host: string): Promise<PlayerTenant | null> {
  * 1. 已登录玩家 Cookie 的 tenantId（切换账号时不会被 body 篡改）；
  * 2. body.site / body.tenant（支持 id、domain、subdomain，也接受完整 URL）；
  * 3. 当前访问域名 / 子域名（真正的多租户白标访问）；
- * 4. 环境变量 DEFAULT_TENANT（本地开发指定默认租户）；
- * 5. 库里最早创建的 active 租户（本地无域名时的兜底）。
+ * 4. 环境变量 DEFAULT_TENANT（本地开发指定默认租户）。
  *
  * 显式指定了 site / tenant 却查不到时返回 null，避免错误地落到别的租户；
- * 找不到时由调用方返回「站点不可用」。
+ * 以上全部落空同样返回 null —— 由调用方返回「站点不存在」。
+ * **绝不**回落到「最早创建的那个租户」：那会把玩家注册进别家商户
+ * （历史上「代登录 abc 却注册到 winvora」属于同一类错误）。
  */
 export async function resolvePlayerTenant(
   request: NextRequest,
@@ -131,22 +132,8 @@ export async function resolvePlayerTenant(
   const defaultKey = normalizeTenantKey(process.env.DEFAULT_TENANT);
 
   if (defaultKey) {
-    const defaultTenant = await findTenantByKey(defaultKey);
-
-    if (defaultTenant) {
-      return defaultTenant;
-    }
+    return findTenantByKey(defaultKey);
   }
 
-  return (
-    (await prisma.tenant.findFirst({
-      where: { status: "active" },
-      orderBy: { createdAt: "asc" },
-      select: PLAYER_TENANT_SELECT,
-    })) ??
-    (await prisma.tenant.findFirst({
-      orderBy: { createdAt: "asc" },
-      select: PLAYER_TENANT_SELECT,
-    }))
-  );
+  return null;
 }

@@ -11,7 +11,7 @@ import {
   type LobbyProviderOption,
 } from "@/lib/lobby-games";
 import { providerSlug } from "@/lib/lobby-providers";
-import { loadStorefront } from "@/lib/storefront-data";
+import { requireStorefront } from "@/lib/storefront-data";
 
 import { ProviderHallClient } from "./provider-hall-client";
 
@@ -83,10 +83,11 @@ export async function generateMetadata({
   const tenantKey =
     typeof rawTenant === "string" && rawTenant.trim() ? rawTenant.trim() : null;
 
-  // 展馆页的标题同样跟着当前商户走（白标站不能露出平台名）
+  // 展馆页的标题同样跟着当前商户走（白标站不能露出平台名）；
+  // 站点不存在时 requireStorefront 直接 404，不会借用别家的品牌名。
   const [hall, storefront] = await Promise.all([
     resolveProviderHall(code),
-    loadStorefront(tenantKey),
+    requireStorefront(tenantKey),
   ]);
   const name = hall?.name ?? code;
   const brandName = resolveBrandName(storefront.tenantName);
@@ -121,7 +122,7 @@ export default async function ProviderHallPage({
   await connection();
 
   // 展馆与大厅共用同一套装修配置：主色一致，品牌页才不会「换个页面换个颜色」
-  const storefront = await loadStorefront(tenantKey);
+  const storefront = await requireStorefront(tenantKey);
 
   return (
     <ProviderHallClient

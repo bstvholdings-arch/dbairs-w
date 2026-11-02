@@ -9,17 +9,18 @@ import {
 import { resolveBrandName } from "@/lib/brand";
 import { getPlayerProfileData } from "@/lib/player-profile";
 import { getPlayerSessionFromCookies } from "@/lib/player-session";
-import { loadStorefront } from "@/lib/storefront-data";
+import { requireStorefront } from "@/lib/storefront-data";
 
 /**
  * 标签页标题跟着当前商户走（白标站不能写死平台名）。
- * loadStorefront 已用 React cache 包过，与页面主体共用同一次查询。
+ * requireStorefront 与页面主体共用同一份解析结果（React cache）；
+ * 站点不存在时直接 404，不会借用别家的品牌名。
  */
 export async function generateMetadata(): Promise<Metadata> {
   // cacheComponents 下 headers() 属于请求期数据：显式 connection() 后再取，构建期不会误预渲染
   await connection();
 
-  const storefront = await loadStorefront();
+  const storefront = await requireStorefront();
   const brand = resolveBrandName(storefront.tenantName);
 
   return {

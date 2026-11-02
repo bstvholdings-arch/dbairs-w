@@ -297,12 +297,20 @@ export function ConsoleShell({
   role,
   username,
   tenantName,
+  previewTenantKey,
   impersonation,
   children,
 }: {
   role: AdminRole;
   username: string;
   tenantName?: string | null;
+  /**
+   * 当前商户的站点标识（子域名优先，没有则用 id）。
+   * 【预览前台】必须带上它跳 `/?tenant=...`：不然跳过去只剩一个裸 `/`，
+   * 前台只能按域名 / 会话兜底 —— 本地（或没绑域名时）就会解析成「最早创建的
+   * 那个商户」，也就是历史上「代登录 abc 却看到 winvora」的根因。
+   */
+  previewTenantKey?: string | null;
   /** 超管代登录时传 { adminId, username }，用于渲染顶部安全横幅。 */
   impersonation?: { adminId: string; username: string } | null;
   children: ReactNode;
@@ -321,6 +329,14 @@ export function ConsoleShell({
   const scopeLabel = isTenantScope
     ? (tenantName ?? t("shell.scope.tenantFallback"))
     : t("shell.scope.platformAdmin");
+  // 预览前台只对「有归属租户」的后台有意义；平台后台没有自己的前台，
+  // 不做「随便挑一个站点」的兜底（超管要预览某家：/admin/storefront 或代登录）。
+  const previewKey =
+    typeof previewTenantKey === "string" ? previewTenantKey.trim() : "";
+  const previewHref =
+    isTenantScope && previewKey
+      ? `/?tenant=${encodeURIComponent(previewKey)}`
+      : null;
 
   return (
     <div className="relative min-h-screen bg-[#050505] font-sans text-neutral-200">
@@ -425,20 +441,23 @@ export function ConsoleShell({
                 </span>
               </div>
               <LanguageSwitcher />
-              {/* 预览前台：新标签页打开玩家大厅 /，后台操作不影响大厅浏览 */}
-              <a
-                href="/"
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label={t("nav.previewLobbyAria")}
-                title={t("nav.previewLobbyAria")}
-                className="flex shrink-0 items-center gap-1.5 rounded-full border border-[#d4af37]/15 bg-white/[0.02] px-2.5 py-1.5 text-[10px] text-neutral-400 transition-colors hover:border-[#d4af37]/40 hover:bg-[#d4af37]/10 hover:text-[#f0d27c]"
-              >
-                <NavIcon name="preview" />
-                <span className="hidden whitespace-nowrap sm:inline">
-                  {t("nav.previewLobby")}
-                </span>
-              </a>
+              {/* 预览前台：新标签页打开「本商户自己的」大厅，
+                  URL 必须带 ?tenant=，否则前台无法确定是哪个站 */}
+              {previewHref ? (
+                <a
+                  href={previewHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={t("nav.previewLobbyAria")}
+                  title={`${t("nav.previewLobbyAria")} · ${scopeLabel}`}
+                  className="flex shrink-0 items-center gap-1.5 rounded-full border border-[#d4af37]/15 bg-white/[0.02] px-2.5 py-1.5 text-[10px] text-neutral-400 transition-colors hover:border-[#d4af37]/40 hover:bg-[#d4af37]/10 hover:text-[#f0d27c]"
+                >
+                  <NavIcon name="preview" />
+                  <span className="hidden whitespace-nowrap sm:inline">
+                    {t("nav.previewLobby")}
+                  </span>
+                </a>
+              ) : null}
               <LogoutButton />
             </div>
           </div>

@@ -1,8 +1,13 @@
 import { cache } from "react";
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
+import { notFound } from "next/navigation";
 
 import { DEFAULT_CURRENCY, normalizeCurrency } from "@/lib/currency";
 import { logDataFallback } from "@/lib/data-fallback-log";
+import {
+  IMPERSONATION_COOKIE,
+  verifyImpersonationTicket,
+} from "@/lib/impersonation";
 import { prisma } from "@/lib/prisma";
 import { getSessionUserFromCookies } from "@/lib/session";
 import {
@@ -150,26 +155,47 @@ async function findTenantByKey(rawKey: string) {
 }
 
 /**
- * 解析本次请求对应的装修配置。
+ * `.env` 里显式声明的「本地默认站点」（DEFAULT_TENANT，可填 id / 子域名 / 域名）。
+ *
+ * 这是**唯一**允许在「没有域名、没有会话」时顶上一个租户的途径，而且它是运维
+ * 显式配置的；代码里绝不允许再出现 `winvora` 之类的商户名当兜底。
+ */
+function readDefaultTenantKey(): string {
+  const raw = process.env.DEFAULT_TENANT;
+
+  return typeof raw === "string" ? raw.trim() : "";
+}
+
+/**
+ * 解析本次请求属于哪个租户的装修配置。
+ *
+ * 返回 `null` 的含义很明确：**这个站点不存在**，调用方必须 404，
+ * 绝不能再「随便挑一个租户顶上」（历史 Bug：超管代登录 abc 点【预览前台】，
+ * 因为跳转链接没带租户标识，最后落到了最早创建的 winvora 站点）。
  *
  * 优先级（从高到低）：
- * 1. `?tenant=` 显式参数 —— 后台「预览前台」与单体站点调试用；
+ * 1. `?tenant=` 显式参数 —— 后台【预览前台】与联调都用它，**查不到就是不存在**；
  * 2. 当前访问域名 / 子域名 —— 真正的多租户白标访问；
- * 3. 已登录的租户管理员 —— 在自己域名之外预览时，看到的是自家配置；
- * 4. 最早创建的 active 租户 —— 兜底，和 /admin/storefront 的默认目标一致，
- *    所以超管在后台改完、刷新 `/` 立即生效。
+ * 3. 已登录的商户账号（会话里的 tenantId）；
+ * 4. 超管代登录票据（dba_impersonate，绑定 adminId，2 小时过期）——
+ *    代登录期间直接访问 `/` 也必须看到被代登录的那家，而不是别人家；
+ * 5. `.env` 的 DEFAULT_TENANT —— 本地开发/单站点部署的显式兜底；
+ * 6. 以上全部落空 → `null`（→ 站点不存在）。
  */
-export const loadStorefront = cache(
-  async (tenantKey?: string | null): Promise<StorefrontSettings> => {
+export const resolveStorefront = cache(
+  async (tenantKey?: string | null): Promise<StorefrontSettings | null> => {
     try {
-      if (tenantKey && tenantKey.trim()) {
-        const byKey = await findTenantByKey(tenantKey);
+      const explicitKey =
+        typeof tenantKey === "string" ? tenantKey.trim() : "";
 
-        if (byKey) {
-          return toSettings(byKey);
-        }
+      // 1) 显式指定：命中就用，没命中就返回 null（不允许回落）
+      if (explicitKey) {
+        const byKey = await findTenantByKey(explicitKey);
+
+        return byKey ? toSettings(byKey) : null;
       }
 
+      // 2) 访问域名 / 子域名
       const host = normalizeHost((await headers()).get("host"));
       const byHost = await findTenantByDomain(host);
 
@@ -179,6 +205,7 @@ export const loadStorefront = cache(
 
       const session = await getSessionUserFromCookies();
 
+      // 3) 商户账号本人：看到的是自家站点
       if (session?.tenantId) {
         const bySession = await prisma.tenant.findUnique({
           where: { id: session.tenantId },
@@ -190,6 +217,78 @@ export const loadStorefront = cache(
         }
       }
 
+      // 4) 超管代登录：票据只对当前超管有效（校验签名 + adminId）
+      if (session?.role === "super_admin") {
+        const token = (await cookies()).get(IMPERSONATION_COOKIE)?.value;
+        const ticket = verifyImpersonationTicket(token, session.id);
+
+        if (ticket) {
+          const byTicket = await prisma.tenant.findUnique({
+            where: { id: ticket.tenantId },
+            select: STOREFRONT_SELECT,
+          });
+
+          if (byTicket) {
+            return toSettings(byTicket);
+          }
+        }
+      }
+
+      // 5) 显式配置的本地默认站点
+      const defaultKey = readDefaultTenantKey();
+
+      if (defaultKey) {
+        const byDefault = await findTenantByKey(defaultKey);
+
+        if (byDefault) {
+          return toSettings(byDefault);
+        }
+      }
+
+      // 6) 站点不存在（由 requireStorefront 抛 404）
+      return null;
+    } catch (error) {
+      // 数据库临时不可用 ≠ 站点不存在：仍然渲染默认金色主题，
+      // 不能因为一次超时就把整个前台判成 404。
+      logDataFallback("读取前台装修配置失败，回退到默认金色主题", error);
+
+      return FALLBACK_STOREFRONT;
+    }
+  },
+);
+
+/**
+ * 玩家前台（`/`、`/provider/[code]`、`/player/*`）**专用**：
+ * 拿不到租户直接 404「站点不存在」，绝不显示别家的站。
+ */
+export async function requireStorefront(
+  tenantKey?: string | null,
+): Promise<StorefrontSettings> {
+  const settings = await resolveStorefront(tenantKey);
+
+  if (!settings) {
+    notFound();
+  }
+
+  return settings;
+}
+
+/**
+ * 后台页面（`/admin/storefront` 等）用：允许回落到「最早创建的 active 租户」，
+ * 因为装修后台需要一个默认选中项。
+ *
+ * ⚠️ 玩家可见页面**禁止**调用本函数，一律用 `requireStorefront`，
+ * 否则又会回到「预览前台看到别人家站点」的老 Bug。
+ */
+export const loadStorefront = cache(
+  async (tenantKey?: string | null): Promise<StorefrontSettings> => {
+    const resolved = await resolveStorefront(tenantKey);
+
+    if (resolved) {
+      return resolved;
+    }
+
+    try {
       const fallbackTenant =
         (await prisma.tenant.findFirst({
           where: { status: "active" },
@@ -204,12 +303,10 @@ export const loadStorefront = cache(
       if (fallbackTenant) {
         return toSettings(fallbackTenant);
       }
-
-      return FALLBACK_STOREFRONT;
     } catch (error) {
-      logDataFallback("读取前台装修配置失败，回退到默认金色主题", error);
-
-      return FALLBACK_STOREFRONT;
+      logDataFallback("读取后台默认装修目标失败", error);
     }
+
+    return FALLBACK_STOREFRONT;
   },
 );
