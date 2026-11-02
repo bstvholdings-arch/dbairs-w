@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { useLanguage } from "@/components/LanguageProvider";
 import { PlayerDepositButton } from "@/components/player-deposit-button";
+import { PlayerWithdrawButton } from "@/components/player/withdraw-button";
 import { formatAmount, formatDate } from "@/lib/format";
 import type { TranslationKey } from "@/lib/i18n-types";
 import { playerErrorKey } from "@/lib/player-errors";
@@ -420,10 +421,21 @@ export function PlayerProfileClient({
                   ${formatAmount(summary.balance)}
                 </p>
               </div>
-              <PlayerDepositButton
-                playerName={current.player.username}
-                onDeposited={() => router.refresh()}
-              />
+              <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                <PlayerDepositButton
+                  playerName={current.player.username}
+                  onDeposited={() => router.refresh()}
+                />
+                <PlayerWithdrawButton
+                  balance={summary.balance}
+                  pendingWithdrawalAmount={summary.pendingWithdrawalAmount}
+                  kycStatus={current.kyc.status}
+                  accounts={current.withdrawalAccounts}
+                  playerName={current.player.username}
+                  onWithdrawn={() => router.refresh()}
+                  onManageAccounts={() => setTab("security")}
+                />
+              </div>
             </div>
           </div>
         </section>

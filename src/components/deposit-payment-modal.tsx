@@ -63,7 +63,10 @@ type TestCallbackResponse = {
 
 const QUICK_AMOUNTS = ["10", "50", "100", "500"];
 const AMOUNT_PATTERN = /^(?:0|[1-9]\d*)(?:\.\d{1,6})?$/;
-const MAX_DEPOSIT_AMOUNT = 1_000_000;
+// 与服务端 parseDepositAmount 保持一致：默认 10 ~ 50,000
+// （可用 DEPOSIT_MIN_AMOUNT / DEPOSIT_MAX_AMOUNT 覆盖，服务端为最终口径）。
+const MIN_DEPOSIT_AMOUNT = 10;
+const MAX_DEPOSIT_AMOUNT = 50_000;
 
 const inputClass =
   "mt-1.5 h-11 w-full rounded-xl border border-white/10 bg-black/50 px-3.5 text-sm text-neutral-100 outline-none transition-colors placeholder:text-neutral-700 focus:border-[#d4af37]/50 focus:ring-1 focus:ring-[#d4af37]/30";
@@ -138,6 +141,10 @@ function validateAmount(value: string, t: TFunction) {
 
   if (!Number.isFinite(amount) || amount <= 0) {
     return t("deposit.error.amountPositive");
+  }
+
+  if (amount < MIN_DEPOSIT_AMOUNT) {
+    return t("deposit.error.amountTooSmall");
   }
 
   if (amount > MAX_DEPOSIT_AMOUNT) {

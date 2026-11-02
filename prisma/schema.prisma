@@ -454,8 +454,11 @@ model PaymentGateway {
 
 // 13. 充值订单 (DepositOrder - 玩家充值 / 上分)
 // status: pending -> success / failed。只有 pending -> success 的原子更新成功者才能给玩家加余额。
+// orderNo: 商户订单号（DEP_<毫秒时间戳>_<6 位随机>），支付商回调按它回查订单；
+// 历史数据允许为空，回调同时兼容用主键 id 回查。
 model DepositOrder {
   id        String         @id @default(uuid())
+  orderNo   String?        @unique
   tenantId  String
   tenant    Tenant         @relation(fields: [tenantId], references: [id])
   playerId  String

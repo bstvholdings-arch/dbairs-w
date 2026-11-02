@@ -85,6 +85,8 @@ export function proxy(request: NextRequest) {
   if (
     pathname === "/api/deposit/create" ||
     pathname === "/api/deposit/callback" ||
+    // 新版支付商回调：/api/deposit/callback/<gatewayCode>，路由内强制 x-signature 验签。
+    pathname.startsWith("/api/deposit/callback/") ||
     pathname === "/api/deposit/gateways" ||
     pathname === "/api/deposit/test-callback" ||
     pathname === "/api/withdrawal/create" ||

@@ -638,12 +638,124 @@ function parsePaymentAmount(value: unknown, label: string): Prisma.Decimal {
   return amount;
 }
 
+/** 提现的金额区间校验在下方 withdrawalAmountLimits() 之后定义（见 parseWithdrawalAmount）。 */
+
+/**
+ * 单笔充值金额区间。
+ *
+ * 默认 10 ~ 50,000：低于 10 无法覆盖链路手续费（USDT-TRC20 单笔成本约 1U），
+ * 高于 50,000 需要走大额人工通道，线上自助充值一律拦住。
+ * 运营要做活动时可以用 DEPOSIT_MIN_AMOUNT / DEPOSIT_MAX_AMOUNT 覆盖。
+ */
+const DEFAULT_DEPOSIT_MIN_AMOUNT = new Prisma.Decimal("10");
+const DEFAULT_DEPOSIT_MAX_AMOUNT = new Prisma.Decimal("50000");
+
+function readAmountLimit(name: string, fallback: Prisma.Decimal) {
+  const raw = process.env[name]?.trim();
+
+  if (!raw || !PAYMENT_AMOUNT_PATTERN.test(raw)) {
+    return fallback;
+  }
+
+  const value = new Prisma.Decimal(raw);
+
+  // 注意：decimal.js 的 isPositive() 对 0 返回 true，必须用 greaterThan(0)。
+  return value.greaterThan(0) ? value : fallback;
+}
+
+export function depositAmountLimits() {
+  const min = readAmountLimit("DEPOSIT_MIN_AMOUNT", DEFAULT_DEPOSIT_MIN_AMOUNT);
+  const max = readAmountLimit("DEPOSIT_MAX_AMOUNT", DEFAULT_DEPOSIT_MAX_AMOUNT);
+
+  // 配置写反（min >= max）时回退默认区间，避免把玩家全部拦死。
+  if (max.lessThanOrEqualTo(min)) {
+    return { min: DEFAULT_DEPOSIT_MIN_AMOUNT, max: DEFAULT_DEPOSIT_MAX_AMOUNT };
+  }
+
+  return { min, max };
+}
+
+/** 展示文本：去掉无意义的 .00 / 尾随 0，例如 10.00 → 10、50.50 → 50.5。 */
+export function formatAmountLimit(value: Prisma.Decimal) {
+  return value
+    .toFixed(2)
+    .replace(/\.00$/, "")
+    .replace(/(\.\d)0$/, "$1");
+}
+
+/** 前端弹窗 / API 响应直接用的区间文案。 */
+export function depositAmountLimitLabels() {
+  const { min, max } = depositAmountLimits();
+
+  return { min: formatAmountLimit(min), max: formatAmountLimit(max) };
+}
+
 export function parseDepositAmount(value: unknown): Prisma.Decimal {
-  return parsePaymentAmount(value, "充值");
+  const amount = parsePaymentAmount(value, "充值");
+  const { min, max } = depositAmountLimits();
+
+  if (amount.lessThan(min)) {
+    throw new Error(`单笔充值金额不能低于 ${formatAmountLimit(min)}`);
+  }
+
+  if (amount.greaterThan(max)) {
+    throw new Error(`单笔充值金额不能高于 ${formatAmountLimit(max)}`);
+  }
+
+  return amount;
+}
+
+/**
+ * 单笔提现金额区间。
+ *
+ * 默认 10 ~ 1,000,000：低于 10 无法覆盖代付通道的固定手续费（USDT-TRC20 出金约 1U），
+ * 高于 1,000,000 属于大额出款，必须走人工审批而不是自助提单。
+ * 运营可用 WITHDRAWAL_MIN_AMOUNT / WITHDRAWAL_MAX_AMOUNT 覆盖。
+ *
+ * 前端（玩家中心提现弹窗）用的是同一份默认值的展示副本，服务端始终是最终口径：
+ * 玩家即便绕过前端，也会在这里被区间校验拦住。
+ */
+const DEFAULT_WITHDRAWAL_MIN_AMOUNT = new Prisma.Decimal("10");
+const DEFAULT_WITHDRAWAL_MAX_AMOUNT = new Prisma.Decimal("1000000");
+
+export function withdrawalAmountLimits() {
+  const min = readAmountLimit(
+    "WITHDRAWAL_MIN_AMOUNT",
+    DEFAULT_WITHDRAWAL_MIN_AMOUNT,
+  );
+  const max = readAmountLimit(
+    "WITHDRAWAL_MAX_AMOUNT",
+    DEFAULT_WITHDRAWAL_MAX_AMOUNT,
+  );
+
+  // 配置写反（min >= max）时回退默认区间，避免把玩家全部拦死。
+  if (max.lessThanOrEqualTo(min)) {
+    return { min: DEFAULT_WITHDRAWAL_MIN_AMOUNT, max: DEFAULT_WITHDRAWAL_MAX_AMOUNT };
+  }
+
+  return { min, max };
+}
+
+/** 前端弹窗 / API 响应直接用的区间文案。 */
+export function withdrawalAmountLimitLabels() {
+  const { min, max } = withdrawalAmountLimits();
+
+  return { min: formatAmountLimit(min), max: formatAmountLimit(max) };
 }
 
 export function parseWithdrawalAmount(value: unknown): Prisma.Decimal {
-  return parsePaymentAmount(value, "提现");
+  const amount = parsePaymentAmount(value, "提现");
+  const { min, max } = withdrawalAmountLimits();
+
+  if (amount.lessThan(min)) {
+    throw new Error(`单笔提现金额不能低于 ${formatAmountLimit(min)}`);
+  }
+
+  if (amount.greaterThan(max)) {
+    throw new Error(`单笔提现金额不能高于 ${formatAmountLimit(max)}`);
+  }
+
+  return amount;
 }
 
 export function parseDepositCurrency(value: unknown) {
@@ -677,6 +789,20 @@ export function callbackSignatureRequired() {
   }
 
   return process.env.NODE_ENV === "production";
+}
+
+/**
+ * 新回调通道 /api/deposit/callback/[gatewayCode] 的验签开关。
+ *
+ * 与旧接口不同，这里默认「所有环境都强制验签」：真实支付商回调只会打到生产，
+ * 本地联调可以用 PAYMENT_CALLBACK_REQUIRE_SIGNATURE=false 显式关掉，
+ * 但只要没有明确关，就一定是 fail-closed（宁可按 401 拒绝，也不能凭空加钱）。
+ */
+export function gatewayCallbackSignatureRequired() {
+  return (
+    process.env.PAYMENT_CALLBACK_REQUIRE_SIGNATURE?.trim().toLowerCase() !==
+    "false"
+  );
 }
 
 /**

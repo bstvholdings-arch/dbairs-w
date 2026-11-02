@@ -195,6 +195,52 @@ Nodemailer 通道留了接入位置（`sendWithNodemailer`，注释里写了要�
 - 页面顶部常驻安全横幅（`src/components/impersonation-banner.tsx`）：显示「操作人 + 目标商户」，点「退出代登录」调用 `DELETE /api/admin/impersonation`，只清票据并回到 `/admin/tenants`；
 - 票据必须由 Route Handler 下发（Server Component 不能写 Cookie），所以入口是「先跳接口、再跳页面」；每次进入 / 退出都会在服务端打印 `[impersonate]` 审计日志。
 
+### 充值（Deposit）全链路：下单 → 收款 → 回调验签 → 自动上分
+
+| 接口 | 说明 |
+| --- | --- |
+| `POST /api/deposit/create` | 统一下单：校验玩家身份（玩家 Cookie / 商户代下单）、金额区间与网关可用性，落库 `DepositOrder(status=pending)`，返回 `orderNo` 与 `paymentInstructions` |
+| `GET /api/deposit/gateways` | 收银台下拉数据：只返回当前租户可用且配置完整的网关（`isActive` + `APPROVED` + 校验通过）与 `amountLimits` |
+| `POST /api/deposit/callback/[gatewayCode]` | **真实支付商回调主入口**：`x-signature` 验签 → 按 `orderNo` 回查 → 状态幂等 → 金额核对 → 事务上分 |
+| `POST /api/deposit/callback` | 旧版回调（按本系统订单主键 `orderId`，供历史联调脚本使用），与新接口共用同一份上分实现 |
+| `POST /api/deposit/test-callback` | 前端「我已完成支付（测试）」，仅非生产环境 / `DEPOSIT_ALLOW_TEST_CALLBACK=true` 开放，复用正式状态机 |
+
+- **订单号**：`DEP_<毫秒时间戳>_<6 位十六进制随机>`（`src/lib/deposit-order.ts`，`crypto.randomInt` 生成）。服务端生成、唯一索引兜底、撞号自动重试；第三方回调带回 `orderNo` 即可定位订单，历史订单仍可用主键 `id` 回查。
+- **金额区间**：默认单笔 `10 ~ 50,000`，可用 `DEPOSIT_MIN_AMOUNT` / `DEPOSIT_MAX_AMOUNT` 覆盖；服务端 `parseDepositAmount` 为唯一口径，前端只做同口径提示。
+- **收款指令**：`gatewayKind=CRYPTO`（`usdt_trc20` / `usdt_erc20` 或币种为 USDT）返回钱包地址 + 链网络 + 二维码内容；`gatewayKind=FIAT` 返回银行账号明细 / 静态收款图 / 跳转收银台地址。
+- **回调三条防线**（`src/app/api/deposit/callback/[gatewayCode]/route.ts`）：
+  1. 验签：`x-signature`（兼容 `x-pay-signature` / `x-gateway-signature`）= `hex(HMAC-SHA256(rawBody, gateway.apiKey))`，`apiKey` 即支付商后台的 `API_SECRET`；默认所有环境强制校验，可用 `PAYMENT_CALLBACK_REQUIRE_SIGNATURE=false` 仅在本机关闭；
+  2. 防重放：订单已 `success` 直接 `replayed:true` 返回，绝不重复加钱；`failed` 拒绝再入账；`DepositOrder @@unique([gatewayId, txHash])` 挡住「同一交易号刷多单」；
+  3. 金额核对：回调 `amount` 必须与数据库订单金额一致（Decimal 比较），不一致打印 `[ALARM][deposit-callback]` 结构化日志并拒绝入账。
+- **上分事务**（`src/lib/deposit-settlement.ts`）：`updateMany({ where: { id, status: "pending" } })` 条件更新抢状态 → `Player.balance` 原子 increment → 写 `Transaction(type=deposit)` → 首充返佣，任一步失败整体回滚。
+- **前端弹窗**：`src/components/player/deposit-modal.tsx`（大厅黑金风格，金额 + 网关下拉 → 展示 USDT 地址/一键复制/二维码或法币银行账号，提示「1-3 分钟内自动到账」）。
+- **表结构增量**：`prisma/deposit-order-no.sql`（幂等，补 `DepositOrder.orderNo` + 唯一索引）；`npx prisma db push` 正常时也可直接用 schema。
+
+回调示例（`gatewayCode` 支持网关 `id`、`providerType` 或网关名称）：
+
+```bash
+BODY='{"orderNo":"DEP_1730000000000_A1B2C3","status":"success","amount":"100","txHash":"0xabc"}'
+SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$API_SECRET" -hex | sed 's/^.* //')
+curl -X POST "https://<host>/api/deposit/callback/usdt_trc20" \
+  -H "Content-Type: application/json" -H "x-signature: $SIG" -d "$BODY"
+```
+
+### 提现（Withdrawal）全链路：玩家中心按钮 → 提单 → 代付回调扣款
+
+| 接口 | 说明 |
+| --- | --- |
+| `GET /api/player/withdrawal-gateways` | 玩家提现弹窗的通道列表：只返回 `isActive` + `APPROVED` + （平台公用或本租户）的网关，附 `feeRate`（`payoutSellRate`）与 `amountLimits` |
+| `POST /api/withdrawal/create` | 玩家提单：玩家 Cookie 身份 → KYC 闸门 → 金额区间 → 收款账号解析 → 通道币种核对 → 可用余额校验 → 落库 `Withdrawal(status=pending)` |
+| `POST /api/withdrawal/callback` | 代付商回调：`pending → success` 条件更新成功者才扣 `Player.balance` 并写 `Transaction(type=withdraw)`；`failed` 只改状态 |
+
+- **按钮与权限**（`src/components/player/withdraw-button.tsx`）：玩家中心顶部余额右侧与 Deposit 并排；未实名 → 点击弹「Please complete identity verification first.」+ 去认证入口；可用余额 < 最低额 → 点击说明最低提现金额；两者都满足 → 金色高亮并打开提现弹窗。鼠标悬停 `title` 直接显示被拦原因。
+- **黑金提现弹窗**（`src/components/player/withdraw-modal.tsx`）：提现通道下拉（显示代付费率）→ 提现钱包下拉（只列玩家已绑定的收款账号，加密账号显示网络 + 缩略地址，法币显示银行 + 掩码账号）→ 金额输入 + 「全部」→ 实时显示**预估手续费**与**预计到账**。没有匹配币种的账号时不出表单，只给「去绑定提现账号」。
+- **收款账号不由前端回传**：弹窗只提交 `{ gatewayId, accountId, amount }`；`accountId` 由服务端回查（校验 `playerId` + `tenantId`），加密货币取真实钱包地址、法币拼成「银行 · 账号 · 持有人」写入 `Withdrawal.walletAddress`。列表接口里的银行账号是掩码，前端拿不到真实账号也改不了。
+- **金额区间**：默认单笔 `10 ~ 1,000,000`，可用 `WITHDRAWAL_MIN_AMOUNT` / `WITHDRAWAL_MAX_AMOUNT` 覆盖；`parseWithdrawalAmount`（`src/lib/payment-gateway.ts`）是唯一口径，前端只做同口径提示。
+- **可用余额 = 余额 − 处理中的提现单**：`pending` 阶段不扣款（扣款发生在代付成功回调），所以提单时必须用 `prisma.withdrawal.aggregate({ status: "pending" })` 扣掉在途金额，否则同一笔余额可以被连开多张 pending 单重复提走；超额返回 `409 insufficient_available_balance`。玩家中心同步展示 `summary.pendingWithdrawalAmount`。
+- **币种一致性**：`account.currency` 必须等于 `gateway.currency`，否则 `400 account_currency_mismatch`，避免 USDT 通道把钱打到 MYR 银行卡。
+- **前端遗留调用兼容**：`walletAddress` 仍然可用（商户代提 / 脚本），与 `accountId` 二选一。
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

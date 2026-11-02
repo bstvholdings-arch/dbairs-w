@@ -15,7 +15,7 @@ import {
 import { useLanguage } from "@/components/LanguageProvider";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { LobbyActionBar, type LobbyActionId } from "@/components/lobby/action-bar";
-import { PlayerDepositFlow } from "@/components/player-deposit-button";
+import { PlayerDepositModal } from "@/components/player/deposit-modal";
 import {
   ComingSoonDialog,
   ConnectingDialog,
@@ -1070,7 +1070,7 @@ export function LobbyClient({
       />
 
       {playerDepositOpen && player ? (
-        <PlayerDepositFlow
+        <PlayerDepositModal
           open
           playerName={player.username}
           onClose={closePlayerDeposit}

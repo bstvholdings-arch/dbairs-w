@@ -76,6 +76,11 @@ export type PlayerProfileData = {
     todayPayout: string;
     pendingDeposits: number;
     pendingWithdrawals: number;
+    /**
+     * 处理中提现单的金额合计。pending 阶段不扣余额，
+     * 提现弹窗用「balance - pendingWithdrawalAmount」展示真正的可用余额。
+     */
+    pendingWithdrawalAmount: string;
   };
   transactions: PlayerProfileTransaction[];
   deposits: PlayerProfileDeposit[];
@@ -152,6 +157,7 @@ export async function getPlayerProfileData(
     todayPayoutAggregate,
     pendingDeposits,
     pendingWithdrawals,
+    pendingWithdrawalAggregate,
     transactions,
     deposits,
     withdrawals,
@@ -209,6 +215,11 @@ export async function getPlayerProfileData(
     }),
     prisma.withdrawal.count({
       where: { playerId: session.id, status: "pending" },
+    }),
+    // 处理中提现单的金额合计：可用余额 = balance - 这笔钱（见提现弹窗）
+    prisma.withdrawal.aggregate({
+      where: { playerId: session.id, status: "pending" },
+      _sum: { amount: true },
     }),
     prisma.transaction.findMany({
       where: { playerId: session.id },
@@ -318,6 +329,7 @@ export async function getPlayerProfileData(
       todayPayout: decimalSum(todayPayoutAggregate._sum.payoutAmount),
       pendingDeposits,
       pendingWithdrawals,
+      pendingWithdrawalAmount: decimalSum(pendingWithdrawalAggregate._sum.amount),
     },
     transactions: transactions.map((item) => ({
       id: item.id,

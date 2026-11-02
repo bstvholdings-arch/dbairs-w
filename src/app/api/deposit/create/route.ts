@@ -1,9 +1,15 @@
 import type { NextRequest } from "next/server";
 import { Prisma } from "@prisma/client";
 
+import {
+  buildDepositPaymentInstructions,
+  generateDepositOrderNo,
+  resolveGatewayKind,
+} from "@/lib/deposit-order";
 import { normalizeGatewayBankDetails } from "@/lib/payment-gateway-bank";
 import {
   buildUsdtQrPayload,
+  depositAmountLimitLabels,
   depositTestCallbackAllowed,
   isUsdtProviderType,
   normalizeGatewayEndpoint,
@@ -15,6 +21,22 @@ import { normalizeGatewayQrCodeImageUrl } from "@/lib/payment-gateway-qr";
 import { resolvePaymentPlayerIdentity } from "@/lib/payment-player";
 import { prisma } from "@/lib/prisma";
 
+const depositOrderSelect = {
+  id: true,
+  orderNo: true,
+  playerId: true,
+  tenantId: true,
+  amount: true,
+  currency: true,
+  status: true,
+  gatewayId: true,
+  createdAt: true,
+} satisfies Prisma.DepositOrderSelect;
+
+type CreatedDepositOrder = Prisma.DepositOrderGetPayload<{
+  select: typeof depositOrderSelect;
+}>;
+
 function jsonError(message: string, status: number) {
   return Response.json({ error: message }, { status });
 }
@@ -25,8 +47,11 @@ function jsonError(message: string, status: number) {
  *
  * Body: { gatewayId, amount, playerId? }
  * - amount 推荐使用字符串，避免 JSON number 丢失 6 位小数精度。
+ * - amount 区间默认 10 ~ 50,000，可用 DEPOSIT_MIN_AMOUNT / DEPOSIT_MAX_AMOUNT 覆盖；
+ *   校验在 src/lib/payment-gateway.ts 的 parseDepositAmount 里统一完成。
  * - currency 一律以网关配置为准（gateway.currency），不再信任客户端传入值。
  * - 订单金额只以服务端解析后的 Decimal 入库，后续回调也只信任订单金额。
+ * - 返回 orderNo（DEP_<毫秒时间戳>_<6 位随机>）与 paymentInstructions（CRYPTO 钱包地址 / FIAT 银行信息）。
  */
 export async function POST(request: NextRequest) {
   try {
@@ -190,32 +215,52 @@ export async function POST(request: NextRequest) {
       return jsonError("支付网关配置异常：支付接口地址无效", 409);
     }
 
-    const order = await prisma.depositOrder.create({
-      data: {
-        tenantId: player.tenantId,
-        playerId: player.id,
-        amount,
-        currency,
-        gatewayId: gateway.id,
-        status: "pending",
-      },
-      select: {
-        id: true,
-        playerId: true,
-        tenantId: true,
-        amount: true,
-        currency: true,
-        status: true,
-        gatewayId: true,
-        createdAt: true,
-      },
-    });
+    /**
+     * 订单落库。
+     *
+     * 订单号由服务端生成（绝不接受前端传入）：DP 后台对账、支付商回传、
+     * 玩家转账备注都依赖它。撞上唯一索引（P2002）时换一个号重试，
+     * 而不是把数据库错误抛给玩家。
+     */
+    let order: CreatedDepositOrder | null = null;
+
+    for (let attempt = 0; attempt < 3 && !order; attempt += 1) {
+      try {
+        order = await prisma.depositOrder.create({
+          data: {
+            orderNo: generateDepositOrderNo(),
+            tenantId: player.tenantId,
+            playerId: player.id,
+            amount,
+            currency,
+            gatewayId: gateway.id,
+            status: "pending",
+          },
+          select: depositOrderSelect,
+        });
+      } catch (error) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === "P2002"
+        ) {
+          continue;
+        }
+
+        throw error;
+      }
+    }
+
+    if (!order) {
+      return jsonError("充值订单创建失败，请稍后重试", 500);
+    }
 
     const amountText = order.amount.toFixed(6);
     const paymentUrl = isEndpointGateway ? gatewayEndpoint : null;
 
     if (paymentUrl) {
       paymentUrl.searchParams.set("orderId", order.id);
+      // 支付商回调时必须原样带回商户订单号，否则只能按主键回查。
+      paymentUrl.searchParams.set("orderNo", order.orderNo ?? order.id);
       paymentUrl.searchParams.set("amount", amountText);
       paymentUrl.searchParams.set("currency", order.currency);
       paymentUrl.searchParams.set("gateway", gateway.id);
@@ -235,11 +280,27 @@ export async function POST(request: NextRequest) {
         ? (usdtQr?.qrCodeDataWithAmount ?? qrCodeData)
         : "";
 
+    // 统一收款指令：CRYPTO 给钱包地址 + 二维码，FIAT 给银行账号 / 收款图 / 收银台链接。
+    const gatewayKind = resolveGatewayKind(gateway);
+    const paymentInstructions = buildDepositPaymentInstructions({
+      gatewayKind,
+      providerType: gateway.providerType,
+      gatewayType,
+      amount: amountText,
+      currency: order.currency,
+      walletAddress,
+      bankDetails,
+      qrCodeImageUrl,
+      paymentUrl: paymentUrl?.toString() ?? null,
+    });
+
     return Response.json(
       {
         success: true,
+        orderNo: order.orderNo ?? order.id,
         order: {
           id: order.id,
+          orderNo: order.orderNo ?? order.id,
           playerId: order.playerId,
           tenantId: order.tenantId,
           amount: amountText,
@@ -253,7 +314,11 @@ export async function POST(request: NextRequest) {
         },
         // 前端根据 gatewayType 决定跳转、动态二维码、静态图或银行转账信息。
         gatewayType,
+        gatewayKind,
         currency: order.currency,
+        amount: amountText,
+        amountLimits: depositAmountLimitLabels(),
+        paymentInstructions,
         walletAddress:
           gatewayType === "DYNAMIC_QR" && isUsdtGateway
             ? walletAddress

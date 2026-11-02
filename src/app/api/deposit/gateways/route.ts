@@ -2,6 +2,7 @@ import { connection, type NextRequest } from "next/server";
 
 import { normalizeGatewayBankDetails } from "@/lib/payment-gateway-bank";
 import {
+  depositAmountLimitLabels,
   isUsdtProviderType,
   validateGatewayCheckoutAvailability,
 } from "@/lib/payment-gateway";
@@ -105,7 +106,7 @@ export async function GET(request: NextRequest) {
     });
 
     return Response.json(
-      { gateways: available },
+      { gateways: available, amountLimits: depositAmountLimitLabels() },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
