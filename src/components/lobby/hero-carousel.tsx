@@ -295,7 +295,7 @@ export function HeroCarousel({
               <div aria-hidden="true" className="absolute inset-0 overflow-hidden">
                 {banner.imageUrl ? (
                   <div
-                    className="absolute inset-0 bg-cover bg-center opacity-70"
+                    className="absolute inset-0 bg-cover bg-top opacity-70"
                     style={{ backgroundImage: `url(${banner.imageUrl})` }}
                   />
                 ) : null}
@@ -319,8 +319,10 @@ export function HeroCarousel({
                 </div>
               </div>
 
-              {/* 内容层 */}
-              <div className="relative flex h-full flex-col justify-center gap-2 px-3.5 py-4 sm:gap-2.5 sm:px-8 sm:py-7 lg:px-11">
+              {/* 内容层：手机端舞台只有 200px 高（卡片式），所以手机用更紧的
+                  间距 / 内边距，保证 kicker + 标题 + 一行说明 + CTA 不溢出被裁；
+                  平板以上回到宽松留白。 */}
+              <div className="relative flex h-full flex-col justify-center gap-1.5 px-3.5 py-3 sm:gap-2.5 sm:px-8 sm:py-7 lg:px-11">
                 <span
                   className="inline-flex w-fit items-center gap-1.5 rounded-full border px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.24em]"
                   style={{

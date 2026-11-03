@@ -26,6 +26,11 @@ import {
   type StorefrontLayout,
   type StorefrontThemeSetting,
 } from "./storefront";
+import {
+  formatBackupDomainConflict,
+  findBackupDomainConflict,
+} from "./tenant-domain-service";
+import { readBackupDomainsInput } from "./tenant-domains";
 
 /**
  * 商户后台（Tenant Dashboard）的数据访问层。
@@ -956,6 +961,8 @@ export type TenantSiteSettings = {
   tenantName: string;
   /** 白标品牌 Logo（Tenant.logoUrl，已校验）；null = 未配置，前台用商户名首字母占位 */
   logoUrl: string | null;
+  /** 备用域名池（多域名防封自动切换，1-5 条；空数组 = 未配置，不自动跳转） */
+  backupDomains: string[];
   domain: string;
   subdomain: string;
   status: string;
@@ -978,6 +985,7 @@ async function readTenantSettings(
       name: true,
       domain: true,
       subdomain: true,
+      backupDomains: true,
       status: true,
       themeColor: true,
       layoutConfig: true,
@@ -994,6 +1002,7 @@ async function readTenantSettings(
     tenantId: tenant.id,
     tenantName: tenant.name,
     logoUrl: normalizeTenantLogoUrl(tenant.logoUrl),
+    backupDomains: tenant.backupDomains.map((item) => item.toLowerCase()),
     domain: tenant.domain,
     subdomain: tenant.subdomain,
     status: tenant.status,
@@ -1025,6 +1034,8 @@ export async function saveTenantSiteSettings(input: {
   themeColor?: unknown;
   layout?: unknown;
   logoUrl?: unknown;
+  /** 备用域名池：支持数组或逗号 / 换行分隔的文本，`[]` = 清空 */
+  backupDomains?: unknown;
 }): Promise<TenantSettingsResult> {
   const current = await readTenantSettings(input.tenantId);
 
@@ -1085,6 +1096,35 @@ export async function saveTenantSiteSettings(input: {
 
       data.logoUrl = logoUrl;
     }
+  }
+
+  /**
+   * 备用域名池（多域名防封自动切换）。
+   *
+   * 商户可以自助维护自己的线路：这里写的是「跳过去还是同一个站」的域名，
+   * 所以必须做跨租户唯一性校验（findBackupDomainConflict）——
+   * 否则 A 商户把 B 商户的域名填进池子，解析顺序一变就把玩家送到别家站。
+   * 自己的主域名 / 子域名会被 reserved 静默剔除。
+   */
+  if (input.backupDomains !== undefined) {
+    const parsed = readBackupDomainsInput(input.backupDomains, {
+      reserved: [current.domain, current.subdomain],
+    });
+
+    if (!parsed.ok) {
+      return { ok: false, error: parsed.error };
+    }
+
+    const conflict = await findBackupDomainConflict(
+      parsed.domains,
+      input.tenantId,
+    );
+
+    if (conflict) {
+      return { ok: false, error: formatBackupDomainConflict(conflict) };
+    }
+
+    data.backupDomains = { set: parsed.domains };
   }
 
   if (Object.keys(data).length === 0) {

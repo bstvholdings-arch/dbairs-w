@@ -68,12 +68,17 @@ export type StorefrontPresetDefinition = {
 /**
  * 主视觉（Hero）高度统一规范 —— 产品要求，不许按模板随意浮动。
  *
- * 为什么统一：Hero 现在铺的是后台自己上传的活动海报。高度各模板一套的话，
- * 同一张 21:9 的图在 compact(230px) 和 cinema(440px) 下会裁出两张完全不同的画面，
- * 运营根本没法「一次出图、全模板可用」。统一高度后，裁剪比例就只跟「屏宽」有关。
+ * 为什么统一：Hero 铺的是后台自己上传的活动海报。高度各模板一套的话，
+ * 同一张 21:9 的图在 compact 与 cinema 下会得到两块完全不同的画布，
+ * 运营根本没法「一次出图、全模板可用」。统一高度后，画布比例只跟「屏宽」有关。
+ *
+ * 图片怎么适配这块固定高度的舞台：见 components/lobby/hero-poster-image.tsx。
+ * - 手机：Hero 是**圆角卡片**（横向留白 + 200px 高），内部单层 object-cover 铺满；
+ * - 电脑：满版双层（底层模糊铺满 + 顶层 object-contain 完整露出，永不裁切）。
  *
  * 区间（globals.css 的 `[data-hero-stage]` 用 clamp 兜底，越界自动夹住）：
- * - 手机（<640px）  ：200–250px，理想 220px
+ * - 手机（<640px）  ：200–220px，理想 200px（卡片式横幅，绝不占满屏幕，
+ *                     下面紧接功能岛 / 品牌墙 / 游戏列表）
  * - 平板（≥640px）  ：240–320px，理想 290px
  * - 桌面（≥1024px） ：350–450px，理想 400px
  *
@@ -81,7 +86,7 @@ export type StorefrontPresetDefinition = {
  * 所以 5 套模板看起来依旧完全不同 —— 只是主视觉那块「尺寸恒定」。
  */
 export const HERO_HEIGHT_TOKENS = {
-  base: "220px",
+  base: "200px",
   sm: "290px",
   lg: "400px",
 } as const;

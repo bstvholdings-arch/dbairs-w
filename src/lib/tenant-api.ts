@@ -4,16 +4,32 @@ import {
   normalizeThemeBackground,
   type ThemeBackgroundId,
 } from "./theme-backgrounds";
+import {
+  DOMAIN_PATTERN,
+  SUBDOMAIN_PATTERN,
+  normalizeDomain,
+  normalizeSubdomain,
+} from "./tenant-domains";
+
+export {
+  DOMAIN_PATTERN,
+  SUBDOMAIN_PATTERN,
+  normalizeDomain,
+  normalizeSubdomain,
+};
 
 export const tenantSelect = {
   id: true,
   name: true,
   domain: true,
   subdomain: true,
+  // 多域名池：超管编辑弹窗与商户设置页都要回填（见 lib/tenant-domains.ts）
+  backupDomains: true,
   status: true,
   withdrawalRequiredApprovals: true,
   createdAt: true,
 } satisfies Prisma.TenantSelect;
+
 
 /**
  * 开站 / 编辑弹窗要回填「主题背景色」，它存在 Tenant.layoutConfig 里，
@@ -45,33 +61,12 @@ export function toTenantPayload<T extends { layoutConfig: unknown }>(
 export const TENANT_STATUSES = ["active", "trial", "suspended"] as const;
 export type TenantStatus = (typeof TENANT_STATUSES)[number];
 
-// 域名允许用户粘贴完整 URL，入库前统一为小写 host。
-export const DOMAIN_PATTERN =
-  /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
-export const SUBDOMAIN_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+// 域名 / 子域名的归一化与合法性统一收在 lib/tenant-domains.ts，
+// 这里只做 re-export（后台弹窗、商户设置页、接口校验共用同一份规则）。
 
 export function normalizeTenantName(value: unknown) {
   return typeof value === "string"
     ? value.trim().replace(/\s+/g, " ")
-    : "";
-}
-
-export function normalizeDomain(value: unknown) {
-  if (typeof value !== "string") {
-    return "";
-  }
-
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/^https?:\/\//, "")
-    .replace(/\/.*$/, "")
-    .replace(/\.$/, "");
-}
-
-export function normalizeSubdomain(value: unknown) {
-  return typeof value === "string"
-    ? value.trim().toLowerCase().replace(/\.$/, "")
     : "";
 }
 

@@ -8,24 +8,35 @@ import {
   HeroCarouselDots,
   useHeroRotation,
 } from "@/components/lobby/hero-carousel";
+import { HeroPosterImage } from "@/components/lobby/hero-poster-image";
 
 /**
  * 大厅 Hero 海报轮播（后台「活动管理」上传的海报）。
  *
  * 与文本轮播（hero-carousel.tsx 的 HeroCarousel）的分工：
- * - 这里只负责「全屏铺图 + 点击跳转」这一种版式，轮播节奏 / 暂停 / 箭头 /
- *   圆点指示器全部复用 hero-carousel.tsx 里的共享件，不复制第二套定时器；
+ * - 这里只负责「海报卡片 + 点击跳转」这一种版式（手机 = 圆角横幅卡片，
+ *   电脑 = 满版海报），轮播节奏 / 暂停 / 箭头 / 圆点指示器全部复用
+ *   hero-carousel.tsx 里的共享件，不复制第二套定时器；
  * - 后台**一张海报都没配**时，调用方（lobby-client.tsx）不会渲染本组件，
  *   而是退回原来的内置文案轮播（保底兜底）；本组件拿到空数组时返回 null。
  *
  * 为什么不用 next/image：海报来自商户上传或外站图床，域名白名单管不住，
- * 用原生 <img> + object-cover 才能保证「传什么图就铺什么图」。
+ * 用原生 <img> 才能保证「传什么图就铺什么图」。
+ *
+ * 图片怎么摆：交给 hero-poster-image.tsx（手机单层 cover 铺满卡片，电脑双层
+ * 模糊底 + contain 完整露出）。本文件**不许**自己写 object-fit —— 一套渲染只有一份，
+ * 否则 5 套模板 + 后台预览迟早各裁各的。
  */
 
 /** 本组件只关心这几个字段；PromotionBannerView 结构上兼容，不需要 import 服务端模块 */
 export type HeroPromoBanner = {
   id: string;
   imageUrl: string;
+  /**
+   * 手机端专用海报（可选）。<768px 时用它铺满手机舞台；
+   * 缺失时自动回落成「电脑图模糊底 + 完整显示」，不裁切（见 hero-poster-image.tsx）。
+   */
+  mobileImageUrl?: string | null;
   linkUrl: string | null;
   title: string | null;
 };
@@ -78,9 +89,12 @@ export function PromoHeroCarousel({
       className="group relative overflow-hidden rounded-2xl border border-brand/15 bg-[#070707] shadow-[0_28px_70px_-40px_rgba(0,0,0,0.95)] sm:rounded-3xl"
       {...handlers}
     >
-      {/* 高度由 globals.css 的 [data-hero-stage] 统一给（clamp 夹在 200–250 / 350–450），
-          这里**不许**再写 h-[var(--sf-hero-h…)]：两处给高度必然打架，正是图片忽高忽低的来源。 */}
-      <div className="relative w-full" data-hero-stage>
+      {/* 高度由 globals.css 的 [data-hero-stage] 统一给（clamp 夹在 200–220 / 240–320 / 350–450），
+          这里**不许**再写 h-[var(--sf-hero-h…)]：两处给高度必然打架，正是图片忽高忽低的来源。
+          5 套排版模板共用这一块舞台，模板只改宽度 / 间距 / 圆角 / 分栏。
+          手机端这块舞台就是一张 200px 高的圆角卡片（横向留白在 lobby-client 的 mx-1），
+          所以海报不会撑满整屏，下面的功能岛 / 品牌墙 / 游戏列表照常滚动。 */}
+      <div className="relative w-full overflow-hidden" data-hero-stage>
         {slides.map((banner, slideIndex) => {
           const active = slideIndex === index;
           const href = banner.linkUrl?.trim()
@@ -122,29 +136,30 @@ export function PromoHeroCarousel({
                     </span>
                   </span>
                 ) : (
-                  // 商户上传 / 外站图床的图，next/image 域名白名单管不住
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
+                  // 手机：单层 object-cover 铺满圆角卡片（center 30% 保住面部 / 标题）；
+                  // 电脑：底层 object-cover + 高斯模糊铺满舞台，顶层 object-contain
+                  // 把整张图完整露出来 —— 竖图 / 方图 / 超宽图都不会被裁掉，
+                  // 也不会留下生硬黑边（实现见 components/lobby/hero-poster-image.tsx）。
+                  // 配了手机图时，<768px 自动切成手机图（同样 cover 铺满）。
+                  <HeroPosterImage
                     src={banner.imageUrl}
+                    mobileSrc={banner.mobileImageUrl}
                     alt={title}
-                    draggable={false}
-                    loading={slideIndex === 0 ? "eager" : "lazy"}
-                    fetchPriority={slideIndex === 0 ? "high" : "auto"}
+                    eager={slideIndex === 0}
                     onError={() =>
                       setBrokenImages((current) => ({
                         ...current,
                         [banner.id]: true,
                       }))
                     }
-                    className="absolute inset-0 h-full w-full object-cover object-center"
-                    style={{ objectFit: "cover", objectPosition: "center" }}
                   />
                 )}
 
-                {/* 弱黑色渐变遮罩：海报偏亮时压住底部，圆点 / 箭头才看得清 */}
+                {/* 弱黑色渐变遮罩：海报偏亮时压住底部，圆点 / 箭头才看得清。
+                    手机卡片只有 200px 高，所以渐变收窄到 1/3，别把整幅海报压暗。 */}
                 <span
                   aria-hidden="true"
-                  className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/60 via-black/20 to-transparent"
+                  className="pointer-events-none absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-black/60 via-black/10 to-transparent sm:h-1/2 sm:via-black/20"
                 />
               </a>
             </article>

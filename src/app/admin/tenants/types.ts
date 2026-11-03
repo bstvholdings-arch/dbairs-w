@@ -19,6 +19,8 @@ export type TenantRow = {
   name: string;
   domain: string;
   subdomain: string;
+  /** 多域名防封：备用域名池（0-5 条，管理员可在编辑弹窗里维护） */
+  backupDomains: string[];
   status: string;
   withdrawalRequiredApprovals: number;
   /** 主题背景色（存在 Tenant.layoutConfig 里，前台大厅与品牌展馆共用） */
@@ -53,6 +55,11 @@ export type TenantFormValues = {
   name: string;
   domain: string;
   subdomain: string;
+  /**
+   * 备用域名池（多域名防封自动切换），输入框里一行一个 / 逗号分隔。
+   * 编辑器里保持字符串原样，提交时再走 readBackupDomainsInput 归一化成数组。
+   */
+  backupDomains: string;
   status: string;
   withdrawalRequiredApprovals: number;
   /**

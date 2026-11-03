@@ -20,31 +20,22 @@ import {
   type TenantAdminProvisionResult,
 } from "@/lib/tenant-admin-account";
 import {
+  DOMAIN_PATTERN,
+  SUBDOMAIN_PATTERN,
+  normalizeDomain,
+  normalizeSubdomain,
   tenantSelectWithLayout,
   toTenantPayload,
   type TenantSelectRow,
 } from "@/lib/tenant-api";
-
-// 域名允许用户粘贴完整 URL，入库前统一为小写 host。
-const DOMAIN_PATTERN =
-  /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
-const SUBDOMAIN_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+import {
+  formatBackupDomainConflict,
+  findBackupDomainConflict,
+} from "@/lib/tenant-domain-service";
+import { readBackupDomainsInput } from "@/lib/tenant-domains";
 
 function jsonError(message: string, status: number) {
   return Response.json({ error: message }, { status });
-}
-
-function normalizeDomain(value: string) {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/^https?:\/\//, "")
-    .replace(/\/.*$/, "")
-    .replace(/\.$/, "");
-}
-
-function normalizeSubdomain(value: string) {
-  return value.trim().toLowerCase().replace(/\.$/, "");
 }
 
 export async function GET(request: NextRequest) {
@@ -100,6 +91,8 @@ async function createTenantWithAdmin(input: {
   withdrawalRequiredApprovals: number;
   planId: string;
   adminEmail: string;
+  /** 备用域名池（防封自动切换），开站时通常留空，商户后续在站点设置里补 */
+  backupDomains: string[];
   /** 开站时选定的主题背景色（写进 layoutConfig，前台大厅与品牌展馆共用） */
   layoutConfig: ReturnType<typeof serializeLayoutConfig>;
 }): Promise<CreateTenantWithAdminResult> {
@@ -110,6 +103,7 @@ async function createTenantWithAdmin(input: {
           name: input.name,
           domain: input.domain,
           subdomain: input.subdomain,
+          backupDomains: input.backupDomains,
           withdrawalRequiredApprovals: input.withdrawalRequiredApprovals,
           planId: input.planId,
           layoutConfig: input.layoutConfig,
@@ -273,6 +267,24 @@ export async function POST(request: NextRequest) {
       return jsonError("该子域名已被其他租户使用", 409);
     }
 
+    // 备用域名池（多域名防封）：开站时可选，支持数组，也支持逗号 / 换行分隔的文本。
+    // 自己的主域名 / 子域名会被静默剔除（重复填只会让故障候选列表绕回自己）。
+    const backupDomainsInput = readBackupDomainsInput(input.backupDomains, {
+      reserved: [domain, subdomain],
+    });
+
+    if (!backupDomainsInput.ok) {
+      return jsonError(backupDomainsInput.error, 400);
+    }
+
+    const backupConflict = await findBackupDomainConflict(
+      backupDomainsInput.domains,
+    );
+
+    if (backupConflict) {
+      return jsonError(formatBackupDomainConflict(backupConflict), 409);
+    }
+
     // AdminUser.email 是全局唯一键：先提前拦一次，避免白跑一个事务。
     if (emailOwner) {
       return jsonError(
@@ -294,6 +306,7 @@ export async function POST(request: NextRequest) {
       name,
       domain,
       subdomain,
+      backupDomains: backupDomainsInput.domains,
       withdrawalRequiredApprovals,
       planId: defaultPlan?.id ?? "unassigned",
       adminEmail,

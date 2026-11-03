@@ -68,6 +68,8 @@ export async function PATCH(request: NextRequest) {
       layout: input.layout,
       // 玩家大厅顶栏的白标 Logo：空字符串 = 清空，前台退回商户名首字母占位
       logoUrl: input.logoUrl,
+      // 多域名防封：备用域名池（数组或逗号 / 换行分隔的文本，[] = 清空）
+      backupDomains: input.backupDomains,
     });
 
     if (!result.ok) {

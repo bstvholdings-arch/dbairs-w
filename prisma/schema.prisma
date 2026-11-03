@@ -54,6 +54,13 @@ model Tenant {
   backendIp     String?
   walletAddress String?
 
+  // 多域名池（防封自动切换）：商户自有的 1-5 个备用域名。
+  // 前台 <DomainGuard /> 在主线路连续心跳超时后跳到这里（见 src/lib/tenant-domains.ts）。
+  // ⚠️ 备用域名必须同时参与租户解析（storefront-data.ts 的 findTenantByDomain），
+  //    否则跳过去就等于「站点不存在」；跨租户唯一性由 tenant-domain-service.ts 校验。
+  // 入库前一律走 normalizeDomain()：小写、去协议、去路径、去末尾点。
+  backupDomains String[] @default([])
+
   // 玩家大厅顶部品牌展示（白标）：商户自己的 Logo 图片地址
   // logoUrl：http(s) 绝对地址或 / 开头的站内路径（如 /brand/winvora.png），
   //          留空则前台用「商户名首字母」生成占位图（见 src/app/lobby-client.tsx）。
@@ -687,6 +694,11 @@ model PromotionBanner {
   categoryId String
   category   PromotionCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   imageUrl   String
+  // 手机端专用海报（可选）：<768px 时前台优先用它，object-cover 铺满手机舞台。
+  // 不填时前台自动回落成「电脑图模糊底 + 完整显示」的双层兜底，绝不出现黑边/空白。
+  // 读写口径见 lib/promotions.ts 的 parsePromotionBannerInput；
+  // 渲染唯一实现见 components/lobby/hero-poster-image.tsx（禁止另写一套 img 叠加）。
+  mobileImageUrl String?
   title      String?
   linkUrl    String?
   isActive   Boolean           @default(true)

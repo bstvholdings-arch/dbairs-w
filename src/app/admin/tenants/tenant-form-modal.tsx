@@ -22,6 +22,11 @@ import {
   THEME_BACKGROUND_PREVIEW_PATH,
 } from "@/lib/theme-backgrounds";
 import { isValidTenantAdminEmail } from "@/lib/tenant-admin-email";
+import {
+  MAX_BACKUP_DOMAINS,
+  formatBackupDomains,
+  readBackupDomainsInput,
+} from "@/lib/tenant-domains";
 
 import {
   TENANT_STATUS_OPTIONS,
@@ -58,6 +63,8 @@ export function TenantFormModal({
     name: tenant?.name ?? "",
     domain: tenant?.domain ?? "",
     subdomain: tenant?.subdomain ?? "",
+    // 备用域名池：进输入框时一行一个，提交前再归一化成数组
+    backupDomains: formatBackupDomains(tenant?.backupDomains ?? []),
     status: tenant?.status ?? "active",
     withdrawalRequiredApprovals:
       tenant?.withdrawalRequiredApprovals ?? 1,
@@ -86,6 +93,12 @@ export function TenantFormModal({
   // 当前选中的主题背景色（单选框下方的实时预览与说明都用它）。
   // 走 normalizeThemeBackground 兜底：万一数据脏了也只会退回经典暗黑，不会白屏。
   const selectedBackgroundId = normalizeThemeBackground(form.themeBackground);
+
+  // 备用域名池的实时计数：格式不合法时按 0 显示（不误导成「已经填了 3 条」）
+  const parsedBackupDomains = readBackupDomainsInput(form.backupDomains);
+  const backupDomainCount = parsedBackupDomains.ok
+    ? parsedBackupDomains.domains.length
+    : 0;
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -168,6 +181,17 @@ export function TenantFormModal({
       return;
     }
 
+    // 备用域名池：格式 / 数量先在前端拦一次（服务端还会再校验 + 查跨租户唯一性）。
+    // 自己的主域名 / 子域名会被静默剔除，与后端 reserved 口径一致。
+    const backupDomainsInput = readBackupDomainsInput(form.backupDomains, {
+      reserved: [domain, subdomain],
+    });
+
+    if (!backupDomainsInput.ok) {
+      setError(backupDomainsInput.error);
+      return;
+    }
+
     setSubmitting(true);
 
     try {
@@ -182,6 +206,7 @@ export function TenantFormModal({
             name,
             domain,
             subdomain,
+            backupDomains: backupDomainsInput.domains,
             adminEmail,
             withdrawalRequiredApprovals: form.withdrawalRequiredApprovals,
             // 主题背景色：只有这里能写（商户后台与装修页均无入口）
@@ -423,6 +448,31 @@ export function TenantFormModal({
                 </label>
               </div>
 
+              {/* 多域名防封：备用域名池（玩家端 <DomainGuard /> 会按这个顺序自动切换线路） */}
+              <label className="block">
+                <span className="flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.16em] text-neutral-600">
+                  {t("tenants.form.backupDomains")}
+                  <span className="font-mono normal-case tracking-normal text-neutral-700">
+                    {t("tenants.form.backupDomainsCount", {
+                      count: backupDomainCount,
+                      max: MAX_BACKUP_DOMAINS,
+                    })}
+                  </span>
+                </span>
+                <textarea
+                  value={form.backupDomains}
+                  onChange={(event) =>
+                    updateField("backupDomains", event.target.value)
+                  }
+                  rows={3}
+                  spellCheck={false}
+                  placeholder={t("tenants.form.backupDomainsPlaceholder")}
+                  className="mt-1.5 w-full resize-y rounded-lg border border-white/10 bg-black/40 px-3 py-2 font-mono text-sm leading-6 text-neutral-200 outline-none transition-colors placeholder:text-neutral-700 focus:border-[#d4af37]/50 focus:ring-1 focus:ring-[#d4af37]/30"
+                />
+                <span className="mt-1.5 block text-[10px] leading-5 text-neutral-600">
+                  {t("tenants.form.backupDomainsHint")}
+                </span>
+              </label>
 
               <div className="grid gap-4 sm:grid-cols-2">
                 {mode === "edit" ? (

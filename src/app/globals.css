@@ -690,16 +690,22 @@ button:not(:disabled):hover .withdrawal-button-sheen {
  * 主视觉舞台高度（唯一事实来源）。
  *
  * - token（--sf-hero-h*）只作为「理想高度」被 clamp 夹住，越界自动回落到区间边界：
- *   手机 200–250 / 平板 240–320 / 桌面 350–450（5 套模板同步，见 storefront-presets.ts
+ *   手机 200–220（**卡片式**，理想 200；手机上 Hero 是一张圆角横幅，绝不占满屏幕）/
+ *   平板 240–320 / 桌面 350–450（5 套模板同步，见 storefront-presets.ts
  *   的 HERO_HEIGHT_TOKENS）；
  * - 高度必须由这里统一给，组件里**不许**再写 `h-[var(--sf-hero-h…)]`：
  *   两处同时给高度时谁生效取决于打包顺序，模板一多就是「图片忽高忽低」的来源；
  * - min-height 与 height 分开写：万一 token 被写成非法值（height 变成 auto），
- *   min-height 仍然撑住舞台，图片不会塌成 0 高。
+ *   min-height 仍然撑住舞台，图片不会塌成 0 高；
+ * - overflow: hidden + 组件外层的 overflow-hidden 双保险：海报底层是
+ *   「object-cover + blur + scale-110」，模糊羽化边必须被舞台裁掉，否则四角发白。
+ *   图片本身由 hero-poster-image.tsx 渲染（手机单层 cover / 电脑双层 contain），
+ *   所以舞台**不需要**再设 aspect-ratio，高度锁定就是最终结论。
  */
 [data-hero-stage] {
+  overflow: hidden;
   min-height: 200px;
-  height: clamp(200px, var(--sf-hero-h, 220px), 250px);
+  height: clamp(200px, var(--sf-hero-h, 200px), 220px);
 }
 
 @media (min-width: 640px) {
@@ -1230,7 +1236,8 @@ button:not(:disabled):hover .withdrawal-button-sheen {
     transparent 72%
   );
   opacity: 0;
-  animation: tb-bag-flash 1.15s ease-out infinite paused;
+  /* 与 1 号金币同拍（2.4s / 0s）：闪光永远发生在某枚金币刚离袋的那一下 */
+  animation: tb-bag-flash 2.4s ease-out infinite;
   will-change: transform, opacity;
 }
 
@@ -1284,8 +1291,8 @@ button:not(:disabled):hover .withdrawal-button-sheen {
     inset 0 0 0 1px rgb(255 253 220 / 0.9),
     inset 0 -2px 3px rgb(120 70 0 / 0.55);
   opacity: 0;
-  /* 默认暂停：空闲时零绘制，只有 hover / focus-visible 才 running */
-  animation: tb-coin-burst 1.15s cubic-bezier(0.22, 0.68, 0.32, 1) infinite paused;
+  /* 常驻循环（与 Deposit 一致，不用 hover 才启动）：paused 只留给 prefers-reduced-motion */
+  animation: tb-coin-burst 2.2s cubic-bezier(0.22, 0.68, 0.32, 1) infinite;
   will-change: transform, opacity;
 }
 
@@ -1303,7 +1310,10 @@ button:not(:disabled):hover .withdrawal-button-sheen {
   text-shadow: 0 1px 0 rgb(255 250 210 / 0.75);
 }
 
-/* 8 枚金币的抛物线参数 + 0.14s 递增延迟：
+/* 8 枚金币的抛物线参数 + 与 Deposit 完全同步的节奏：
+   时长 / 错峰延迟直接沿用 Deposit 的 4 个拍子（2.4 / 2.9 / 2.6 / 3.1s，0 / -0.7 / -1.4 / -2s），
+   8 枚金币循环复用这 4 个拍子 —— 两张卡并排时不会一快一慢。
+   负延迟：页面一加载就已经「喷到半空」，不会先空等一秒才出现第一枚。
    --tb-fly-dir   飞散方向（-1 左 / +1 右 / 小数 = 斜飞）
    --tb-fly-reach 横向距离系数
    --tb-fly-rise  上升高度系数（越大越飘）
@@ -1315,6 +1325,8 @@ button:not(:disabled):hover .withdrawal-button-sheen {
   --tb-fly-rise: 1;
   --tb-fly-drop: 1.5;
   --tb-fly-scale: 1;
+  animation-duration: 2.4s;
+  animation-delay: 0s;
 }
 
 .tb-fly-coin--2 {
@@ -1323,7 +1335,8 @@ button:not(:disabled):hover .withdrawal-button-sheen {
   --tb-fly-rise: 1.25;
   --tb-fly-drop: 1.3;
   --tb-fly-scale: 0.85;
-  animation-delay: 0.14s;
+  animation-duration: 2.9s;
+  animation-delay: -0.7s;
 }
 
 .tb-fly-coin--3 {
@@ -1332,7 +1345,8 @@ button:not(:disabled):hover .withdrawal-button-sheen {
   --tb-fly-rise: 1.3;
   --tb-fly-drop: 0.9;
   --tb-fly-scale: 1.15;
-  animation-delay: 0.28s;
+  animation-duration: 2.6s;
+  animation-delay: -1.4s;
 }
 
 .tb-fly-coin--4 {
@@ -1341,7 +1355,8 @@ button:not(:disabled):hover .withdrawal-button-sheen {
   --tb-fly-rise: 0.95;
   --tb-fly-drop: 1.6;
   --tb-fly-scale: 0.9;
-  animation-delay: 0.42s;
+  animation-duration: 3.1s;
+  animation-delay: -2s;
 }
 
 .tb-fly-coin--5 {
@@ -1350,7 +1365,8 @@ button:not(:disabled):hover .withdrawal-button-sheen {
   --tb-fly-rise: 0.85;
   --tb-fly-drop: 1.7;
   --tb-fly-scale: 1.05;
-  animation-delay: 0.56s;
+  animation-duration: 2.4s;
+  animation-delay: 0s;
 }
 
 .tb-fly-coin--6 {
@@ -1359,7 +1375,8 @@ button:not(:disabled):hover .withdrawal-button-sheen {
   --tb-fly-rise: 1.15;
   --tb-fly-drop: 1.2;
   --tb-fly-scale: 0.8;
-  animation-delay: 0.7s;
+  animation-duration: 2.9s;
+  animation-delay: -0.7s;
 }
 
 .tb-fly-coin--7 {
@@ -1368,7 +1385,8 @@ button:not(:disabled):hover .withdrawal-button-sheen {
   --tb-fly-rise: 1.25;
   --tb-fly-drop: 1.4;
   --tb-fly-scale: 1.1;
-  animation-delay: 0.84s;
+  animation-duration: 2.6s;
+  animation-delay: -1.4s;
 }
 
 .tb-fly-coin--8 {
@@ -1377,13 +1395,8 @@ button:not(:disabled):hover .withdrawal-button-sheen {
   --tb-fly-rise: 1.05;
   --tb-fly-drop: 1.55;
   --tb-fly-scale: 0.95;
-  animation-delay: 0.98s;
-}
-
-/* 只有 hover / 键盘聚焦才真跑：金币 + 闪光一起启动 */
-[data-lobby-action="withdraw"]:is(:hover, :focus-visible) .tb-fly-coin,
-[data-lobby-action="withdraw"]:is(:hover, :focus-visible) .tb-bag-flash {
-  animation-play-state: running;
+  animation-duration: 3.1s;
+  animation-delay: -2s;
 }
 
 /* 抛物线：袋心起飞 → 向两侧张开并抛到最高（Y 为负）→ 受重力回落到袋下 → 360° 自转 */
@@ -1443,9 +1456,7 @@ button:not(:disabled):hover .withdrawal-button-sheen {
     animation: none;
   }
 
-  [data-lobby-action="withdraw"]:is(:hover, :focus-visible) .tb-moneybag,
-  [data-lobby-action="withdraw"]:is(:hover, :focus-visible) .tb-fly-coin,
-  [data-lobby-action="withdraw"]:is(:hover, :focus-visible) .tb-bag-flash {
+  [data-lobby-action="withdraw"]:is(:hover, :focus-visible) .tb-moneybag {
     animation: none;
   }
 }

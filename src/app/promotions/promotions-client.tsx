@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useLanguage } from "@/components/LanguageProvider";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { TenantBrandLockup } from "@/components/brand/tenant-brand";
+import { HERO_MOBILE_MEDIA } from "@/components/lobby/hero-poster-image";
 import { PlayerBottomNav } from "@/components/player/player-bottom-nav";
 import { formatCurrency } from "@/lib/currency";
 import type {
@@ -338,6 +339,7 @@ export function PromotionsClient({
                   const href = resolveBannerHref(banner);
                   const external = Boolean(href && /^https?:\/\//i.test(href));
                   const broken = Boolean(brokenImages[banner.id]);
+                  const mobileImageUrl = banner.mobileImageUrl?.trim() ?? "";
                   const title =
                     banner.title?.trim() || t("promotions.banner.fallback");
 
@@ -365,21 +367,31 @@ export function PromotionsClient({
                               </span>
                             </span>
                           ) : (
-                            // 活动图来自商户上传或外站图床，next/image 的域名白名单管不住
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
-                              src={banner.imageUrl}
-                              alt={title}
-                              draggable={false}
-                              loading="lazy"
-                              onError={() =>
-                                setBrokenImages((current) => ({
-                                  ...current,
-                                  [banner.id]: true,
-                                }))
-                              }
-                              className="block w-full transition-transform duration-500 group-hover:scale-[1.015]"
-                            />
+                            // 活动图来自商户上传或外站图床，next/image 的域名白名单管不住。
+                            // 双图分离：<768px 优先取手机专用图（商户为手机单独出的图），
+                            // 没配就继续用电脑图。<picture> 让浏览器按断点只下载一张 ——
+                            // 「两个 <img> + md:hidden」会让手机把电脑大图也下一遍。
+                            <picture className="contents">
+                              {mobileImageUrl ? (
+                                <source
+                                  media={HERO_MOBILE_MEDIA}
+                                  srcSet={mobileImageUrl}
+                                />
+                              ) : null}
+                              <img
+                                src={banner.imageUrl}
+                                alt={title}
+                                draggable={false}
+                                loading="lazy"
+                                onError={() =>
+                                  setBrokenImages((current) => ({
+                                    ...current,
+                                    [banner.id]: true,
+                                  }))
+                                }
+                                className="block w-full transition-transform duration-500 group-hover:scale-[1.015]"
+                              />
+                            </picture>
                           )}
 
                           <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/40 to-transparent px-4 pb-3 pt-10">

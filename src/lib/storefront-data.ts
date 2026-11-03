@@ -24,6 +24,7 @@ import {
   type StorefrontSettings,
 } from "@/lib/storefront";
 import { DEFAULT_STOREFRONT_PRESET } from "@/lib/storefront-presets";
+import { normalizeHost } from "@/lib/tenant-domains";
 
 /**
  * 前台装修配置的读取层（只在服务端跑）。
@@ -91,20 +92,15 @@ function toSettings(row: StorefrontTenantRow): StorefrontSettings {
   };
 }
 
-/** 去掉端口、去掉 www. 前缀，得到用于匹配 Tenant.domain / subdomain 的主机名 */
-function normalizeHost(rawHost: string | null) {
-  if (!rawHost) {
-    return "";
-  }
-
-  return rawHost
-    .split(",")[0]
-    .trim()
-    .toLowerCase()
-    .replace(/:\d+$/, "")
-    .replace(/^www\./, "");
-}
-
+/**
+ * 按访问域名找租户。
+ *
+ * 顺序：完整主域名 → **备用域名池** → 子域名前缀。
+ *
+ * 备用域名必须在这里一起认：多域名防封自动切换会把玩家从主域名跳到
+ * `Tenant.backupDomains[0]`，如果这里不认它，跳过去就等于「站点不存在」。
+ * 备用域名的跨租户唯一性在写入侧由 lib/tenant-domain-service.ts 保证。
+ */
 async function findTenantByDomain(host: string) {
   if (!host) {
     return null;
@@ -120,7 +116,17 @@ async function findTenantByDomain(host: string) {
     return byDomain;
   }
 
-  // 2) 子域名命中：winvora.xxx.cc → subdomain = winvora
+  // 2) 备用域名命中：Tenant.backupDomains 里包含这个 host
+  const byBackupDomain = await prisma.tenant.findFirst({
+    where: { backupDomains: { has: host } },
+    select: STOREFRONT_SELECT,
+  });
+
+  if (byBackupDomain) {
+    return byBackupDomain;
+  }
+
+  // 3) 子域名命中：winvora.xxx.cc → subdomain = winvora
   const [firstLabel] = host.split(".");
 
   if (!firstLabel) {
@@ -151,6 +157,9 @@ async function findTenantByKey(rawKey: string) {
         { domain: lowered },
         // 允许直接粘贴完整 URL，与后台表单的容错口径一致
         { domain: lowered.replace(/^https?:\/\//, "").replace(/\/.*$/, "") },
+        // 备用域名同样可以作为预览 / 联调入口（换线路后老链接还能直接用）
+        { backupDomains: { has: lowered } },
+        { backupDomains: { has: normalizeHost(lowered) } },
       ],
     },
     select: STOREFRONT_SELECT,

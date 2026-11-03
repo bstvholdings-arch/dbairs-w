@@ -232,11 +232,13 @@ const BURST_COINS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
  * Withdraw 卡的钱袋子图标（💰 + 「疯狂喷金币」）。
  *
  * - 常态：`.tb-moneybag` 以袋底为原点极慢「呼吸」缩放，仿佛袋里有钱在动；
- * - 悬停 / 键盘聚焦按钮（`[data-lobby-action="withdraw"]:hover`）：袋身切到左右剧烈摇晃，
- *   同时 8 枚金币从袋心锚点 `.tb-bag-coins` 向左右上方沿抛物线炸开，边飞边 360° 自转，
- *   并伴随一次金色闪光；每枚金币的 `animation-delay` 差 0.14s，一直悬停就是不停机的喷钞机。
- * 动画默认 `animation-play-state: paused`（0% 帧全透明），空闲时零绘制开销；
- * `prefers-reduced-motion` 下全部关闭。
+ * - 金币**常驻喷射**（与 Deposit 的金币雨同一节奏：2.4 / 2.9 / 2.6 / 3.1s，
+ *   错峰 0 / -0.7 / -1.4 / -2s），8 枚金币从袋心锚点 `.tb-bag-coins` 向左右上方
+ *   沿抛物线炸开，边飞边 360° 自转，并伴随一次金色闪光；
+ *   负延迟让首帧就已经「喷到半空」，页面加载即生效，不需要鼠标移上去；
+ * - 悬停 / 键盘聚焦（`[data-lobby-action="withdraw"]:hover`）只额外让袋身左右摇晃，
+ *   不再承担「启动动画」的职责；
+ * - `prefers-reduced-motion` 下全部关闭（见 globals.css 末尾）。
  */
 function MoneyBagIcon() {
   return (

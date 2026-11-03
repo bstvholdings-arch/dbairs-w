@@ -78,7 +78,13 @@ export function proxy(request: NextRequest) {
     pathname === "/api/auth/forgot-password" ||
     pathname === "/api/auth/reset-password" ||
     // 登出必须公开：token 过期时也要能清掉 httpOnly cookie。
-    pathname === "/api/auth/logout"
+    pathname === "/api/auth/logout" ||
+    // 多域名防封：心跳与线路候选必须**匿名可访问**。
+    // 玩家未登录时同样要能探活，否则心跳永远 401 → 被当成「线路故障」，
+    // 好端端的站点会被 DomainGuard 立刻踢到备用域名上。
+    // /api/ping 不查库、不鉴权；/api/domain-guard 只按 Host 返回域名列表。
+    pathname === "/api/ping" ||
+    pathname === "/api/domain-guard"
   ) {
     return NextResponse.next();
   }

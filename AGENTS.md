@@ -38,8 +38,12 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 模板只管排版（内容区宽度 / 模块间距 / 主视觉高度 / 面板圆角 / 卡片间距 / 分栏）；配色仍只由 `Tenant.themeColor` 决定，模块开关与顺序仍只由 `Tenant.layoutConfig.modules` 决定，三者不得互相耦合。
 - 分栏只在 `lg`(≥1024px) 生效，手机永远纵向堆叠；后台关掉 Hero 时必须自动退回堆叠（见 `globals.css` 里的 `:has()` 规则），不能留半列空白。
 - 模板 id 归一化必须容错：脏数据回落到 `classic`，老租户（`layoutConfig` 无 `preset`）升级后外观不变。
-- **主视觉（Hero）高度统一，不参与模板差异化**（`HERO_HEIGHT_TOKENS`：手机 220 / 平板 290 / 桌面 400px）。原因：Hero 铺的是商户自己上传的活动海报，高度一浮动，同一张图在 `compact` 与 `cinema` 下就会裁出两张完全不同的画面，运营无法「一次出图、全模板可用」。模板差异由宽度 / 间距 / 圆角 / 分栏承担。
-- **Hero 高度只能由 `globals.css` 的 `[data-hero-stage]` 给**（`clamp(200–250px)` / `clamp(240–320px)` / `clamp(350–450px)`，配 `min-height` 兜底）。组件里**禁止**再写 `h-[var(--sf-hero-h…)]` —— 两处给高度时谁生效取决于打包顺序，正是「图片忽高忽低」的来源。海报图必须是 `object-cover object-center`（等比缩放 + 居中裁剪，永不拉伸），上传处必须提示「建议 21:9 / 16:9」。
+- **主视觉（Hero）高度统一，不参与模板差异化**（`HERO_HEIGHT_TOKENS`：手机 200 / 平板 290 / 桌面 400px）。原因：Hero 铺的是商户自己上传的活动海报，高度一浮动，同一张图在 `compact` 与 `cinema` 下就会裁出两张完全不同的画面，运营无法「一次出图、全模板可用」。模板差异由宽度 / 间距 / 圆角 / 分栏承担。
+- **Hero 高度只能由 `globals.css` 的 `[data-hero-stage]` 给**（`clamp(200–220px)` / `clamp(240–320px)` / `clamp(350–450px)`，配 `min-height` + `overflow: hidden` 兜底）。组件里**禁止**再写 `h-[var(--sf-hero-h…)]` —— 两处给高度时谁生效取决于打包顺序，正是「图片忽高忽低」的来源。两端渲染口径见下一条；文字版 Hero 的 `background-image` 是装饰蒙版，仍用 `bg-cover bg-top`。
+- **两端两套口径，一套渲染引擎**：`src/components/lobby/hero-poster-image.tsx`。**手机（<768px）= 精致圆角卡片**：横向留白 16px（`main` 的 `px-3` + 模块的 `mx-1`）、固定 200px 高、`rounded-2xl`，卡片内部**只有一层** `object-cover + object-[center_30%]`（裁切重心压在上三分之一，保住人物面部与主标题），**禁止**模糊底 / 黑色蒙版 / 撑满手机屏幕 / 让 Hero 吃掉首屏。**电脑（≥768px）= 大气满版双层**：底层 `object-cover object-top + blur-xl + scale-110 + 黑色遮罩` 把舞台填满（空出来的是模糊底色，不是黑边），顶层 `object-contain` 等比完整露出、**永不裁剪 / 永不拉伸** —— 保证「传一张图，电脑端 5 套模板都不裁头」。电脑端**禁止**退回单层 `object-cover`（竖图 / 方图会切掉人物头部与标题），也**禁止**单层 `object-contain`（比例不匹配时留出生硬黑边）；玩家端轮播（`promo-hero-carousel.tsx`）、后台弹窗预览、后台活动列表缩略图必须复用同一个组件，不许各写一份 `<img>` 叠加逻辑。上传处必须醒目提示「推荐 1920 × 600（或 16:9 / 21:9 超宽横图）」，并做现场比例检测（方图 / 竖图给红字警告，**只提示不阻断保存**）。
+- **双图分离（手机专用海报）**：`PromotionBanner.mobileImageUrl`（可选）+ 上面同一个组件的 `mobileSrc`。手机卡片只有 200px 高、约 1.8:1，1920 × 600 的宽图缩下去字就看不清，所以允许商户单独传一张手机图：`<768px` 且有专用图 → 用专用图 `object-cover` **铺满卡片**（专用图本就按手机比例出，裁得最少）；`<768px` 无专用图 → 用**电脑图铺满卡片**（cover + `center 30%`：比例差多少裁多少，但绝不留黑边、绝不出现模糊底）；`≥768px` → 永远电脑图 + 双层（顶层 `object-contain`）。三条硬规则：① 取图必须用 `<picture>` + `<source media="(max-width: 767px)">`，断点与 Tailwind `md` 严格对齐，**禁止**用「两个 `<img>` + `md:hidden`」——那会让手机把电脑大图也下一遍，首屏 LCP 直接崩（桌面模糊层在手机上 `hidden` 不额外下载：两层是同一个 `<picture>/<source>`，URL 相同浏览器会去重）；② 顶层的 `object-fit` / `object-position` 只能走 class（`object-cover object-[center_30%] md:object-contain md:object-center`），**禁止**写内联 `style.objectFit` / `style.objectPosition`（会盖掉断点切换）；③ `PATCH /api/tenant/promotions/banners/[id]` 是「整对象覆盖」口径，任何调用方漏传 `mobileImageUrl` 都等于清空手机图 —— 启停活动这类操作必须把字段原样带上。手机图的比例体检用 `classifyMobileBannerAspectRatio`（安全区间 1.2–3.2，离手机卡片越远裁得越多），同样**只提示不阻断**；后台弹窗用 `forceMobile` 在电脑上预览手机端真实画面。
+
+- **前台排版流不许乱**：正常顺序是 ① 顶部 Header → ② Hero 卡片 → ③ Quick Access 功能岛 → ④ 品牌墙 → ⑤ 游戏列表（顺序与开关仍只由 `Tenant.layoutConfig.modules` 决定，默认就是这个顺序）。手机端 Hero 是卡片，**不占满屏、不遮挡任何模块**；模块之间手机上至少 16px（`gap-4`，模板 token 只在 `sm` 以上生效，防止 `compact` 的 10px 把手机挤在一起），模块区与游戏列表之间 `mt-6`，底部导航留白由 `main` 的 `pb-28` 兜住。改这几个间距必须同时在手机（390px）上看一遍，不允许出现重叠、挤压或半截内容。
 
 ### 4.1 主题背景色：一套 GameCard + 15 组色值（永远深色底）
 
@@ -78,6 +82,17 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 商户后台 Header 的【预览前台】必须带 `/?tenant=<subdomain || id>`（`ConsoleShell` 的 `previewTenantKey` 由 `tenant/(console)/layout.tsx` 下发）；平台范围后台没有归属租户，不渲染该入口。预览模式下大厅的所有站内跳转（品牌馆 / 登录 / 注册 / 玩家中心）都要透传 `?tenant=`。
 - `loadStorefront()` 只允许后台页面使用（需要「默认选中某个租户」，允许回落最早 active 租户），玩家面不得调用。
 - 流式渲染下 `notFound()` 的 HTTP 状态可能是 200 + `noindex`（Next 官方行为），这是已知取舍；文案见 `src/app/not-found.tsx`（`site.notFound.*`，中英并列，不依赖 `useLanguage`）。
+
+### 8. 多域名池与防封自动切换：备用域名必须等于「同一个站」
+
+- 数据只在 `Tenant.backupDomains`（`String[]`，0-5 条）。写入前一律走 `src/lib/tenant-domains.ts` 的 `readBackupDomainsInput()`：小写、去协议、去路径、去重；**格式 / 数量错了整批拒绝**，不做「猜一个能用的」。
+- **备用域名必须同时被 `requireStorefront()` 认出来**（`storefront-data.ts` 的 `findTenantByDomain` 会查 `backupDomains`）。否则 `DomainGuard` 一跳过去就是「站点不存在」——比不跳更糟。改解析逻辑时必须一起跑这条链路。
+- **备用域名跨租户唯一**：写入侧（超管 `POST/PUT /api/tenants`、商户 `PATCH /api/tenant/settings`）统一用 `src/lib/tenant-domain-service.ts` 的 `findBackupDomainConflict()` 拦：已作为别家主域名 / 备用域名 / 子域名前缀的都拒绝。商户可以自助维护自己的池子，但**不能把别家的域名填进来**（那等于抢站）。
+- 跳转顺序只有一份实现：`buildFailoverTargets()`。规则是「当前在主域名就依次试备用域名；当前已经在某个备用域名上，就**先试别的备用域名，最后才回主域名**」——主域名刚才是因为打不开才跳走的，立刻跳回去只会来回抖。
+- 客户端 `<DomainGuard />`（`src/components/domain-guard.tsx`，挂在 root layout）只做三件事：每 30 秒打 `/api/ping`、**连续 2 次**失败才跳、跳转保留 path / query / hash 并写 2 分钟冷却。它**不做判断**：候选列表由 `/api/domain-guard` 按 Host 解析后下发（只看访问域名，不认 `?tenant=` / 会话 / 代登录票据，所以平台后台永远拿到空列表）。两条硬规则：玩家自己断网（`navigator.onLine === false`）不跳；标签页在后台时不跳（定时器被节流，结果不可信）。
+- `/api/ping` **绝对不许查库 / 鉴权 / 读 cookie**，并且 `await connection()` + `Cache-Control: no-store`：一次慢查询就会被判成「线路故障」，把好端端的玩家踢到备用域名上。
+- 已知边界（不要试图在客户端解决）：域名在 DNS / SNI 层已被封时，页面根本打不开，这段脚本没有机会执行。那种情况只能靠「开站时把多个域名链接一起发给客户」+ 备用域名提前配好 DNS 兜住；不要为了「连页面都打不开也要跳」去搞隐形 iframe / 第三方探针，误判代价是把正常玩家弹走。
+- 商户后台 `/tenant/settings` 与超管【编辑租户】弹窗共用同一份输入框口径（一行一个 / 逗号分隔、实时计数、最多 5 个）；新增文案必须同时补 `zh.json` 与 `en.json`。
 
 
 

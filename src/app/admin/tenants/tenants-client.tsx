@@ -221,6 +221,20 @@ export function TenantsClient({
                         <p className="mt-0.5 truncate font-mono text-[10px] text-neutral-600">
                           {tenant.domain}
                         </p>
+                        {/* 多域名防封：一眼看到这台站有几条备用线路（0 = 还没配） */}
+                        <p className="mt-0.5 truncate text-[10px]">
+                          {tenant.backupDomains.length > 0 ? (
+                            <span className="inline-flex items-center gap-1 rounded border border-[#d4af37]/25 px-1.5 py-0.5 text-[9px] text-[#f0d27c]/80">
+                              {t("tenants.table.backupDomains", {
+                                count: tenant.backupDomains.length,
+                              })}
+                            </span>
+                          ) : (
+                            <span className="text-neutral-700">
+                              {t("tenants.table.backupDomainsNone")}
+                            </span>
+                          )}
+                        </p>
                         <p className="mt-0.5 truncate text-[10px]">
                           <span className="uppercase tracking-[0.14em] text-neutral-700">
                             {t("tenants.table.admin")}

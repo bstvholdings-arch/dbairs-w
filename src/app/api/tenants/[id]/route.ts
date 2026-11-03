@@ -35,6 +35,11 @@ import {
   tenantSelectWithLayout,
   toTenantPayload,
 } from "@/lib/tenant-api";
+import {
+  formatBackupDomainConflict,
+  findBackupDomainConflict,
+} from "@/lib/tenant-domain-service";
+import { readBackupDomainsInput } from "@/lib/tenant-domains";
 
 type TenantRouteContext = {
   params: Promise<{ id: string }>;
@@ -216,6 +221,38 @@ async function updateTenant(
       }
 
       data.status = input.status;
+    }
+
+    /**
+     * 备用域名池（多域名防封自动切换）。
+     *
+     * - 传 `[]` / 空字符串 = 清空线路池；
+     * - 这里只做格式 + 数量校验，跨租户唯一性交给 findBackupDomainConflict；
+     * - 自己的主域名 / 子域名会被静默剔除（reserved），避免候选列表绕回自己。
+     */
+    if (hasOwn(input, "backupDomains")) {
+      const nextDomain =
+        typeof data.domain === "string" ? data.domain : existing.domain;
+      const nextSubdomain =
+        typeof data.subdomain === "string"
+          ? data.subdomain
+          : existing.subdomain;
+
+      const parsed = readBackupDomainsInput(input.backupDomains, {
+        reserved: [nextDomain, nextSubdomain],
+      });
+
+      if (!parsed.ok) {
+        return jsonError(parsed.error, 400);
+      }
+
+      const conflict = await findBackupDomainConflict(parsed.domains, id);
+
+      if (conflict) {
+        return jsonError(formatBackupDomainConflict(conflict), 409);
+      }
+
+      data.backupDomains = { set: parsed.domains };
     }
 
     if (hasOwn(input, "withdrawalRequiredApprovals")) {

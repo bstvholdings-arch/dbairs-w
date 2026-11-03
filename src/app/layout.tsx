@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
+import { DomainGuard } from "@/components/domain-guard";
 import { LanguageProvider } from "@/components/LanguageProvider";
 
 const geistSans = Geist({
@@ -27,6 +28,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="min-h-full flex flex-col">
         <LanguageProvider>{children}</LanguageProvider>
+        {/* 多域名防封：全站最顶层盯着线路，连续心跳失败才跳备用域名 */}
+        <DomainGuard />
       </body>
     </html>
   );

@@ -38,6 +38,7 @@ export default async function AdminTenantsPage() {
       name: payload.name,
       domain: payload.domain,
       subdomain: payload.subdomain,
+      backupDomains: payload.backupDomains ?? [],
       status: payload.status,
       withdrawalRequiredApprovals: payload.withdrawalRequiredApprovals,
       // 开站 / 编辑弹窗要回填当前主题背景色

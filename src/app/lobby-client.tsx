@@ -768,8 +768,10 @@ export function LobbyClient({
     switch (id) {
       case "hero":
         return (
-          <div key="hero" data-module="hero">
-            {/* 后台配了启用中的海报 → 全屏轮播图（点击跳 linkUrl）；
+          // 手机端 Hero 是**圆角卡片**：不占满屏、不贴边。main 已有 px-3，
+          // 这里再补 4px 凑成 16px（等效设计稿的 mx-4）；≥768px 顶格铺满（md:mx-0）。
+          <div key="hero" data-module="hero" className="mx-1 md:mx-0">
+            {/* 后台配了启用中的海报 → 海报轮播卡片（点击跳 linkUrl）；
                 一张都没配 → 退回原本的暗黑文案轮播（Tonight's luck…），保底兜底。 */}
             {heroBanners.length > 0 ? (
               <PromoHeroCarousel
@@ -1062,7 +1064,9 @@ export function LobbyClient({
         */}
         {visibleModules.length > 0 ? (
           <div
-            className="flex flex-col gap-[var(--sf-module-gap,1.25rem)]"
+            /* 手机端最小 16px（gap-4），平板以上交回模板 token：compact 模板只有
+               10px，手机上手会挤在一起（AGENTS.md §4 的排版流不允许重叠 / 挤压）。 */
+            className="flex flex-col gap-4 sm:gap-[var(--sf-module-gap,1.25rem)]"
             data-storefront-modules
           >
             {visibleModules.map((id) => renderStorefrontModule(id))}
@@ -1073,7 +1077,7 @@ export function LobbyClient({
         <div
           id="lobby-games"
           className={`flex flex-col gap-4 scroll-mt-24 lg:flex-row lg:gap-6 ${
-            visibleModules.length > 0 ? "mt-5" : "mt-1"
+            visibleModules.length > 0 ? "mt-6" : "mt-1"
           }`}
         >
           {/* 左侧分类导航：桌面 2 列图标卡，手机横向滑动条（单卡 ≥ 64px 高，手指好点） */}

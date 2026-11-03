@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState, type FormEvent } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
+import { HeroPosterImage } from "@/components/lobby/hero-poster-image";
 import type {
   PromotionBannerView,
   PromotionCategoryView,
@@ -284,6 +285,8 @@ export function TenantPromotionsClient({
             categoryId: banner.categoryId,
             title: banner.title,
             imageUrl: banner.imageUrl,
+            // 整对象提交口径：漏传手机图等于把它清空，启停时非常容易踩坑
+            mobileImageUrl: banner.mobileImageUrl,
             linkUrl: banner.linkUrl,
             sortOrder: banner.sortOrder,
             isActive: !banner.isActive,
@@ -623,15 +626,16 @@ export function TenantPromotionsClient({
                     className="overflow-hidden rounded-xl border border-white/[0.07] bg-black/30"
                   >
                     <div className="relative aspect-[16/7] w-full overflow-hidden bg-black/50">
-                      {/* 活动图可能是外站地址，next/image 的域名白名单管不住 */}
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
+                      {/* 缩略图用玩家端同一份渲染：电脑端完整可见（双层 contain），
+                          手机端按卡片口径铺满裁切。
+                          （活动图可能是外站地址，next/image 的域名白名单管不住） */}
+                      <HeroPosterImage
                         src={banner.imageUrl}
+                        mobileSrc={banner.mobileImageUrl}
                         alt={
                           banner.title?.trim() ||
                           t("tenantPromotions.banner.noTitle")
                         }
-                        className="h-full w-full object-cover"
                       />
                       <span
                         className={`absolute left-2 top-2 rounded-full border px-2 py-0.5 text-[9px] font-semibold ${
@@ -644,6 +648,11 @@ export function TenantPromotionsClient({
                           ? t("tenantPromotions.banner.enabled")
                           : t("tenantPromotions.banner.disabled")}
                       </span>
+                      {banner.mobileImageUrl ? (
+                        <span className="absolute left-2 top-9 rounded-full border border-sky-400/30 bg-black/70 px-2 py-0.5 text-[9px] font-semibold text-sky-300">
+                          {t("tenantPromotions.banner.mobileBadge")}
+                        </span>
+                      ) : null}
                       <span className="absolute right-2 top-2 rounded-full border border-[#d4af37]/25 bg-black/70 px-2 py-0.5 font-mono text-[9px] text-[#f0d27c]">
                         #{banner.sortOrder}
                       </span>

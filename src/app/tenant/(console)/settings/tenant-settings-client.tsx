@@ -13,6 +13,11 @@ import {
   normalizeTenantLogoUrl,
 } from "@/lib/storefront";
 import type { TenantSiteSettings } from "@/lib/tenant-console";
+import {
+  MAX_BACKUP_DOMAINS,
+  formatBackupDomains,
+  readBackupDomainsInput,
+} from "@/lib/tenant-domains";
 
 export function TenantSettingsView({
   settings,
@@ -22,6 +27,10 @@ export function TenantSettingsView({
   const { t } = useLanguage();
   const [hex, setHex] = useState(settings.themeColor.hex);
   const [brightness, setBrightness] = useState(settings.themeColor.brightness);
+  // 多域名防封：备用域名池（一行一个），空字符串 = 不启用自动切换
+  const [backupDomains, setBackupDomains] = useState(
+    formatBackupDomains(settings.backupDomains),
+  );
   const [showTopbarChat, setShowTopbarChat] = useState(
     settings.layout.showTopbarChat,
   );
@@ -55,6 +64,14 @@ export function TenantSettingsView({
     Array.from(settings.tenantName.trim())[0] ?? "D"
   ).toUpperCase();
 
+  // 备用域名池的实时计数：格式不合法时按 0 显示，避免「填了 3 条其实一条都不合法」
+  const previewBackupDomains = readBackupDomainsInput(backupDomains, {
+    reserved: [settings.domain, settings.subdomain],
+  });
+  const backupDomainCount = previewBackupDomains.ok
+    ? previewBackupDomains.domains.length
+    : 0;
+
   async function handleSave() {
     const nextHex = hex.trim().toLowerCase();
 
@@ -67,6 +84,19 @@ export function TenantSettingsView({
 
     if (nextLogoUrl && !normalizeTenantLogoUrl(nextLogoUrl)) {
       setBanner({ tone: "error", text: t("tenantSettings.brand.invalidLogo") });
+      return;
+    }
+
+    // 备用域名池：格式 / 数量先在前端拦一次，跨租户唯一性由服务端判定
+    const parsedBackupDomains = readBackupDomainsInput(backupDomains, {
+      reserved: [settings.domain, settings.subdomain],
+    });
+
+    if (!parsedBackupDomains.ok) {
+      setBanner({
+        tone: "error",
+        text: t("tenantSettings.error.invalidBackupDomains"),
+      });
       return;
     }
 
@@ -88,6 +118,8 @@ export function TenantSettingsView({
           },
           // 空字符串 = 清空 Logo，前台自动退回商户名首字母占位
           logoUrl: nextLogoUrl,
+          // 多域名防封：备用域名池（[] = 关闭自动切换）
+          backupDomains: parsedBackupDomains.domains,
         }),
       });
       const payload = (await response.json().catch(() => null)) as {
@@ -108,6 +140,8 @@ export function TenantSettingsView({
         setBrightness(payload.settings.themeColor.brightness);
         setLanguageStyle(payload.settings.layout.languageStyle);
         setLogoUrl(payload.settings.logoUrl ?? "");
+        // 服务端会剔掉自己的主域名 / 子域名，这里以返回值为准回填
+        setBackupDomains(formatBackupDomains(payload.settings.backupDomains));
       }
 
       setBanner({ tone: "ok", text: t("tenantSettings.banner.saved") });
@@ -168,6 +202,38 @@ export function TenantSettingsView({
             </div>
           ))}
         </dl>
+      </section>
+
+      {/* 多域名防封：备用域名池。玩家端 <DomainGuard /> 连续心跳失败后按这里的顺序自动切线路。 */}
+      <section className="mt-4 rounded-2xl border border-[#d4af37]/10 bg-[#0a0a0a]/70 p-5">
+        <h2 className="text-sm font-medium text-neutral-200">
+          {t("tenantSettings.domains.title")}
+        </h2>
+        <p className="mt-1 text-[10px] text-neutral-600">
+          {t("tenantSettings.domains.subtitle")}
+        </p>
+
+        <label className="mt-4 block text-[10px] uppercase tracking-[0.16em] text-neutral-600">
+          {t("tenantSettings.domains.label")}
+          <textarea
+            value={backupDomains}
+            onChange={(event) => setBackupDomains(event.target.value)}
+            rows={3}
+            spellCheck={false}
+            placeholder={t("tenantSettings.domains.placeholder")}
+            className="mt-1.5 w-full resize-y rounded-lg border border-white/[0.08] bg-black/40 px-3 py-2 font-mono text-xs leading-6 text-neutral-200 focus:border-[#d4af37]/45 focus:outline-none"
+          />
+        </label>
+
+        <p className="mt-2 text-[10px] leading-5 text-neutral-600">
+          {t("tenantSettings.domains.hint", { max: MAX_BACKUP_DOMAINS })}
+        </p>
+        <p className="mt-1 font-mono text-[10px] text-[#f0d27c]/80">
+          {t("tenantSettings.domains.count", {
+            count: backupDomainCount,
+            max: MAX_BACKUP_DOMAINS,
+          })}
+        </p>
       </section>
 
       <section className="mt-4 rounded-2xl border border-[#d4af37]/10 bg-[#0a0a0a]/70 p-5">

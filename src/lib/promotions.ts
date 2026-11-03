@@ -54,6 +54,11 @@ export type PromotionBannerView = {
   categoryId: string;
   title: string | null;
   imageUrl: string;
+  /**
+   * 手机端专用海报（可选）。空 = 手机端自动把 imageUrl 铺成模糊底 + 完整显示，
+   * 玩家不会看到黑边（渲染见 components/lobby/hero-poster-image.tsx）。
+   */
+  mobileImageUrl: string | null;
   linkUrl: string | null;
   isActive: boolean;
   sortOrder: number;
@@ -70,6 +75,7 @@ const BANNER_SELECT = {
   categoryId: true,
   title: true,
   imageUrl: true,
+  mobileImageUrl: true,
   linkUrl: true,
   isActive: true,
   sortOrder: true,
@@ -81,6 +87,7 @@ type PromotionBannerRow = {
   categoryId: string;
   title: string | null;
   imageUrl: string;
+  mobileImageUrl: string | null;
   linkUrl: string | null;
   isActive: boolean;
   sortOrder: number;
@@ -93,6 +100,8 @@ function toBannerView(row: PromotionBannerRow): PromotionBannerView {
     categoryId: row.categoryId,
     title: row.title,
     imageUrl: row.imageUrl,
+    // 历史数据是 NULL / 空串，统一折成 null：调用方只需判断真假
+    mobileImageUrl: row.mobileImageUrl?.trim() || null,
     linkUrl: row.linkUrl,
     isActive: row.isActive,
     sortOrder: row.sortOrder,
@@ -371,6 +380,8 @@ export type PromotionBannerInput = {
   categoryId: string;
   title: string | null;
   imageUrl: string;
+  /** 手机端专用海报：可选，不传 / 空串 = null（手机端回落成电脑图的模糊底 + 完整显示） */
+  mobileImageUrl: string | null;
   linkUrl: string | null;
   isActive: boolean;
   sortOrder: number;
@@ -433,6 +444,23 @@ export function parsePromotionBannerInput(
     };
   }
 
+  // 手机端海报是**可选**素材：空 / 不传 → null（手机端回落成「电脑图铺满卡片」）。
+  // 一旦填了就必须是同口径的合法地址，否则宁可 400 让商户改，
+  // 也不要落库一个前台 <img src> 加载不出来、手机端直接开天窗的值。
+  const rawMobileImageUrl = readText(record.mobileImageUrl);
+  const mobileImageUrl = rawMobileImageUrl
+    ? normalizePromotionUrl(rawMobileImageUrl)
+    : null;
+
+  if (rawMobileImageUrl && !mobileImageUrl) {
+    return {
+      ok: false,
+      error:
+        "手机端海报地址格式不正确，只支持 http(s) 或站内 / 开头的路径；不上传手机图请留空",
+      status: 400,
+    };
+  }
+
   const title = readText(record.title);
 
   if (title.length > PROMOTION_TITLE_MAX_LENGTH) {
@@ -460,6 +488,7 @@ export function parsePromotionBannerInput(
       categoryId,
       title: title || null,
       imageUrl,
+      mobileImageUrl,
       linkUrl,
       // 只有明确传 false 才停用，避免「少传字段 = 被停用」的意外
       isActive: record.isActive !== false,
