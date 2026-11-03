@@ -28,6 +28,7 @@ export const PLAYER_ERROR_KEYS = {
   currency_invalid: "player.error.currencyInvalid",
   account_not_found: "player.error.accountNotFound",
   account_currency_mismatch: "player.error.accountCurrencyMismatch",
+  channel_not_fiat: "player.error.channelNotFiat",
   account_incomplete: "player.error.accountIncomplete",
   insufficient_available_balance: "player.error.insufficientAvailableBalance",
   kyc_required: "player.error.kycRequired",

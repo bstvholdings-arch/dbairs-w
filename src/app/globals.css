@@ -551,6 +551,15 @@ body {
   animation: withdrawal-fields-in 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/*
+ * 玩家提现账号 -「银行 / 支付方式」自定义下拉面板（见 src/components/player/payout-method-select.tsx）。
+ * 原生 <select> 的 option 里放不下银行 logo，所以改成「按钮 + 绝对定位面板」；
+ * 深色配色 / 选中态全部走 Tailwind 工具类，这里只负责展开时的淡入上浮。
+ */
+.payout-select-panel {
+  animation: payout-select-panel-in 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 /* 金色按钮里的高光条：默认停在左侧不可见，悬停时扫过整条按钮。 */
 .withdrawal-button-sheen {
   position: absolute;
@@ -635,6 +644,17 @@ button:not(:disabled):hover .withdrawal-button-sheen {
   }
 }
 
+@keyframes payout-select-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 @keyframes withdrawal-button-sheen {
   0% {
     opacity: 0;
@@ -653,7 +673,8 @@ button:not(:disabled):hover .withdrawal-button-sheen {
   .withdrawal-account-card,
   .withdrawal-account-default,
   .withdrawal-fields,
-  .withdrawal-default-dot {
+  .withdrawal-default-dot,
+  .payout-select-panel {
     animation: none;
   }
 

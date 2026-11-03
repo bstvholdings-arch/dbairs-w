@@ -3,8 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
+import { PayoutMethodLogo } from "@/components/player/payout-method-logo";
+import { PayoutMethodSelect } from "@/components/player/payout-method-select";
 import type { TranslationKey } from "@/lib/i18n-types";
+import { findPayoutMethodByName } from "@/lib/payout-methods";
 import { playerErrorKey } from "@/lib/player-errors";
+import { normalizePayoutCurrency } from "@/lib/withdrawal-channels";
 import {
   WITHDRAWAL_CURRENCY_OPTIONS,
   findWithdrawalCurrencyOptionById,
@@ -16,9 +20,14 @@ import {
 /**
  * 安全 Tab 的【提现账号】动态模块：全球法币 + 加密货币收款账号。
  *
- * - 上方是已绑定账号列表（默认账号用黑金描边 + 呼吸光晕标注，可设为默认 / 删除）；
+ * - 上方是已绑定账号列表（默认账号用黑金描边 + 呼吸光晕标注，可设为默认 / 删除；
+ *   命中银行目录的账号还会显示品牌 logo）；
  * - 下方是动态表单：先选「币种 / 方式」，加密货币只要求钱包地址，
- *   法币要求银行名称 / 银行账号 / 账户持有人姓名；
+ *   法币要求银行名称 / 银行账号 / 账户持有人姓名；银行名称走
+ *   `PayoutMethodSelect`（带 logo 的自定义下拉，原生 select 的 option 放不下图片），
+ *   银行不在目录里时切到「其他银行 / 手动输入」文本框；
+ * - **纯法币提现（MYR → MYR）**：传了 currency 就只列同一币种的银行账号，
+ *   不传（老调用方 / 脏数据）才回落到完整目录，保证老账号照样能看、能删；
  * - 数据完全受控：所有写操作返回完整列表后通过 onChange 回写给玩家中心，
  *   避免本地与服务端两份状态不一致。
  */
@@ -58,6 +67,8 @@ function AccountCard({
   const { t } = useLanguage();
   const labelKey = accountLabelKey(account);
   const isBank = account.accountType === "bank";
+  /** 已绑定的银行账号：命中目录就显示品牌 logo，否则只显示名称（历史手输值不受影响）。 */
+  const bankMethod = isBank ? findPayoutMethodByName(account.bankName) : null;
 
   return (
     <article
@@ -116,7 +127,10 @@ function AccountCard({
       <div className="relative mt-2.5 space-y-0.5 text-[11px] leading-5">
         {isBank ? (
           <>
-            <p className="truncate text-neutral-200">{account.bankName}</p>
+            <p className="flex items-center gap-1.5 truncate text-neutral-200">
+              {bankMethod ? <PayoutMethodLogo method={bankMethod} /> : null}
+              <span className="truncate">{account.bankName}</span>
+            </p>
             <p className="font-mono text-neutral-400">
               {account.accountNumber}
             </p>
@@ -134,18 +148,40 @@ function AccountCard({
 
 export function PlayerWithdrawalAccounts({
   accounts,
+  currency,
   onChange,
 }: {
   accounts: PlayerWithdrawalAccountView[];
+  /** 本站记账货币（Tenant.currency）：纯法币提现只允许绑定该币种的银行账号 */
+  currency?: string;
   onChange: (accounts: PlayerWithdrawalAccountView[]) => void;
 }) {
   const { t } = useLanguage();
 
-  const [optionId, setOptionId] = useState<string>(
-    WITHDRAWAL_CURRENCY_OPTIONS[0].id,
-  );
+  /**
+   * 可绑定项：纯法币提现只出本站记账币种，所以下拉框只列同币种的银行账号。
+   * 没传 currency / 目录里没有匹配项时回落到完整目录，不阻断老账号的展示与删除。
+   */
+  const options = useMemo(() => {
+    if (!currency) {
+      return WITHDRAWAL_CURRENCY_OPTIONS;
+    }
+
+    const payout = normalizePayoutCurrency(currency);
+    const fiat = WITHDRAWAL_CURRENCY_OPTIONS.filter(
+      (item) =>
+        item.accountType === "bank" &&
+        normalizePayoutCurrency(item.currency) === payout,
+    );
+
+    return fiat.length > 0 ? fiat : WITHDRAWAL_CURRENCY_OPTIONS;
+  }, [currency]);
+
+  const [optionId, setOptionId] = useState<string>(options[0].id);
   const [walletAddress, setWalletAddress] = useState("");
   const [bankName, setBankName] = useState("");
+  /** true = 「其他银行 / 手动输入」模式：银行不在目录里时退化成文本框，旧能力不丢 */
+  const [manualBank, setManualBank] = useState(false);
   const [accountNumber, setAccountNumber] = useState("");
   const [accountName, setAccountName] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -153,10 +189,8 @@ export function PlayerWithdrawalAccounts({
   const [notice, setNotice] = useState<TranslationKey | null>(null);
 
   const option = useMemo(
-    () =>
-      findWithdrawalCurrencyOptionById(optionId) ??
-      WITHDRAWAL_CURRENCY_OPTIONS[0],
-    [optionId],
+    () => options.find((item) => item.id === optionId) ?? options[0],
+    [optionId, options],
   );
 
   useEffect(() => {
@@ -244,6 +278,7 @@ export function PlayerWithdrawalAccounts({
 
       setWalletAddress("");
       setBankName("");
+      setManualBank(false);
       setAccountNumber("");
       setAccountName("");
       setNotice("player.security.accountSaved");
@@ -348,14 +383,14 @@ export function PlayerWithdrawalAccounts({
           </span>
           <div className="relative">
             <select
-              value={optionId}
+              value={option.id}
               onChange={(event) => {
                 setOptionId(event.target.value);
                 setErrorKey(null);
               }}
               className={`${FIELD_CLASS} cursor-pointer appearance-none pr-10`}
             >
-              {WITHDRAWAL_CURRENCY_OPTIONS.map((item) => (
+              {options.map((item) => (
                 <option
                   key={item.id}
                   value={item.id}
@@ -406,19 +441,54 @@ export function PlayerWithdrawalAccounts({
             </>
           ) : (
             <>
-              <label className="block">
+              {/* 银行 / 支付方式：自定义下拉（原生 select 的 option 放不下 logo） */}
+              <div className="block">
                 <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-neutral-500">
                   {t("player.security.bankName")}
                 </span>
-                <input
-                  type="text"
-                  value={bankName}
-                  onChange={(event) => setBankName(event.target.value)}
-                  placeholder="Maybank / 中国工商银行"
-                  autoComplete="off"
-                  className={FIELD_CLASS}
-                />
-              </label>
+                {manualBank ? (
+                  <div>
+                    <input
+                      type="text"
+                      value={bankName}
+                      onChange={(event) => {
+                        setBankName(event.target.value);
+                        setErrorKey(null);
+                      }}
+                      placeholder={t("player.security.bankNamePlaceholder")}
+                      autoComplete="off"
+                      autoFocus
+                      className={FIELD_CLASS}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setManualBank(false);
+                        setBankName("");
+                        setErrorKey(null);
+                      }}
+                      className="mt-1.5 text-[10px] font-semibold text-brand-soft transition-colors hover:text-brand-pale"
+                    >
+                      {t("player.security.payoutMethodPickFromList")}
+                    </button>
+                  </div>
+                ) : (
+                  <PayoutMethodSelect
+                    value={bankName}
+                    ariaLabel={t("player.security.bankName")}
+                    allowCustom
+                    onChange={(name) => {
+                      setBankName(name);
+                      setErrorKey(null);
+                    }}
+                    onSelectCustom={() => {
+                      setManualBank(true);
+                      setBankName("");
+                      setErrorKey(null);
+                    }}
+                  />
+                )}
+              </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="block">
                   <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-neutral-500">

@@ -5,34 +5,39 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useLanguage } from "@/components/LanguageProvider";
 import { resolveBrandName } from "@/lib/brand";
 import { formatCurrency, formatDisplayAmount } from "@/lib/currency";
-import { GATEWAY_PROVIDER_LABEL_KEYS } from "@/lib/i18n-keys";
-import type { TFunction } from "@/lib/i18n-types";
 import { formatGatewayRatePercent } from "@/lib/payment-gateway-rates";
 import { playerErrorKey } from "@/lib/player-errors";
 import { notifyPlayerWalletChanged } from "@/lib/player-wallet-events";
+import type { PlayerWithdrawalAccountView } from "@/lib/withdrawal-accounts";
 import {
-  findWithdrawalCurrencyOptionById,
-  withdrawalCurrencyOptionId,
-  type PlayerWithdrawalAccountView,
-} from "@/lib/withdrawal-accounts";
+  calculateWithdrawalFee,
+  calculateWithdrawalReceive,
+  isFiatPayoutAccount,
+  normalizePayoutCurrency,
+  roundPayoutAmount,
+} from "@/lib/withdrawal-channels";
 
 /**
- * 玩家中心黑金风提现弹窗。
+ * 玩家中心黑金风提现弹窗（纯法币 MYR → MYR）。
  *
- * 三段式：选通道 → 选收款钱包 → 填金额（含预估手续费 / 预计到账）。
- * - 通道列表来自 GET /api/player/withdrawal-gateways，过滤口径与提单接口完全一致；
- * - 钱包只从玩家已绑定的收款账号里选，提交时只传 accountId，
- *   真实银行账号 / 链上地址由服务端自己取（前端拿到的银行账号是掩码，回传也不可信）；
+ * 三段式：选提现通道 → 选收款银行账号 → 填提现金额（含预估手续费 / 预计到账）。
+ * - 通道列表来自 GET /api/player/withdrawal-gateways：只下发「本站记账币种 + 非加密」
+ *   的法币通道，费率（feeRate）由后台按通道维护，前端一个数字都不写死；
+ * - 收款账号只列玩家已绑定、且 accountType=bank / 币种与本站记账币种一致的账号，
+ *   提交时只传 accountId，真实银行账号由服务端自己取（前端拿到的是掩码，回传也不可信）；
+ * - 提现金额 / 手续费 / 到账金额单位全部是本站记账货币（MYR），全程不做汇率换算；
  * - 提交走 POST /api/withdrawal/create，生成 PENDING 单；
  *   余额在代付成功回调时才扣减，弹窗里如实提示，不做「已扣款」的假象。
  */
 
+/** 后台配置的一条纯法币提现通道（费率后台可调，前端只负责渲染） */
 export type PlayerWithdrawGatewayOption = {
   id: string;
   name: string;
   providerType: string;
+  /** 已归一化的通道币种，与本站记账币种一致（MYR） */
   currency: string;
-  /** 网关代付售价，0.1 = 10%；只用于展示预估手续费 */
+  /** 通道代付费率，0.01 = 1%；只用于展示预估手续费，不参与任何汇率换算 */
   feeRate: string;
 };
 
@@ -40,6 +45,8 @@ type AmountLimits = { min: string; max: string };
 
 type GatewayListResponse = {
   success?: boolean;
+  /** 本站记账货币 = 等值出款币种（例如 MYR） */
+  payoutCurrency?: string;
   gateways?: PlayerWithdrawGatewayOption[];
   amountLimits?: AmountLimits;
   error?: string;
@@ -65,60 +72,42 @@ type CreateWithdrawalResponse = {
 
 /** 服务端默认区间（WITHDRAWAL_MIN_AMOUNT / WITHDRAWAL_MAX_AMOUNT），仅作首屏占位。 */
 const DEFAULT_AMOUNT_LIMITS: AmountLimits = { min: "10", max: "1000000" };
-const AMOUNT_PATTERN = /^(?:0|[1-9]\d*)(?:\.\d{1,6})?$/;
+/**
+ * 提现金额输入：法币只到「分」，最多两位小数。
+ *
+ * 服务端 parseWithdrawalAmount 仍兼容 6 位小数（历史数据 / 兼容旧调用方），
+ * 但前端从严：MYR 分位以下的金额没有意义，一旦允许输入，
+ * 手续费 / 到账金额就会和玩家填的数字对不上。
+ */
+const AMOUNT_PATTERN = /^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/;
 
 const inputClass =
   "mt-1.5 h-11 w-full rounded-xl border border-white/10 bg-black/50 px-3.5 text-sm text-neutral-100 outline-none transition-colors placeholder:text-neutral-700 focus:border-[#d4af37]/50 focus:ring-1 focus:ring-[#d4af37]/30";
 
-function shortValue(value: string, head = 10, tail = 8) {
-  if (value.length <= head + tail + 3) {
-    return value;
-  }
-
-  return `${value.slice(0, head)}…${value.slice(-tail)}`;
+/**
+ * 提现金额 / 手续费 / 到账金额的展示：法币固定两位小数（RM 1.50）。
+ * 余额（当前余额 / 可提余额 / 在途金额）走 formatDisplayAmount，同一口径。
+ */
+function formatMoney(value: number, currency: string) {
+  return formatCurrency(value, currency);
 }
 
 /**
- * 提现金额 / 手续费 / 到账金额的展示：最多 6 位小数并去掉尾随 0。
+ * 提现账号下拉文案（纯法币）：`Maybank (1234) · TAN AH KOW`。
  *
- * 这几个数字是「玩家要转出去的钱」，少给一位就转不到账，所以必须按原样展示；
- * 余额（当前余额 / 可提余额 / 在途金额）不属于这个口径，一律走
- * formatDisplayAmount —— 固定两位小数（530.500000 → 530.50）。
+ * accountNumber 是服务端掩码后的 `****1234`，这里只取后 4 位放进括号：
+ * 既不暴露完整账号，又能让玩家一眼认出是哪张卡。
  */
-function formatMoney(value: number, currency: string) {
-  return formatCurrency(value, currency, {
-    maximumFractionDigits: 6,
-    trimZeros: true,
-  });
-}
+function accountLabel(account: PlayerWithdrawalAccountView) {
+  const bank = (account.bankName ?? "").trim() || "—";
+  const tail = (account.accountNumber ?? "")
+    .replace(/[^0-9A-Za-z]/g, "")
+    .slice(-4);
+  const holder = (account.accountName ?? "").trim();
 
-function providerLabel(providerType: string, t: TFunction) {
-  const key =
-    GATEWAY_PROVIDER_LABEL_KEYS[
-      providerType as keyof typeof GATEWAY_PROVIDER_LABEL_KEYS
-    ];
-
-  return key ? t(key) : providerType;
-}
-
-function round6(value: number) {
-  return Math.round(value * 1e6) / 1e6;
-}
-
-/** 钱包下拉框文案：加密显示网络 + 缩略地址，法币显示银行 + 掩码账号。 */
-function accountLabel(account: PlayerWithdrawalAccountView, t: TFunction) {
-  const option = findWithdrawalCurrencyOptionById(
-    withdrawalCurrencyOptionId(account.currency, account.network),
-  );
-  const currencyLabel = option ? t(option.labelKey) : account.currency;
-
-  if (account.accountType === "bank") {
-    return [currencyLabel, account.bankName, account.accountNumber]
-      .filter((part): part is string => Boolean(part && part.trim()))
-      .join(" · ");
-  }
-
-  return `${currencyLabel} · ${shortValue(account.walletAddress ?? "")}`;
+  return [tail ? `${bank} (${tail})` : bank, holder]
+    .filter((part) => part.length > 0)
+    .join(" · ");
 }
 
 export function PlayerWithdrawModal({
@@ -151,6 +140,10 @@ export function PlayerWithdrawModal({
   const [loadError, setLoadError] = useState("");
   const [gateways, setGateways] = useState<PlayerWithdrawGatewayOption[]>([]);
   const [limits, setLimits] = useState<AmountLimits>(DEFAULT_AMOUNT_LIMITS);
+  /** 等值出款币种 = 本站记账货币（MYR）：金额 / 手续费 / 到账全部按它渲染 */
+  const [payoutCurrency, setPayoutCurrency] = useState(() =>
+    normalizePayoutCurrency(walletCurrency),
+  );
   const [gatewayId, setGatewayId] = useState("");
   const [accountId, setAccountId] = useState("");
   const [amount, setAmount] = useState("");
@@ -160,13 +153,16 @@ export function PlayerWithdrawModal({
     id: string;
     amount: string;
     currency: string;
-    walletAddress: string;
+    /** 服务端回写的收款账号描述（银行名 · 掩码账号 · 持有人） */
+    account: string;
   } | null>(null);
 
   const pendingValue = Number(pendingWithdrawalAmount);
   const availableBalance = Math.max(
     0,
-    round6(Number(balance) - (Number.isFinite(pendingValue) ? pendingValue : 0)),
+    roundPayoutAmount(
+      Number(balance) - (Number.isFinite(pendingValue) ? pendingValue : 0),
+    ),
   );
 
   useEffect(() => {
@@ -211,12 +207,17 @@ export function PlayerWithdrawModal({
           setLimits(data.amountLimits);
         }
 
+        // 服务端下发的是「本站记账币种」（= 出款币种），缺省回落到会话里的记账货币
+        const payout = normalizePayoutCurrency(
+          data.payoutCurrency ?? walletCurrency,
+        );
         const first = available[0];
         const preferredAccount =
           accounts.find(
-            (item) => item.currency === first.currency && item.isDefault,
-          ) ?? accounts.find((item) => item.currency === first.currency);
+            (item) => isFiatPayoutAccount(item, payout) && item.isDefault,
+          ) ?? accounts.find((item) => isFiatPayoutAccount(item, payout));
 
+        setPayoutCurrency(payout);
         setGateways(available);
         setGatewayId(first.id);
         setAccountId(preferredAccount?.id ?? "");
@@ -235,7 +236,7 @@ export function PlayerWithdrawModal({
       active = false;
       controller.abort();
     };
-  }, [accounts, t]);
+  }, [accounts, t, walletCurrency]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -253,42 +254,32 @@ export function PlayerWithdrawModal({
     () => gateways.find((item) => item.id === gatewayId) ?? null,
     [gateways, gatewayId],
   );
-  const currency = selectedGateway?.currency ?? "";
+  /**
+   * 可用的收款账号：只认「银行账号（accountType=bank）+ 本站记账币种」。
+   * 全部通道币种都等于本站记账币种，所以换通道不需要换账号，这里不依赖 selectedGateway。
+   */
   const matchingAccounts = useMemo(
-    () =>
-      selectedGateway
-        ? accounts.filter((item) => item.currency === selectedGateway.currency)
-        : [],
-    [accounts, selectedGateway],
+    () => accounts.filter((item) => isFiatPayoutAccount(item, payoutCurrency)),
+    [accounts, payoutCurrency],
   );
 
   const amountValue = Number(amount);
   const safeAmount =
     Number.isFinite(amountValue) && amountValue > 0 ? amountValue : 0;
+  /** 通道费率（后台维护的 PaymentGateway.payoutSellRate），0.01 = 1% */
   const feeRateValue = Number(selectedGateway?.feeRate ?? 0);
-  const feeValue =
-    safeAmount > 0 && Number.isFinite(feeRateValue) && feeRateValue > 0
-      ? round6(safeAmount * feeRateValue)
-      : 0;
-  const receiveValue = Math.max(0, round6(safeAmount - feeValue));
+  /**
+   * 纯马币结算（MYR → MYR），三步全部在同一币种内完成，没有任何汇率换算：
+   *   手续费   = 提现金额 × 通道费率（四舍五入到分）
+   *   预计到账 = 提现金额 − 手续费
+   * 三个数字的单位都是 payoutCurrency（MYR）。
+   */
+  const feeValue = calculateWithdrawalFee(safeAmount, feeRateValue);
+  const receiveValue = calculateWithdrawalReceive(safeAmount, feeRateValue);
 
   function handleGatewayChange(nextId: string) {
     setGatewayId(nextId);
     setError("");
-
-    const next = gateways.find((item) => item.id === nextId);
-
-    if (!next) {
-      setAccountId("");
-      return;
-    }
-
-    const preferred =
-      accounts.find(
-        (item) => item.currency === next.currency && item.isDefault,
-      ) ?? accounts.find((item) => item.currency === next.currency);
-
-    setAccountId(preferred?.id ?? "");
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -361,8 +352,8 @@ export function PlayerWithdrawModal({
       setSubmitted({
         id: data.withdrawal.id,
         amount: data.withdrawal.amount,
-        currency: data.withdrawal.currency,
-        walletAddress: data.withdrawal.walletAddress,
+        currency: payoutCurrency,
+        account: data.withdrawal.walletAddress,
       });
       // 广播钱包变更：带上服务端算好的可用余额，大厅顶栏等展示余额的组件
       // 立刻重绘（再自行重新拉 /api/player/me 校准）。
@@ -471,7 +462,7 @@ export function PlayerWithdrawModal({
                 {formatMoney(Number(submitted.amount), submitted.currency)}
               </p>
               <p className="mt-2 break-all text-[10px] leading-5 text-neutral-500">
-                {submitted.walletAddress}
+                {t("player.withdraw.successAccount")} · {submitted.account}
               </p>
               <p className="mt-2 text-[11px] leading-5 text-neutral-400">
                 {t("player.withdraw.successHint", {
@@ -525,7 +516,7 @@ export function PlayerWithdrawModal({
                 >
                   {gateways.map((item) => (
                     <option key={item.id} value={item.id} className="bg-[#0a0a0a]">
-                      {item.name} · {providerLabel(item.providerType, t)} ·{" "}
+                      {item.name} ·{" "}
                       {t("player.withdraw.channelFee", {
                         rate: formatGatewayRatePercent(item.feeRate, 2),
                       })}
@@ -553,7 +544,7 @@ export function PlayerWithdrawModal({
                         value={account.id}
                         className="bg-[#0a0a0a]"
                       >
-                        {accountLabel(account, t)}
+                        {accountLabel(account)}
                         {account.isDefault
                           ? ` · ${t("player.withdraw.defaultTag")}`
                           : ""}
@@ -564,7 +555,7 @@ export function PlayerWithdrawModal({
                   <div className="mt-1.5 rounded-xl border border-amber-400/25 bg-amber-400/[0.07] px-3.5 py-3">
                     <p className="text-[11px] leading-5 text-amber-200">
                       {t("player.withdraw.walletEmpty", {
-                        currency: currency || walletCurrency,
+                        currency: payoutCurrency,
                       })}
                     </p>
                     <p className="mt-1 text-[10px] leading-4 text-neutral-500">
@@ -585,7 +576,7 @@ export function PlayerWithdrawModal({
                 <span className="flex items-center justify-between gap-2 text-[10px] uppercase tracking-[0.16em] text-neutral-600">
                   <span>
                     {t("player.withdraw.amountLabel", {
-                      currency: currency || walletCurrency,
+                      currency: payoutCurrency,
                     })}
                   </span>
                   <span className="font-mono normal-case tracking-normal text-neutral-700">
@@ -606,16 +597,12 @@ export function PlayerWithdrawModal({
                   placeholder={t("player.withdraw.amountPlaceholder")}
                   className={`${inputClass} font-mono text-lg`}
                 />
-              </label>
-
-              {currency && currency !== walletCurrency ? (
-                <p className="mt-1.5 text-[10px] leading-4 text-amber-300/80">
-                  {t("player.withdraw.channelCurrencyHint", {
-                    currency,
-                    walletCurrency,
+                <span className="mt-1.5 block text-[10px] leading-4 text-neutral-500">
+                  {t("player.withdraw.amountAvailableHint", {
+                    amount: formatDisplayAmount(availableBalance, payoutCurrency),
                   })}
-                </p>
-              ) : null}
+                </span>
+              </label>
 
               {availableBalance > 0 ? (
                 <button
@@ -625,7 +612,7 @@ export function PlayerWithdrawModal({
                       availableBalance,
                       Number(limits.max),
                     );
-                    setAmount(String(round6(maxValue)));
+                    setAmount(String(roundPayoutAmount(maxValue)));
                     setError("");
                   }}
                   className="mt-2 inline-flex h-7 items-center rounded-lg border border-[#d4af37]/25 px-2.5 text-[10px] text-[#f0d27c] transition-colors hover:bg-[#d4af37]/10"
@@ -633,7 +620,7 @@ export function PlayerWithdrawModal({
                   {t("player.withdraw.amountAll")} ·{" "}
                   {formatMoney(
                     Math.min(availableBalance, Number(limits.max)),
-                    currency || walletCurrency,
+                    payoutCurrency,
                   )}
                 </button>
               ) : null}
@@ -644,7 +631,7 @@ export function PlayerWithdrawModal({
                     {t("player.withdraw.feeLabel")}
                   </dt>
                   <dd className="font-mono tabular-nums text-neutral-300">
-                    {formatMoney(feeValue, currency || walletCurrency)}
+                    {formatMoney(feeValue, payoutCurrency)}
                   </dd>
                 </div>
                 <div className="flex items-center justify-between gap-3">
@@ -652,7 +639,7 @@ export function PlayerWithdrawModal({
                     {t("player.withdraw.receiveLabel")}
                   </dt>
                   <dd className="font-mono font-bold tabular-nums text-[#f0d27c]">
-                    {formatMoney(receiveValue, currency || walletCurrency)}
+                    {formatMoney(receiveValue, payoutCurrency)}
                   </dd>
                 </div>
                 <p className="pt-1 text-[9px] leading-4 text-neutral-600">

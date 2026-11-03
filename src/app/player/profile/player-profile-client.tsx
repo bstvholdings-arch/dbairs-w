@@ -978,6 +978,7 @@ export function PlayerProfileClient({
                 >
                   <PlayerWithdrawalAccounts
                     accounts={current.withdrawalAccounts}
+                    currency={walletCurrency}
                     onChange={(nextAccounts) =>
                       setCurrent((prev) => ({
                         ...prev,

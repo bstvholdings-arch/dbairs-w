@@ -5,6 +5,10 @@ import { parseWithdrawalAmount } from "@/lib/payment-gateway";
 import { resolvePaymentPlayerIdentity } from "@/lib/payment-player";
 import { KYC_REQUIRED_CODE, KYC_REQUIRED_MESSAGE } from "@/lib/kyc";
 import { prisma } from "@/lib/prisma";
+import {
+  isFiatPayoutChannel,
+  normalizePayoutCurrency,
+} from "@/lib/withdrawal-channels";
 
 function jsonError(message: string, status: number, code?: string) {
   return Response.json(
@@ -14,7 +18,7 @@ function jsonError(message: string, status: number, code?: string) {
 }
 
 /**
- * 玩家发起提现申请。
+ * 玩家发起提现申请（纯法币 MYR → MYR，不做汇率换算）。
  * POST /api/withdrawal/create
  *
  * Body: { gatewayId, accountId, amount, walletAddress?, playerId? }
@@ -97,7 +101,9 @@ export async function POST(request: NextRequest) {
         tenantId: true,
         balance: true,
         status: true,
-        tenant: { select: { withdrawalRequiredApprovals: true } },
+        tenant: {
+          select: { withdrawalRequiredApprovals: true, currency: true },
+        },
       },
     });
 
@@ -187,6 +193,7 @@ export async function POST(request: NextRequest) {
       select: {
         id: true,
         name: true,
+        providerType: true,
         currency: true,
       },
     });
@@ -195,10 +202,25 @@ export async function POST(request: NextRequest) {
       return jsonError("代付网关不存在、未启用或不属于当前租户", 404);
     }
 
-    // 账号币种必须与通道币种一致，否则会出现「USDT 通道把钱打到 MYR 银行卡」的错付。
-    if (account && account.currency !== gateway.currency) {
+    // 纯法币提现：只允许「本站记账币种 + 非加密」的通道。
+    // 加密通道 / 跨币种通道等于要按汇率折算，本流程不做，一律拒绝。
+    const payoutCurrency = normalizePayoutCurrency(player.tenant.currency);
+
+    if (!isFiatPayoutChannel(gateway, payoutCurrency)) {
       return jsonError(
-        `该提现账号币种（${account.currency}）与通道币种（${gateway.currency}）不一致`,
+        `该通道不支持 ${payoutCurrency} 法币提现，请重新选择提现通道`,
+        400,
+        "channel_not_fiat",
+      );
+    }
+
+    // 账号币种必须与出款币种一致，否则会出现「MYR 通道把钱打到 USDT 钱包」的错付。
+    if (
+      account &&
+      normalizePayoutCurrency(account.currency) !== payoutCurrency
+    ) {
+      return jsonError(
+        `该提现账号币种（${account.currency}）与出款币种（${payoutCurrency}）不一致`,
         400,
         "account_currency_mismatch",
       );
@@ -219,7 +241,7 @@ export async function POST(request: NextRequest) {
     if (availableBalance.lt(amount)) {
       return jsonError(
         pendingAmount.greaterThan(0)
-          ? `可用余额不足（已有 ${pendingAmount.toFixed(2)} ${gateway.currency} 提现申请处理中）`
+          ? `可用余额不足（已有 ${pendingAmount.toFixed(2)} ${payoutCurrency} 提现申请处理中）`
           : "玩家余额不足",
         409,
         "insufficient_available_balance",
@@ -232,7 +254,9 @@ export async function POST(request: NextRequest) {
         playerId: player.id,
         gatewayId: gateway.id,
         amount,
-        currency: gateway.currency,
+        // 落库统一用本站记账币种（MYR）：脏数据里的网关币种 "RM" 不能进流水，
+        // 否则回调扣款与对账会出现同一笔钱两种币种代码。
+        currency: payoutCurrency,
         walletAddress,
         status: "pending",
         approvals: 0,

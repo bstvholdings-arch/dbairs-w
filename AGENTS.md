@@ -110,6 +110,15 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 已知边界（不要试图在客户端解决）：域名在 DNS / SNI 层已被封时，页面根本打不开，这段脚本没有机会执行。那种情况只能靠「开站时把多个域名链接一起发给客户」+ 备用域名提前配好 DNS 兜住；不要为了「连页面都打不开也要跳」去搞隐形 iframe / 第三方探针，误判代价是把正常玩家弹走。
 - 商户后台 `/tenant/settings` 与超管【编辑租户】弹窗共用同一份输入框口径（一行一个 / 逗号分隔、实时计数、最多 5 个）；新增文案必须同时补 `zh.json` 与 `en.json`。
 
+### 9. 提现：纯法币同币种（MYR → MYR），禁止汇率换算
+
+- 玩家提现是**等值法币出款**：提现金额 / 手续费 / 到账金额单位全部是 `Tenant.currency`（默认 MYR）。**禁止**再引入 USDT / TRC20 / 汇率折算那一套（历史上存在过「MYR 余额提现成 USDT」的口径，已彻底移除，不得回退）。
+- 通道白名单只认「非加密 + 币种等于本站记账币种」：唯一判定是 `src/lib/withdrawal-channels.ts` 的 `isFiatPayoutChannel()`（`usdt_*` / `crypto_*` / `coin_*` 前缀一律排除）；`/api/player/withdrawal-gateways` 与 `POST /api/withdrawal/create` 必须用同一份判定，前者下发的集合就是后者接受的集合。
+- 费率由后台按通道维护（`PaymentGateway.payoutSellRate`），前端只渲染 `GET /api/player/withdrawal-gateways` 下发的 `feeRate`，**禁止**在组件里写死费率或通道列表。手续费口径固定为 `calculateWithdrawalFee(amount, feeRate)`（四舍五入到分）+ `calculateWithdrawalReceive(amount, feeRate)`，服务端与弹窗共用，不要各写一份。
+- 收款账号只允许「银行账号 + 同币种」：`isFiatPayoutAccount()`；弹窗只提交 `{ gatewayId, accountId, amount }`，真实账号由服务端回查拼装，银行账号在前端永远是掩码。
+- 币种归一化只走 `normalizePayoutCurrency()`（脏数据 `RM` 视同 `MYR`）；`Withdrawal.currency` 落库时写入归一化后的记账币种，**禁止**把网关上的原始字符串直接写进流水。
+- 提现金额输入最多两位小数（法币只到「分」）；`parseWithdrawalAmount` 仍兼容 6 位是为了历史数据，不要因此放宽前端校验。
+
 
 
 

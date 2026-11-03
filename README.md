@@ -255,7 +255,7 @@ DEFAULT_TENANT=winvora
 
 - **玩家弹窗两种空态**：`merchantConfigured=false` → 「该商户暂未开通充值通道，请联系客服。」；有通道但全部停用 / 配置不完整 → 「当前没有可用的支付通道。」（`src/locales/zh.json` → `player.deposit.merchantNoChannels` / `player.deposit.noGateways`）。
 - **无需改表**：`PaymentGateway` 已有 `ownerId` / `isPlatformGateway` / `reviewStatus`，本次只是改变了读写口径（平台通道不再参与收款）。
-- **提现（代付）暂未改动**：`/api/player/withdrawal-gateways` 仍允许「平台历史通道 + 本商户通道」，避免存量代付通道立刻失效；后续可按同一模式整体下放。
+- **提现（代付）归属口径暂未下放**：`/api/player/withdrawal-gateways` 仍允许「平台历史通道 + 本商户通道」，避免存量代付通道立刻失效；但它已收窄为**纯法币 MYR → MYR**（非加密 + 币种等于 `Tenant.currency`），USDT 等跨币种通道不再出现在玩家端。后续可按充值同一模式把归属整体下放。
 - **集成中心四个页签都是深链接**：`/admin/integrations?tab=global|providers|gateways|merchants`（`readIntegrationTab` 收敛非法值，统一回落到 `global`），页面内部切页签不触发路由跳转，未提交的 IP 白名单文本与搜索词不会丢。
 
 
@@ -293,17 +293,32 @@ curl -X POST "https://<host>/api/deposit/callback/usdt_trc20" \
 
 | 接口 | 说明 |
 | --- | --- |
-| `GET /api/player/withdrawal-gateways` | 玩家提现弹窗的通道列表：只返回 `isActive` + `APPROVED` + （平台公用或本租户）的网关，附 `feeRate`（`payoutSellRate`）与 `amountLimits` |
-| `POST /api/withdrawal/create` | 玩家提单：玩家 Cookie 身份 → KYC 闸门 → 金额区间 → 收款账号解析 → 通道币种核对 → 可用余额校验 → 落库 `Withdrawal(status=pending)` |
+| `GET /api/player/withdrawal-gateways` | 玩家提现弹窗的通道列表（**纯法币 MYR → MYR**）：只返回 `isActive` + `APPROVED` + （平台公用或本租户）+ **非加密（`usdt_*` 等一律排除）+ 币种等于 `Tenant.currency`** 的网关，附 `payoutCurrency`、`feeRate`（`payoutSellRate`）与 `amountLimits` |
+| `POST /api/withdrawal/create` | 玩家提单：玩家 Cookie 身份 → KYC 闸门 → 金额区间 → 收款账号解析 → 纯法币通道 + 出款币种核对 → 可用余额校验 → 落库 `Withdrawal(status=pending, currency=本站记账币种)` |
 | `POST /api/withdrawal/callback` | 代付商回调：`pending → success` 条件更新成功者才扣 `Player.balance` 并写 `Transaction(type=withdraw)`；`failed` 只改状态 |
 
 - **按钮与权限**（`src/components/player/withdraw-button.tsx`）：玩家中心顶部余额右侧与 Deposit 并排；未实名 → 点击弹「Please complete identity verification first.」+ 去认证入口；可用余额 < 最低额 → 点击说明最低提现金额；两者都满足 → 金色高亮并打开提现弹窗。鼠标悬停 `title` 直接显示被拦原因。
-- **黑金提现弹窗**（`src/components/player/withdraw-modal.tsx`）：提现通道下拉（显示代付费率）→ 提现钱包下拉（只列玩家已绑定的收款账号，加密账号显示网络 + 缩略地址，法币显示银行 + 掩码账号）→ 金额输入 + 「全部」→ 实时显示**预估手续费**与**预计到账**。没有匹配币种的账号时不出表单，只给「去绑定提现账号」。
-- **收款账号不由前端回传**：弹窗只提交 `{ gatewayId, accountId, amount }`；`accountId` 由服务端回查（校验 `playerId` + `tenantId`），加密货币取真实钱包地址、法币拼成「银行 · 账号 · 持有人」写入 `Withdrawal.walletAddress`。列表接口里的银行账号是掩码，前端拿不到真实账号也改不了。
+- **黑金提现弹窗**（`src/components/player/withdraw-modal.tsx`）：提现通道下拉（通道名 + 后台维护的费率）→ 提现账号下拉（只列玩家已绑定、`accountType=bank` 且币种等于本站记账币种的账号，文案 `Maybank (1234) · 姓名`）→ 提现金额（最多两位小数）+「全部」→ 实时显示**预估手续费**与**预计到账**。没有可用银行账号时不出表单，只给「去绑定提现账号」。
+- **纯法币、不做汇率换算**：金额 / 手续费 / 到账金额单位全部是 `Tenant.currency`（默认 MYR）。`src/lib/withdrawal-channels.ts` 是唯一口径：`calculateWithdrawalFee(amount, feeRate) = round2(amount × feeRate)`、`calculateWithdrawalReceive = amount − fee`，服务端与弹窗共用；通道列表与费率都由后台下发，前端不写死任何数字。
+- **收款账号不由前端回传**：弹窗只提交 `{ gatewayId, accountId, amount }`；`accountId` 由服务端回查（校验 `playerId` + `tenantId`），法币拼成「银行 · 账号 · 持有人」写入 `Withdrawal.walletAddress`。列表接口里的银行账号是掩码，前端拿不到真实账号也改不了。
 - **金额区间**：默认单笔 `10 ~ 1,000,000`，可用 `WITHDRAWAL_MIN_AMOUNT` / `WITHDRAWAL_MAX_AMOUNT` 覆盖；`parseWithdrawalAmount`（`src/lib/payment-gateway.ts`）是唯一口径，前端只做同口径提示。
 - **可用余额 = 余额 − 处理中的提现单**：`pending` 阶段不扣款（扣款发生在代付成功回调），所以提单时必须用 `prisma.withdrawal.aggregate({ status: "pending" })` 扣掉在途金额，否则同一笔余额可以被连开多张 pending 单重复提走；超额返回 `409 insufficient_available_balance`。玩家中心同步展示 `summary.pendingWithdrawalAmount`。
-- **币种一致性**：`account.currency` 必须等于 `gateway.currency`，否则 `400 account_currency_mismatch`，避免 USDT 通道把钱打到 MYR 银行卡。
+- **币种一致性**：通道必须通过 `isFiatPayoutChannel()`（非加密 + 币种等于本站记账币种），否则 `400 channel_not_fiat`；`account.currency` 归一化后必须等于出款币种（`normalizePayoutCurrency`，脏数据 `RM` 视同 `MYR`），否则 `400 account_currency_mismatch`，避免 MYR 通道把钱打到 USDT 钱包。
 - **前端遗留调用兼容**：`walletAddress` 仍然可用（商户代提 / 脚本），与 `accountId` 二选一。
+
+#### 提现账号绑定：银行 / 支付方式用「带 logo 的自定义下拉」
+
+- 原生 `<select>` 的 `<option>` 里放不下图片，玩家认不出收款银行，所以绑定表单改用
+  `src/components/player/payout-method-select.tsx`（触发框 = logo + 名称，展开面板 = 左 logo 右名称 + 当前项打勾，
+  点击面板外 / `Esc` 关闭，↑↓ / Home / End / Enter 可键盘操作）。
+- 银行目录唯一事实来源是 `src/lib/payout-methods.ts` 的 `PAYOUT_METHODS`（FPX、Maybank、CIMB Bank、Public Bank、
+  RHB Bank、Hong Leong Bank、Touch 'n Go eWallet、GrabPay、Boost），logo 自托管在 `public/banks/*.svg`，
+  **不挂外站图床**（图床被墙 / 挂掉就是整排裂图），也不要在组件里散写图片地址。
+- 落库值仍是「银行名称」纯文本（`PlayerWithdrawalAccount.bankName`），接口与表结构零改动；
+  `findPayoutMethodByName()` 用别名（`MBB` / `Maybank2u` / `TnG` / `HLB`…）把历史手输值回填成「logo + 品牌名」，
+  已绑定账号卡片也据此显示银行 logo。
+- 玩家银行不在目录里 → 选最后一行「其他银行 / 手动输入」退化成文本框（`readBankName()` 口径不变），
+  **不要**为了凑目录去改品牌名；logo 404 / 加载失败降级成黑金首字母方块（`payout-method-logo.tsx`）。
 
 ### 余额实时刷新 + 全站币种统一（RM / $ / ฿ / Rp）
 
