@@ -779,7 +779,8 @@ button:not(:disabled):hover .withdrawal-button-sheen {
  * buildThemeBackgroundStyle() 内联下发；本节只声明「怎么用」。
  * 默认值写在文件顶部的 :root（经典暗黑金），漏挂根节点的场景也不会变成透明。
  *
- * 铁律：主题色一律**半透明叠加在深色底上**，卡片底板永远是 rgb(3 5 10 / .82)。
+ * 铁律：主题色一律**半透明叠加在深色底上**；卡片本身没有边框与底色，
+ * 卡片里唯一的底板是三个浮层胶囊（在线人数 / HOT / 游戏商）的 rgb(0 0 0 / .6)。
  * 任何一条规则都不许出现浅色 / 白色不透明底 —— 那会把暗黑电竞风洗成白卡。
  */
 
@@ -826,34 +827,46 @@ button:not(:disabled):hover .withdrawal-button-sheen {
   }
 }
 
-/* 卡片外框：1px 点缀色描边 + 深色投影；悬停整圈提亮（不加任何底色） */
+/*
+ * 游戏卡片 = **无边框图片卡**（产品明确设计，别再补边框 / 底色）：
+ * 没有外框、没有卡片底色、没有底部文字底板，整面墙就是
+ * 「纯黑背景 + 一张张圆角图片 + 图下一行白字」。所以本节只做两件事：
+ *   ① 封面圆角容器（.tb-card__cover）的深色投影，让图片与背景之间有层次；
+ *   ② 悬停 / 键盘聚焦时给封面一圈主题色光晕（**不碰图片本身**）。
+ */
 .tb-card {
-  border-width: 1px;
-  border-style: solid;
-  border-color: rgb(var(--tb-rgb) / 0.22);
-  box-shadow: 0 20px 44px -30px rgb(0 0 0 / 0.92);
+  /* 容器只承接点击与悬停，不含任何可视边界 */
+  background-color: transparent;
+  border: 0;
+  outline: none;
+}
+
+.tb-card__cover {
+  border-radius: 0.75rem;
+  /* 图片加载中 / 占位时的深底：永远是深色，不会出现浅色底板 */
+  background-color: rgb(4 6 10 / 0.6);
+  box-shadow: 0 18px 34px -26px rgb(0 0 0 / 0.95);
   transition:
-    border-color 0.3s ease,
     box-shadow 0.3s ease,
     transform 0.3s ease;
 }
 
-.tb-card:hover,
-.tb-card:focus-visible {
-  border-color: rgb(var(--tb-rgb) / 0.6);
+.tb-card:hover .tb-card__cover {
   box-shadow:
-    0 0 0 1px rgb(var(--tb-rgb) / 0.3),
-    0 26px 50px -26px rgb(var(--tb-rgb) / 0.45);
+    0 0 0 1px rgb(var(--tb-rgb) / 0.4),
+    0 24px 44px -24px rgb(var(--tb-rgb) / 0.5);
 }
 
-/* 底部文字区底板：深黑半透明 + 点缀色细描边（压住底部一条，主图完整透出） */
-.tb-card__plate {
-  background-color: rgb(3 5 10 / 0.82);
-  border-top: 1px solid rgb(var(--tb-rgb) / 0.3);
-  backdrop-filter: blur(3px);
+/* 键盘聚焦：图卡没有边框可高亮，用主题色描边兜住无障碍（鼠标点击不出现） */
+.tb-card:focus-visible .tb-card__cover {
+  box-shadow:
+    0 0 0 1px rgb(var(--tb-rgb) / 0.55),
+    0 24px 44px -24px rgb(var(--tb-rgb) / 0.5);
+  outline: 2px solid rgb(var(--tb-rgb) / 0.7);
+  outline-offset: 2px;
 }
 
-/* 游戏名：白字 + 深色投影，任何主题色下都清楚 */
+/* 游戏名：图下方白字 + 深色投影，任何主题色下都清楚（无背景板） */
 .tb-card__name {
   color: rgb(255 255 255 / 0.96);
   text-shadow: 0 2px 6px rgb(0 0 0 / 0.92);

@@ -8,10 +8,15 @@ import {
 
 /**
  * GET   /api/tenant/settings —— 当前商户的站点设置（皮肤 + 大厅模块开关）
- * PATCH /api/tenant/settings —— 保存皮肤 / 模块开关 / 品牌 Logo
+ * PATCH /api/tenant/settings —— 保存皮肤 / 模块开关 / 备用域名池
  *
  * 只能改自己的租户：where 固定使用会话里的 tenantId，
  * 请求体里的 tenantId / id 一律忽略（不存在「改别人站」的入口）。
+ *
+ * 写白名单里**没有** logoUrl（品牌 Logo）与 themeBackground（主题背景色）：
+ * 这两项都是平台配置项，只能由超管在【租户管理 → 新建 / 编辑租户】里写。
+ * 商户构造请求带上它们也会被忽略（见 lib/tenant-console.ts 的
+ * saveTenantSiteSettings），否则等于给商户开了一个「换掉自己 Logo」的后门。
  */
 
 function jsonError(message: string, status: number) {
@@ -62,12 +67,13 @@ export async function PATCH(request: NextRequest) {
     }
 
     const input = (body ?? {}) as Record<string, unknown>;
+    // 注意：这里**故意不转发** input.logoUrl 与 input.themeBackground。
+    // 品牌 Logo / 主题背景色都是平台配置项，唯一写入口是超管的
+    // PUT /api/tenants/[id]；商户请求里带上也当没看见。
     const result = await saveTenantSiteSettings({
       tenantId: gate.scope.tenantId,
       themeColor: input.themeColor,
       layout: input.layout,
-      // 玩家大厅顶栏的白标 Logo：空字符串 = 清空，前台退回商户名首字母占位
-      logoUrl: input.logoUrl,
       // 多域名防封：备用域名池（数组或逗号 / 换行分隔的文本，[] = 清空）
       backupDomains: input.backupDomains,
     });

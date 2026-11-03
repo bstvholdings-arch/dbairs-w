@@ -21,6 +21,12 @@ export type TenantRow = {
   subdomain: string;
   /** 多域名防封：备用域名池（0-5 条，管理员可在编辑弹窗里维护） */
   backupDomains: string[];
+  /**
+   * 品牌 Logo（Tenant.logoUrl，已校验）：玩家前台大厅 / 登录注册 / 玩家中心
+   * 都渲染它，null = 未配置，前台自动用商户名首字母占位。
+   * **只有超管能写** —— 上传入口就在本目录的租户弹窗里。
+   */
+  logoUrl: string | null;
   status: string;
   withdrawalRequiredApprovals: number;
   /** 主题背景色（存在 Tenant.layoutConfig 里，前台大厅与品牌展馆共用） */
@@ -55,6 +61,15 @@ export type TenantFormValues = {
   name: string;
   domain: string;
   subdomain: string;
+  /**
+   * 品牌 Logo（Tenant.logoUrl）。
+   *
+   * 超管在弹窗里点【上传 Logo】→ POST /api/admin/tenant-logos/upload →
+   * 拿到 /api/tenant-logos/<uuid>.png 后回填到这里，提交时随租户一起落库。
+   * 空字符串 = 不配 / 清空，玩家前台自动用商户名首字母占位。
+   * **这是全系统唯一写入口**：商户后台没有任何上传或修改控件。
+   */
+  logoUrl: string;
   /**
    * 备用域名池（多域名防封自动切换），输入框里一行一个 / 逗号分隔。
    * 编辑器里保持字符串原样，提交时再走 readBackupDomainsInput 归一化成数组。

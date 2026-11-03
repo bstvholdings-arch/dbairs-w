@@ -61,10 +61,16 @@ model Tenant {
   // 入库前一律走 normalizeDomain()：小写、去协议、去路径、去末尾点。
   backupDomains String[] @default([])
 
-  // 玩家大厅顶部品牌展示（白标）：商户自己的 Logo 图片地址
-  // logoUrl：http(s) 绝对地址或 / 开头的站内路径（如 /brand/winvora.png），
-  //          留空则前台用「商户名首字母」生成占位图（见 src/app/lobby-client.tsx）。
-  //          读写与校验统一走 src/lib/storefront.ts 的 normalizeTenantLogoUrl()。
+  // 玩家前台品牌展示（白标）：商户自己的 Logo 图片地址
+  // logoUrl：http(s) 绝对地址，或 / 开头的站内路径
+  //          （超管上传接口 POST /api/admin/tenant-logos/upload 返回的
+  //            /api/tenant-logos/<uuid>.png 就是这种路径）；
+  //          留空则前台用「商户名首字母」生成占位图
+  //          （见 src/components/brand/tenant-brand.tsx）。
+  //          ⚠️ 权限：**只有超管能写** —— 唯一写入口是 POST /api/tenants 与
+  //             PUT /api/tenants/[id]（编辑租户弹窗里的上传组件）；商户后台
+  //             /tenant/settings 已彻底移除上传 / 修改入口，PATCH /api/tenant/settings
+  //             也会显式忽略 logoUrl。读取侧走 normalizeTenantLogoUrl() 校验。
   logoUrl String?
 
   createdAt DateTime @default(now())

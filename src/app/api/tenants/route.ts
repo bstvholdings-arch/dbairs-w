@@ -11,6 +11,7 @@ import { prisma } from "@/lib/prisma";
 import { TENANT_ROLE } from "@/lib/rbac";
 import {
   normalizeStorefrontLayout,
+  normalizeTenantLogoUrl,
   serializeLayoutConfig,
 } from "@/lib/storefront";
 import { getSuperAdminFromRequest } from "@/lib/super-admin";
@@ -95,6 +96,11 @@ async function createTenantWithAdmin(input: {
   backupDomains: string[];
   /** 开站时选定的主题背景色（写进 layoutConfig，前台大厅与品牌展馆共用） */
   layoutConfig: ReturnType<typeof serializeLayoutConfig>;
+  /**
+   * 品牌 Logo（白标）：只能由超管在开站弹窗里上传，null = 未配置，
+   * 前台自动用商户名首字母占位（见 components/brand/tenant-brand.tsx）。
+   */
+  logoUrl: string | null;
 }): Promise<CreateTenantWithAdminResult> {
   try {
     const created = await prisma.$transaction(async (tx) => {
@@ -107,6 +113,7 @@ async function createTenantWithAdmin(input: {
           withdrawalRequiredApprovals: input.withdrawalRequiredApprovals,
           planId: input.planId,
           layoutConfig: input.layoutConfig,
+          logoUrl: input.logoUrl,
         },
         select: tenantSelectWithLayout,
       });
@@ -244,6 +251,33 @@ export async function POST(request: NextRequest) {
       ? rawThemeBackground
       : DEFAULT_THEME_BACKGROUND;
 
+    /**
+     * 品牌 Logo（白标）：图片由超管先在弹窗里上传
+     * （POST /api/admin/tenant-logos/upload 返回 /api/tenant-logos/<uuid>.png），
+     * 这里只校验地址 + 落库；空 / 不传 = 未配置，前台用商户名首字母占位。
+     * 商户后台没有这个字段的写入口（/api/tenant/settings 显式忽略 logoUrl）。
+     */
+    let logoUrl: string | null = null;
+
+    if (input.logoUrl !== undefined && input.logoUrl !== null) {
+      if (typeof input.logoUrl !== "string") {
+        return jsonError("Logo 地址格式不正确", 400);
+      }
+
+      const trimmedLogoUrl = input.logoUrl.trim();
+
+      if (trimmedLogoUrl) {
+        logoUrl = normalizeTenantLogoUrl(trimmedLogoUrl);
+
+        if (!logoUrl) {
+          return jsonError(
+            "Logo 必须是 http(s) 开头的图片地址，或以 / 开头的站内路径（上传后的地址即为此格式）",
+            400,
+          );
+        }
+      }
+    }
+
     const [domainExists, subdomainExists, emailOwner] = await Promise.all([
       prisma.tenant.findFirst({
         where: { domain: { equals: domain, mode: "insensitive" } },
@@ -310,6 +344,7 @@ export async function POST(request: NextRequest) {
       withdrawalRequiredApprovals,
       planId: defaultPlan?.id ?? "unassigned",
       adminEmail,
+      logoUrl,
       // 只写这一项，其余装修字段由 normalizeStorefrontLayout 补默认值，
       // 与「老租户缺字段」走同一套容错逻辑。
       layoutConfig: serializeLayoutConfig(

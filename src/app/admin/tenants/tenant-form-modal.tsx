@@ -13,6 +13,11 @@ import {
 import { createPortal } from "react-dom";
 
 import { useLanguage } from "@/components/LanguageProvider";
+import { brandInitial } from "@/lib/brand";
+import {
+  TENANT_LOGO_URL_MAX_LENGTH,
+  normalizeTenantLogoUrl,
+} from "@/lib/storefront";
 import {
   buildThemeBackgroundStyle,
   DEFAULT_THEME_BACKGROUND,
@@ -44,6 +49,17 @@ type IssuedCredentials = {
   password: string;
 };
 
+/**
+ * Tenant Logo 上传的前端校验口径。
+ *
+ * 数值与服务端 lib/tenant-logo-storage.ts 的 TENANT_LOGO_MAX_FILE_BYTES 一致；
+ * 这里**故意不 import 那个模块** —— 它依赖 node:fs / node:crypto，进了浏览器包
+ * 会直接炸。服务端仍会按文件头（magic bytes）再验一次类型与大小，
+ * 前端这两条只为「别让用户白等一次上传」。
+ */
+const LOGO_MAX_FILE_BYTES = 2 * 1024 * 1024;
+const LOGO_ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
 export function TenantFormModal({
   mode,
   tenant,
@@ -59,10 +75,13 @@ export function TenantFormModal({
   const { t } = useLanguage();
   const titleId = useId();
   const nameRef = useRef<HTMLInputElement>(null);
+  const logoFileRef = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState<TenantFormValues>({
     name: tenant?.name ?? "",
     domain: tenant?.domain ?? "",
     subdomain: tenant?.subdomain ?? "",
+    // 品牌 Logo：超管上传后拿到 /api/tenant-logos/<uuid>.png，原样回填
+    logoUrl: tenant?.logoUrl ?? "",
     // 备用域名池：进输入框时一行一个，提交前再归一化成数组
     backupDomains: formatBackupDomains(tenant?.backupDomains ?? []),
     status: tenant?.status ?? "active",
@@ -74,6 +93,14 @@ export function TenantFormModal({
   });
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // Logo 上传三态：上传中 / 失败提示 / 加载失败地址
+  const [logoUploading, setLogoUploading] = useState(false);
+  const [logoError, setLogoError] = useState<string | null>(null);
+  /**
+   * 记「加载失败的那个地址」而不是布尔值：换一张 Logo 后自动重试新地址，
+   * 也不需要为了重置状态在 effect 里 setState（React Compiler 禁止渲染期副作用）。
+   */
+  const [brokenLogoUrl, setBrokenLogoUrl] = useState<string | null>(null);
   // 保存成功但还需要用户确认（有凭据要抄 / 有提示要看）时，按钮变成「完成」。
   const [credentials, setCredentials] = useState<IssuedCredentials | null>(
     null,
@@ -99,6 +126,15 @@ export function TenantFormModal({
   const backupDomainCount = parsedBackupDomains.ok
     ? parsedBackupDomains.domains.length
     : 0;
+
+  /**
+   * Logo 预览口径 = 玩家前台口径：能通过 normalizeTenantLogoUrl 就显示图，
+   * 否则显示「商户名首字母」金色方块（与 TenantBrandLockup 完全一致）。
+   */
+  const previewLogoUrl = normalizeTenantLogoUrl(form.logoUrl);
+  const previewLogoBroken =
+    previewLogoUrl !== null && brokenLogoUrl === previewLogoUrl;
+  const logoFallbackInitial = brandInitial(form.name);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -153,6 +189,70 @@ export function TenantFormModal({
       window.setTimeout(() => setCopied(false), 2000);
     } catch {
       setCopied(false);
+    }
+  }
+
+  /**
+   * 上传一张 Tenant Logo（超管唯一入口）。
+   *
+   * 走 POST /api/admin/tenant-logos/upload —— 只要超管会话，商户身份 401。
+   * 成功后把返回的 /api/tenant-logos/<uuid>.png 回填到 form.logoUrl，
+   * 点【保存】时才真正写进 Tenant.logoUrl（新建租户则是随 POST 一起落库）。
+   */
+  async function handleLogoUpload(file: File) {
+    setLogoError(null);
+
+    if (!LOGO_ALLOWED_TYPES.includes(file.type)) {
+      setLogoError(t("tenants.form.error.logoFileType"));
+      return;
+    }
+
+    if (file.size > LOGO_MAX_FILE_BYTES) {
+      setLogoError(
+        t("tenants.form.error.logoFileTooLarge", {
+          max: Math.round(LOGO_MAX_FILE_BYTES / 1024 / 1024),
+        }),
+      );
+      return;
+    }
+
+    setLogoUploading(true);
+
+    try {
+      const body = new FormData();
+      body.append("file", file);
+
+      const response = await fetch("/api/admin/tenant-logos/upload", {
+        method: "POST",
+        body,
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => null)) as {
+        url?: string;
+        error?: string;
+      } | null;
+
+      if (response.status === 401) {
+        router.replace("/login?next=/admin/tenants");
+        return;
+      }
+
+      if (!response.ok || !payload?.url) {
+        setLogoError(payload?.error ?? t("tenants.form.error.logoUploadFailed"));
+        return;
+      }
+
+      // 新地址一定和旧的不同 → 预览自动重新加载（brokenLogoUrl 记的是旧地址）
+      updateField("logoUrl", payload.url);
+    } catch {
+      setLogoError(t("tenants.form.error.logoUploadFailed"));
+    } finally {
+      setLogoUploading(false);
+
+      if (logoFileRef.current) {
+        logoFileRef.current.value = "";
+      }
     }
   }
 
@@ -211,6 +311,8 @@ export function TenantFormModal({
             withdrawalRequiredApprovals: form.withdrawalRequiredApprovals,
             // 主题背景色：只有这里能写（商户后台与装修页均无入口）
             themeBackground: normalizeThemeBackground(form.themeBackground),
+            // 品牌 Logo：只有这里能写；空字符串 = 清空（前台回退商户名首字母）
+            logoUrl: form.logoUrl.trim(),
             // 新建租户一律为 active（后端默认值），只有编辑时才提交状态。
             ...(mode === "edit" ? { status: form.status } : {}),
           }),
@@ -418,6 +520,106 @@ export function TenantFormModal({
                 />
               </label>
 
+              {/*
+                Tenant Logo（商户品牌 Logo）—— **全系统唯一的上传入口**。
+                玩家前台大厅 / 登录注册 / 玩家中心都读 Tenant.logoUrl：
+                有图显示图，没图自动降级为「商户名首字母」金色方块。
+                商户后台（/tenant/settings）已彻底移除上传 / 修改控件与文案，
+                所以这里必须能：上传、替换、清除、看实时预览。
+              */}
+              <div
+                className="rounded-xl border border-white/[0.08] bg-white/[0.015] p-3.5"
+                data-tenant-logo-field
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] uppercase tracking-[0.16em] text-neutral-600">
+                    {t("tenants.form.logo")}
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => logoFileRef.current?.click()}
+                      disabled={logoUploading}
+                      className="rounded-lg border border-[#d4af37]/25 bg-[#d4af37]/10 px-2.5 py-1 text-[10px] font-semibold text-[#f0d27c] transition-colors hover:border-[#d4af37]/50 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {logoUploading
+                        ? t("tenants.form.logoUploading")
+                        : form.logoUrl.trim()
+                          ? t("tenants.form.logoReplace")
+                          : t("tenants.form.logoUpload")}
+                    </button>
+                    {form.logoUrl.trim() ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          updateField("logoUrl", "");
+                          setLogoError(null);
+                        }}
+                        disabled={logoUploading}
+                        className="rounded-lg border border-white/10 px-2.5 py-1 text-[10px] text-neutral-400 transition-colors hover:border-red-400/40 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {t("tenants.form.logoRemove")}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+
+                <input
+                  ref={logoFileRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  className="hidden"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+
+                    if (file) {
+                      void handleLogoUpload(file);
+                    }
+                  }}
+                />
+
+                <div className="mt-2 flex items-center gap-3">
+                  {/* 预览：与玩家前台同一套规则（有图显示图，没有则首字母方块） */}
+                  <div className="flex h-14 w-32 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-white/[0.08] bg-black/50 px-2">
+                    {previewLogoUrl && !previewLogoBroken ? (
+                      // Logo 来自本站上传接口或外站图床，next/image 的域名白名单管不住
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={previewLogoUrl}
+                        alt={form.name.trim() || t("tenants.form.logo")}
+                        draggable={false}
+                        onError={() => setBrokenLogoUrl(previewLogoUrl)}
+                        className="h-10 w-auto max-w-full object-contain"
+                      />
+                    ) : (
+                      <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-[#f5e6b8] via-[#d4af37] to-[#8a6d1f] text-lg font-black text-[#171105]">
+                        {logoFallbackInitial}
+                      </span>
+                    )}
+                  </div>
+
+                  <input
+                    value={form.logoUrl}
+                    onChange={(event) =>
+                      updateField("logoUrl", event.target.value)
+                    }
+                    maxLength={TENANT_LOGO_URL_MAX_LENGTH}
+                    spellCheck={false}
+                    placeholder={t("tenants.form.logoPlaceholder")}
+                    className="h-10 min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-3 font-mono text-[11px] text-neutral-200 outline-none transition-colors placeholder:text-neutral-700 focus:border-[#d4af37]/50 focus:ring-1 focus:ring-[#d4af37]/30"
+                  />
+                </div>
+
+                <p className="mt-1.5 text-[10px] leading-4 text-neutral-600">
+                  {t("tenants.form.logoHint")}
+                </p>
+                {logoError ? (
+                  <p className="mt-1 text-[10px] leading-4 text-red-300">
+                    {logoError}
+                  </p>
+                ) : null}
+              </div>
+
               <div className="grid gap-4 sm:grid-cols-2">
                 <label className="block">
                   <span className="text-[10px] uppercase tracking-[0.16em] text-neutral-600">
@@ -612,7 +814,7 @@ export function TenantFormModal({
                 </div>
 
                 {/* 实时预览：直接把选中的主题色套到前台同一套 .tb-* class 上，
-                    深色底 + 呼吸光晕 + 卡片外框 / 文字底板描边都是真实渲染结果。 */}
+                    深色底 + 呼吸光晕 + 圆角封面 / 悬停主题色光晕都是真实渲染结果。 */}
                 <div
                   className="tb-lobby-bg relative mt-2 flex items-center gap-3 overflow-hidden rounded-lg border border-white/[0.08] p-2.5"
                   style={
@@ -624,17 +826,14 @@ export function TenantFormModal({
                     aria-hidden="true"
                     className="tb-aura -left-6 -top-8 h-24 w-24"
                   />
-                  <span
-                    aria-hidden="true"
-                    className="tb-card relative block h-[62px] w-[46px] shrink-0 overflow-hidden rounded-lg bg-[#05070c]"
-                  >
-                    <span className="tb-card__plate absolute inset-x-0 bottom-0 flex flex-col gap-0.5 px-1 py-0.5">
-                      <span className="tb-card__name block truncate text-[6px] font-black uppercase leading-none">
-                        DEMO
-                      </span>
-                      <span className="tb-card__provider inline-flex self-start rounded px-1 text-[5px] font-black uppercase italic leading-none">
+                  <span aria-hidden="true" className="block w-[46px] shrink-0">
+                    <span className="tb-card__cover relative block aspect-square w-full overflow-hidden rounded-md bg-[linear-gradient(158deg,#1b2233_0%,#04060a_74%)]">
+                      <span className="tb-card__provider absolute bottom-0.5 left-0.5 inline-flex rounded px-1 text-[5px] font-black uppercase italic leading-none">
                         PG
                       </span>
+                    </span>
+                    <span className="tb-card__name mt-0.5 block truncate text-[6px] font-black uppercase leading-none">
+                      DEMO
                     </span>
                   </span>
                   <span className="relative min-w-0">

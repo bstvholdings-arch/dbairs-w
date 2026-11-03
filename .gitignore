@@ -30,6 +30,9 @@
 # 活动 Banner 图片公开存储（商户后台上传，玩家前台直链读取）
 /.promotion-storage/
 
+# 商户品牌 Logo 公开存储（超管在【租户管理 → 编辑租户】上传，玩家前台直链读取）
+/.tenant-logo-storage/
+
 # debug
 npm-debug.log*
 yarn-debug.log*

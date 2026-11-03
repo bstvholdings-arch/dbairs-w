@@ -1,4 +1,5 @@
 import type { TFunction, TranslationKey } from "./i18n-types";
+import { DEMO_GAME_COVER, pickDemoGameCover } from "./game-cover-catalog";
 
 /**
  * 玩家大厅左侧分类。
@@ -17,8 +18,9 @@ export type LobbyCategoryId =
 export type LobbyCategoryFilter = "all" | LobbyCategoryId;
 
 /**
- * 封面图形：全部用内联 SVG 绘制（见 components/lobby/game-emblem.tsx），
- * 不依赖任何外部图片，离线也能保持「博彩封面」质感。
+ * 封面图形（**仅占位用**）：全部用内联 SVG 绘制（见 components/lobby/game-emblem.tsx），
+ * 只有「没有封面图 / 图加载失败」时才渲染，保证离线也不会是空白方块。
+ * 正常情况卡片主体是真实照片，见 `LobbyGame.imageUrl` 与 src/lib/game-cover-catalog.ts。
  */
 export type LobbyGameEmblem =
   | "reels"
@@ -53,7 +55,7 @@ export type LobbyGame = {
   /** 卡片右上角在线人数胶囊（300 ~ 1500，客户端会持续跳动） */
   online: number;
   art: LobbyGameArt;
-  /** 真实封面图（后台 / 内置素材给出的图）；没有时用 art 的渐变 + 品类图形兜底 */
+  /** 真实封面图（示例封面池 / 后台给出的图）；真没有时用 art 的渐变 + 品类图形兜底 */
   imageUrl?: string;
 };
 
@@ -101,8 +103,9 @@ export type LobbyGameCard = {
   online: number;
   art: LobbyGameArt;
   /**
-   * 卡片主体：游戏商的真实封面图（已做 URL 白名单校验）。
-   * null = 这条游戏没有封面图，GameCard 用 art 的渐变 + 品类图形兜底。
+   * 卡片主体：真实照片地址（已做 URL 白名单校验）。
+   * 来源优先级：`Game.iconUrl`（游戏商给的图）→ 示例封面池（src/lib/game-cover-catalog.ts）。
+   * 只有在封面池被清空时才可能是 null，此时 GameCard 用 art 的渐变 + 品类图形兜底。
    */
   imageUrl: string | null;
 };
@@ -147,6 +150,7 @@ export const LOBBY_GAMES: LobbyGame[] = [
     categories: ["hot", "slot"],
     online: 1284,
     art: { base: "#0d3b2e", accent: "#22c55e", emblem: "mahjong" },
+    imageUrl: DEMO_GAME_COVER.mahjongHandsPurple,
   },
   {
     id: "gates-of-olympus",
@@ -155,6 +159,7 @@ export const LOBBY_GAMES: LobbyGame[] = [
     categories: ["hot", "slot"],
     online: 1420,
     art: { base: "#2b1065", accent: "#a855f7", emblem: "crown" },
+    imageUrl: DEMO_GAME_COVER.slotJackpotTower,
   },
   {
     id: "fortune-tiger",
@@ -163,6 +168,7 @@ export const LOBBY_GAMES: LobbyGame[] = [
     categories: ["hot", "slot"],
     online: 1360,
     art: { base: "#4a1503", accent: "#f97316", emblem: "reels" },
+    imageUrl: DEMO_GAME_COVER.slotFloorGolden,
   },
   {
     id: "sweet-bonanza",
@@ -171,6 +177,7 @@ export const LOBBY_GAMES: LobbyGame[] = [
     categories: ["hot", "slot"],
     online: 1310,
     art: { base: "#4a0d3a", accent: "#ec4899", emblem: "clover" },
+    imageUrl: DEMO_GAME_COVER.slotNeonPurple,
   },
   {
     id: "wild-bandito",
@@ -179,6 +186,7 @@ export const LOBBY_GAMES: LobbyGame[] = [
     categories: ["slot"],
     online: 870,
     art: { base: "#3b2a06", accent: "#eab308", emblem: "coin" },
+    imageUrl: DEMO_GAME_COVER.slotRetroRed,
   },
   {
     id: "caishen-wins",
@@ -187,6 +195,7 @@ export const LOBBY_GAMES: LobbyGame[] = [
     categories: ["slot"],
     online: 990,
     art: { base: "#4a0d0d", accent: "#ef4444", emblem: "coin" },
+    imageUrl: DEMO_GAME_COVER.goldBarsBlue,
   },
   {
     id: "sugar-rush",
@@ -195,6 +204,7 @@ export const LOBBY_GAMES: LobbyGame[] = [
     categories: ["slot"],
     online: 1130,
     art: { base: "#33114a", accent: "#d946ef", emblem: "clover" },
+    imageUrl: DEMO_GAME_COVER.slotCloseupBokeh,
   },
   {
     id: "big-bass-bonanza",
@@ -203,6 +213,7 @@ export const LOBBY_GAMES: LobbyGame[] = [
     categories: ["slot"],
     online: 760,
     art: { base: "#052e3b", accent: "#06b6d4", emblem: "fish" },
+    imageUrl: DEMO_GAME_COVER.fishingBoatStars,
   },
   {
     id: "lucky-neko",
@@ -211,6 +222,7 @@ export const LOBBY_GAMES: LobbyGame[] = [
     categories: ["slot"],
     online: 640,
     art: { base: "#0b3b2f", accent: "#10b981", emblem: "mahjong" },
+    imageUrl: DEMO_GAME_COVER.slotRowPurple,
   },
   {
     id: "cockfight-king",
@@ -219,6 +231,7 @@ export const LOBBY_GAMES: LobbyGame[] = [
     categories: ["cockfight"],
     online: 1150,
     art: { base: "#3f1204", accent: "#f43f5e", emblem: "rooster" },
+    imageUrl: DEMO_GAME_COVER.vegasStripNeon,
   },
   {
     id: "speed-baccarat",
@@ -227,6 +240,7 @@ export const LOBBY_GAMES: LobbyGame[] = [
     categories: ["hot", "live"],
     online: 1490,
     art: { base: "#3a1004", accent: "#f59e0b", emblem: "cards" },
+    imageUrl: DEMO_GAME_COVER.pokerTableFlatlay,
   },
   {
     id: "crazy-time",
@@ -235,6 +249,7 @@ export const LOBBY_GAMES: LobbyGame[] = [
     categories: ["hot", "live"],
     online: 1480,
     art: { base: "#2a0b4a", accent: "#8b5cf6", emblem: "dice" },
+    imageUrl: DEMO_GAME_COVER.rouletteWheelGold,
   },
   {
     id: "lightning-roulette",
@@ -243,6 +258,7 @@ export const LOBBY_GAMES: LobbyGame[] = [
     categories: ["live"],
     online: 1420,
     art: { base: "#101a3b", accent: "#6366f1", emblem: "dice" },
+    imageUrl: DEMO_GAME_COVER.rouletteWheelClose,
   },
   {
     id: "dragon-tiger",
@@ -251,6 +267,7 @@ export const LOBBY_GAMES: LobbyGame[] = [
     categories: ["live"],
     online: 1010,
     art: { base: "#3b0a1f", accent: "#e11d48", emblem: "dragon" },
+    imageUrl: DEMO_GAME_COVER.pokerCardsFan,
   },
   {
     id: "sic-bo",
@@ -259,6 +276,7 @@ export const LOBBY_GAMES: LobbyGame[] = [
     categories: ["live"],
     online: 720,
     art: { base: "#06303b", accent: "#22d3ee", emblem: "dice" },
+    imageUrl: DEMO_GAME_COVER.diceNeonHand,
   },
   {
     id: "jackpot-fishing",
@@ -267,6 +285,7 @@ export const LOBBY_GAMES: LobbyGame[] = [
     categories: ["hot", "fish"],
     online: 1340,
     art: { base: "#04283b", accent: "#0ea5e9", emblem: "fish" },
+    imageUrl: DEMO_GAME_COVER.fishingBoatStars,
   },
   {
     id: "dragon-fishing",
@@ -275,6 +294,7 @@ export const LOBBY_GAMES: LobbyGame[] = [
     categories: ["fish"],
     online: 880,
     art: { base: "#052f2a", accent: "#14b8a6", emblem: "dragon" },
+    imageUrl: DEMO_GAME_COVER.fishingHarborNight,
   },
   {
     id: "ocean-king",
@@ -283,6 +303,7 @@ export const LOBBY_GAMES: LobbyGame[] = [
     categories: ["fish"],
     online: 790,
     art: { base: "#062044", accent: "#3b82f6", emblem: "fish" },
+    imageUrl: DEMO_GAME_COVER.fishingBoatDay,
   },
   {
     id: "fishing-war",
@@ -291,6 +312,7 @@ export const LOBBY_GAMES: LobbyGame[] = [
     categories: ["fish"],
     online: 610,
     art: { base: "#2b0a33", accent: "#c026d3", emblem: "fish" },
+    imageUrl: DEMO_GAME_COVER.fishingBoatStars,
   },
   {
     id: "saba-sportsbook",
@@ -299,6 +321,7 @@ export const LOBBY_GAMES: LobbyGame[] = [
     categories: ["hot", "sport"],
     online: 1240,
     art: { base: "#062a3f", accent: "#0ea5e9", emblem: "ball" },
+    imageUrl: DEMO_GAME_COVER.stadiumNight,
   },
   {
     id: "bti-sports",
@@ -307,6 +330,7 @@ export const LOBBY_GAMES: LobbyGame[] = [
     categories: ["sport"],
     online: 860,
     art: { base: "#12321f", accent: "#22c55e", emblem: "ball" },
+    imageUrl: DEMO_GAME_COVER.stadiumFloodlight,
   },
   {
     id: "idn-poker",
@@ -315,6 +339,7 @@ export const LOBBY_GAMES: LobbyGame[] = [
     categories: ["poker"],
     online: 940,
     art: { base: "#2b1065", accent: "#a855f7", emblem: "cards" },
+    imageUrl: DEMO_GAME_COVER.pokerCardBacks,
   },
   {
     id: "texas-holdem-pro",
@@ -323,6 +348,7 @@ export const LOBBY_GAMES: LobbyGame[] = [
     categories: ["poker"],
     online: 720,
     art: { base: "#3b0a1f", accent: "#e11d48", emblem: "cards" },
+    imageUrl: DEMO_GAME_COVER.pokerTableFlatlay,
   },
   {
     id: "esport-arena",
@@ -331,6 +357,7 @@ export const LOBBY_GAMES: LobbyGame[] = [
     categories: ["esport"],
     online: 1080,
     art: { base: "#101a3b", accent: "#6366f1", emblem: "gamepad" },
+    imageUrl: DEMO_GAME_COVER.esportsArena,
   },
   {
     id: "battle-royale-live",
@@ -339,6 +366,7 @@ export const LOBBY_GAMES: LobbyGame[] = [
     categories: ["esport"],
     online: 690,
     art: { base: "#2b0a33", accent: "#c026d3", emblem: "gamepad" },
+    imageUrl: DEMO_GAME_COVER.esportsStation,
   },
   {
     id: "meron-wala",
@@ -347,6 +375,7 @@ export const LOBBY_GAMES: LobbyGame[] = [
     categories: ["cockfight"],
     online: 1320,
     art: { base: "#3f1204", accent: "#f59e0b", emblem: "rooster" },
+    imageUrl: DEMO_GAME_COVER.diceBlackSet,
   },
 ];
 
@@ -492,7 +521,7 @@ export function buildCardsFromRecords(
 
   const hotIds = new Set(sorted.slice(0, LOBBY_HOT_LIMIT).map((item) => item.id));
 
-  return sorted.map((record) => {
+  return sorted.map((record, index) => {
     const category = normalizeGameCategory(record.category);
 
     return {
@@ -504,8 +533,14 @@ export function buildCardsFromRecords(
       categories: hotIds.has(record.id) ? [category, "hot"] : [category],
       online: onlineCountFor(record.id),
       art: artForKey(record.id, category),
-      // 真实封面图优先；没有就交给 GameCard 用渐变 + 品类图形兜底
-      imageUrl: readGameImageUrl(record.iconUrl),
+      /*
+       * 真实封面图优先（Game.iconUrl 是游戏商给的图）；
+       * 上游没给图时用示例封面池按**列表序号轮转**补位 ——
+       * 一屏之内每张卡都是不同的真实照片，不会出现「一片渐变色块」。
+       * 池子见 src/lib/game-cover-catalog.ts，真实接入后整表可删。
+       */
+      imageUrl:
+        readGameImageUrl(record.iconUrl) ?? pickDemoGameCover(record.id, index),
     };
   });
 }
@@ -526,7 +561,7 @@ export function buildMockLobby(): {
     ...new Set(LOBBY_GAMES.map((game) => game.provider)),
   ].map((name) => ({ id: mockProviderId(name), name }));
 
-  const cards: LobbyGameCard[] = LOBBY_GAMES.map((game) => ({
+  const cards: LobbyGameCard[] = LOBBY_GAMES.map((game, index) => ({
     id: game.id,
     name: null,
     titleKey: game.titleKey,
@@ -535,7 +570,9 @@ export function buildMockLobby(): {
     categories: game.categories,
     online: game.online,
     art: game.art,
-    imageUrl: readGameImageUrl(game.imageUrl),
+    // 目录里的示例封面优先；万一某条漏配，也按序号从封面池补一张，绝不空着
+    imageUrl:
+      readGameImageUrl(game.imageUrl) ?? pickDemoGameCover(game.id, index),
   }));
 
   return { cards, providers };

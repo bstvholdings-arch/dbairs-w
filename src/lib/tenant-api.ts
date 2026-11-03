@@ -25,6 +25,12 @@ export const tenantSelect = {
   subdomain: true,
   // 多域名池：超管编辑弹窗与商户设置页都要回填（见 lib/tenant-domains.ts）
   backupDomains: true,
+  /**
+   * 品牌 Logo（白标）：前台大厅 / 登录注册 / 玩家中心都渲染它，没配则用商户名
+   * 首字母占位。**只有超管能写**（/api/tenants 与 /api/tenants/[id]），
+   * 商户后台只读甚至看不到入口（见 AGENTS.md「品牌 Logo」）。
+   */
+  logoUrl: true,
   status: true,
   withdrawalRequiredApprovals: true,
   createdAt: true,

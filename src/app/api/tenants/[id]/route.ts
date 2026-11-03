@@ -15,6 +15,7 @@ import { sendTenantAdminInviteEmail } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
 import {
   normalizeStorefrontLayout,
+  normalizeTenantLogoUrl,
   serializeLayoutConfig,
 } from "@/lib/storefront";
 import { getSuperAdminFromRequest } from "@/lib/super-admin";
@@ -102,7 +103,7 @@ export async function GET(
 }
 
 /**
- * 修改品牌名、域名、子域名、状态与出金审批人数。
+ * 修改品牌名、域名、子域名、状态、出金审批人数与品牌 Logo。
  * PATCH 与 PUT 等价，仅更新请求体中出现的字段。
  */
 async function updateTenant(
@@ -265,6 +266,40 @@ async function updateTenant(
       }
 
       data.withdrawalRequiredApprovals = approvals;
+    }
+
+    /**
+     * 品牌 Logo（白标）：**超管唯一写入口**就在这里。
+     *
+     * - 传 null / 空字符串 = 清空（前台自动退回商户名首字母占位）；
+     * - 传值必须是 normalizeTenantLogoUrl 认可的结果（http(s) 绝对地址，或
+     *   上传接口返回的 /api/tenant-logos/<uuid>.png 这种站内路径）；
+     * - 商户后台没有任何写入口：/api/tenant/settings 的 PATCH 会显式忽略该字段，
+     *   页面也不再渲染任何上传 / 修改控件（产品决策，见 AGENTS.md「品牌 Logo」）。
+     */
+    if (hasOwn(input, "logoUrl")) {
+      if (input.logoUrl === null) {
+        data.logoUrl = null;
+      } else if (typeof input.logoUrl !== "string") {
+        return jsonError("Logo 地址格式不正确", 400);
+      } else {
+        const trimmedLogoUrl = input.logoUrl.trim();
+
+        if (!trimmedLogoUrl) {
+          data.logoUrl = null;
+        } else {
+          const logoUrl = normalizeTenantLogoUrl(trimmedLogoUrl);
+
+          if (!logoUrl) {
+            return jsonError(
+              "Logo 必须是 http(s) 开头的图片地址，或以 / 开头的站内路径（上传后的地址即为此格式）",
+              400,
+            );
+          }
+
+          data.logoUrl = logoUrl;
+        }
+      }
     }
 
     /**

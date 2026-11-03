@@ -760,13 +760,15 @@ export const TENANT_LOGO_URL_MAX_LENGTH = 2048;
  *
  * 只接受两种写法，其余一律当作「未配置」返回 null：
  * 1. http(s) 绝对地址 —— 商户把 Logo 传到图床 / CDN；
- * 2. 以 `/` 开头的站内路径 —— 放在 public/ 下的静态资源（如 /brand/winvora.png）。
+ * 2. 以 `/` 开头的站内路径 —— 超管上传接口返回的 `/api/tenant-logos/<uuid>.png`，
+ *    或放在 public/ 下的静态资源（如 /brand/winvora.png）。
  *
  * 刻意不支持 `data:` / `javascript:` / 协议相对地址（`//host/x.png` 会被当成外站）：
  * 这些值最终会直接进 `<img src>`，放开等于给后台表单留一个注入面。
  *
- * 前台渲染（大厅顶栏）与后台保存（/api/tenant/settings 的 PATCH）共用同一个函数，
- * 保证「后台存进去的值」和「前台认的值」永远同一口径。
+ * 写入侧（超管 PUT /api/tenants/[id]）与读取侧（storefront-data / player-session /
+ * <TenantBrandLockup />）共用同一个函数，保证「后台存进去的值」和「前台认的值」
+ * 永远同一口径：认不出来的值前台一律降级成「商户名首字母」占位。
  */
 export function normalizeTenantLogoUrl(raw: unknown): string | null {
   if (typeof raw !== "string") {

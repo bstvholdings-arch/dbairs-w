@@ -48,15 +48,25 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 ### 4.1 主题背景色：一套 GameCard + 15 组色值（永远深色底）
 
 - 15 种主题背景色（`obsidian` 经典暗黑 / `royalPurple` 皇家紫 / `deepSea` 深海蓝 / `cyberCyan` 赛博青 / `roseGold` 玫瑰金 / `emerald` 翡翠绿 / `bloodRed` 血月红 / `neonPink` 霓虹粉 / `moltenOrange` 熔岩橙 / `champagne` 香槟金 / `titanium` 钛金灰 / `abyssTeal` 幽潭青 / `arcticSilver` 极地银 / `solarYellow` 烈日金 / `midnightIndigo` 午夜靛蓝）**必须是同一个 `src/components/lobby/game-card.tsx`**，差异只允许来自 `src/lib/theme-backgrounds.ts` 的 `base`（深色底）+ `accent`（点缀色）两个色值。
-- **站点永远是深色 / 黑底**：主题色只允许三处落点 —— 大厅环境光晕（`.tb-aura` 呼吸动画）、卡片外框（描边 + 悬停光晕）、底部文字底板描边。**禁止**任何浅色 / 白色不透明底板（曾经的 `candyPop` 白卡就是这么来的），卡片底板固定 `rgb(3 5 10 / .82)`（`.tb-card__plate`）。
-- **颜色不进组件 prop**：根节点用 `buildThemeBackgroundStyle()` 注入 `--tb-base` / `--tb-accent` / `--tb-rgb`，卡片只吃 `.tb-card` / `.tb-card__plate` / `.tb-card__name` / `.tb-card__provider` / `.tb-card__online` / `.tb-card__hot` / `.tb-card__play` 这几个固定 class（规则见 `globals.css` 的「主题背景色」区块）。加一种颜色 = 改色表一行，不碰组件、不碰 CSS、不写 `if (id === "...")`。
-- **游戏主图是卡片主体，任何主题色都不许动它**：卡片渲染 `card.imageUrl`（来自 `Game.iconUrl`，`lobby-data.ts` → `LobbyGameRecord.iconUrl` → `buildCardsFromRecords` 里的 `readGameImageUrl()` 白名单校验），`object-cover` 铺满整卡、原图直出 —— **禁止**在 `<img>` 上叠纯色底 / 渐变 / 半透明遮罩 / `filter`。渐变 + 品类图形只在「没有封面图 / 图 404」时兜底。
+- **站点永远是深色 / 黑底**：主题色只允许三处落点 —— 大厅环境光晕（`.tb-aura` 呼吸动画）、卡片封面的悬停 / 聚焦光晕（`.tb-card__cover` 边框光）、浮层小胶囊（在线人数 / HOT / 游戏商）的描边。**禁止**任何浅色 / 白色不透明底板（曾经的 `candyPop` 白卡就是这么来的）。
+- **卡片是无边框图片卡（产品明确设计，不许再加回边框 / 底色 / 文字底板）**：卡片容器 `bg-transparent`、`border: 0`，**没有** `.tb-card__plate` 这类底部文字底板；视觉主体只有 `aspect-square` + `rounded-xl` 的封面图（`object-cover` 铺满），游戏名是**图片下方**的一行白字（`mt-1.5`，无背景板）。三个浮层胶囊固定位置：左上角在线人数、右上角 HOT、左下角游戏商 —— 都是半透明黑底 `rgb(0 0 0 / .6)`。
+- **颜色不进组件 prop**：根节点用 `buildThemeBackgroundStyle()` 注入 `--tb-base` / `--tb-accent` / `--tb-rgb`，卡片只吃 `.tb-card` / `.tb-card__cover` / `.tb-card__name` / `.tb-card__provider` / `.tb-card__online` / `.tb-card__hot` / `.tb-card__play` 这几个固定 class（规则见 `globals.css` 的「主题背景色」区块）。加一种颜色 = 改色表一行，不碰组件、不碰 CSS、不写 `if (id === "...")`。
+- **游戏主图是卡片主体，任何主题色都不许动它**：卡片渲染 `card.imageUrl`（来源优先级：`Game.iconUrl` → 示例封面池 `src/lib/game-cover-catalog.ts`，经 `buildCardsFromRecords` 里的 `readGameImageUrl()` 白名单校验），`object-cover` 铺满正方形封面、原图直出 —— **禁止**在 `<img>` 上叠纯色底 / 渐变 / 半透明遮罩 / `filter`。渐变 + 品类图形只在「没有封面图 / 图 404」时兜底。
+- **示例封面池只做兜底、一处维护**：`src/lib/game-cover-catalog.ts` 是内置 Mock 目录 / 回退大厅 / 主题色演示页共用的真实照片表（Unsplash，可商用免署名），`Game.iconUrl` 有值时永远用真实封面。真实接入游戏商后整表可删，**禁止**把图片地址散落到组件或页面里。
 - 主题色只管环境光与卡片；整站主色仍只由 `Tenant.themeColor` 决定，排版仍只由 `layoutConfig.preset` 决定，数据与交互（在线人数跳动、点开游戏）一份。
 - 存储：`Tenant.layoutConfig.themeBackground`（JSON 内字段，无需迁移）；脏数据 / 老租户缺字段回落 `obsidian`；老的 `layoutConfig.gameCardStyle`（`cyberNeon` / `royalGold` / `candyPop`）由 `normalizeThemeBackground` 做**深色化迁移**（→ `cyberCyan` / `obsidian` / `neonPink`），老站点不会再出现白卡。
 - 弹窗里用 **15 张单选色卡**（真实 `<input type="radio">` + 常显深色底 / 点缀色两个色点 + 现场 `.tb-*` 实时预览）而不是原生 `<select>`：原生下拉依赖浏览器弹层，弹层被上层元素遮挡 / 弹窗被祖先 `transform` 裁切时表现为「点了没反应」，且失焦即关、看不到配色。弹窗本身走 `createPortal` 挂到 `document.body`，不要改回直接 `fixed` 渲染。
 - **配置权限已收回平台（不可回退）**：唯一写入口是超管【租户管理 → 新建 / 编辑租户】弹窗（`POST /api/tenants`、`PUT /api/tenants/[id]` 的 `themeBackground`）。商户后台（`PATCH /api/tenant/settings` 的 `layout` patch）与装修页（`PUT /api/admin/storefront`）**必须显式忽略 `themeBackground` 与历史字段 `gameCardStyle`**，页面也只做只读展示；否则等于给商户开了绕过权限的后门。
 - 卖站阶段由 AI 销冠发 Demo：`src/lib/ai/prompts.ts` 的 `buildThemeBackgroundPreviewGuide()` 在销冠 System Prompt 里注入 15 个真实渲染的预览链接（`/demo/theme-backgrounds#<id>`，`src/app/demo/theme-backgrounds/` 复用同一个 `GameCard`），并明确「选好后由平台开站时配置」；旧路径 `/demo/game-card-styles` 必须继续跳转到新页面（客户手里的老链接不能 404）。
 - 大厅 `/` 与品牌展馆 `/provider/[code]` 必须共用同一个 `StorefrontSettings.themeBackground`，否则玩家点进品牌馆会「换了个底色」。
+
+### 4.2 品牌 Logo：只有超管能上传，前台永远「有图显示图、没图首字母」
+
+- 唯一事实来源是 `Tenant.logoUrl`：http(s) 绝对地址，或以 `/` 开头的站内路径（上传接口返回的 `/api/tenant-logos/<uuid>.png` 就属于后者）。所有读写都必须过 `src/lib/storefront.ts` 的 `normalizeTenantLogoUrl()`，认不出来的值一律当「未配置」（`javascript:` / `data:` / `//host/x.png` 会被拒，因为它们最终直接进 `<img src>`）。
+- **唯一写入口**：超管【租户管理 → 新建 / 编辑租户】弹窗里的 Tenant Logo 组件 → `POST /api/admin/tenant-logos/upload`（超管会话；PNG / JPG / WEBP，≤ 2MB，按文件头嗅探，**不收 SVG**，否则等于开放存储型 XSS）拿到 `/api/tenant-logos/<uuid>.png`，再随 `POST /api/tenants` / `PUT /api/tenants/[id]` 落库。
+- **商户端零写入能力（不可回退）**：`/tenant/settings` 不渲染任何 Logo 组件、按钮、输入框或说明文案；`PATCH /api/tenant/settings` 与 `saveTenantSiteSettings` 的签名里都没有 `logoUrl`，商户构造请求也改不动。不要以「方便商户」为由把入口加回来 —— 与 `themeBackground` 同一权限口径。
+- 玩家面所有露出品牌名的地方（大厅、`/provider/[code]`、登录 / 注册、玩家中心、实名认证、活动页）必须复用 `src/components/brand/tenant-brand.tsx` 的 `TenantBrandLockup`：`logoUrl` 有值显示图，加载失败或未配置降级成商户名首字母金色方块。**禁止**各页面自写 `<img>` + 品牌名。
+- 存储走 `src/lib/tenant-logo-storage.ts`（演示实现落盘 `.tenant-logo-storage/`，已在 `.gitignore`）；生产环境只把 `saveTenantLogo` 换成 Supabase Storage / S3 上传并返回 CDN 直链，`/api/tenant-logos/[key]` 可整段删掉，前端组件与 `Tenant.logoUrl` 口径不变。
 
 ### 5. AI 助手喂养：知识库走 RAG，实时数据走 Function Calling
 

@@ -5,6 +5,7 @@ import type { CSSProperties } from "react";
 import { useLanguage } from "@/components/LanguageProvider";
 import { GameCard } from "@/components/lobby/game-card";
 import { LOBBY_GAMES, readGameImageUrl, type LobbyGameCard } from "@/lib/lobby-games";
+import { pickDemoGameCover } from "@/lib/game-cover-catalog";
 import {
   buildThemeBackgroundStyle,
   THEME_BACKGROUNDS,
@@ -41,8 +42,9 @@ const DEMO_CARDS: LobbyGameCard[] = DEMO_GAME_IDS.flatMap((id) => {
       categories: game.categories,
       online: game.online,
       art: game.art,
-      // 演示目录没有真实封面图 → 卡片走「渐变 + 品类图形」占位
-      imageUrl: readGameImageUrl(game.imageUrl),
+      // 演示目录已经配好示例真实封面；万一漏配就从封面池补一张
+      imageUrl:
+        readGameImageUrl(game.imageUrl) ?? pickDemoGameCover(game.id),
     },
   ];
 });

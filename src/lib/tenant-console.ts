@@ -18,7 +18,6 @@ import {
 } from "./session";
 import {
   normalizeStorefrontLayout,
-  normalizeTenantLogoUrl,
   parseThemeSetting,
   readThemeSettingInput,
   serializeLayoutConfig,
@@ -955,12 +954,16 @@ export async function loadTenantAiLogs(input: {
 }
 
 
-/** 站点设置：商户只能改自己站的皮肤 / 大厅模块开关。 */
+/**
+ * 站点设置：商户只能改自己站的皮肤 / 大厅模块开关 / 备用域名池。
+ *
+ * 刻意不含 logoUrl（品牌 Logo）：它是平台配置项，只能由超管在
+ * 【租户管理 → 新建 / 编辑租户】里上传或清空，商户后台既不展示也不可改。
+ * 玩家面渲染统一读 storefront / player session 里的 tenantLogoUrl。
+ */
 export type TenantSiteSettings = {
   tenantId: string;
   tenantName: string;
-  /** 白标品牌 Logo（Tenant.logoUrl，已校验）；null = 未配置，前台用商户名首字母占位 */
-  logoUrl: string | null;
   /** 备用域名池（多域名防封自动切换，1-5 条；空数组 = 未配置，不自动跳转） */
   backupDomains: string[];
   domain: string;
@@ -989,7 +992,6 @@ async function readTenantSettings(
       status: true,
       themeColor: true,
       layoutConfig: true,
-      logoUrl: true,
       updatedAt: true,
     },
   });
@@ -1001,7 +1003,6 @@ async function readTenantSettings(
   return {
     tenantId: tenant.id,
     tenantName: tenant.name,
-    logoUrl: normalizeTenantLogoUrl(tenant.logoUrl),
     backupDomains: tenant.backupDomains.map((item) => item.toLowerCase()),
     domain: tenant.domain,
     subdomain: tenant.subdomain,
@@ -1019,21 +1020,22 @@ export async function loadTenantSiteSettings(
 }
 
 /**
- * 保存站点设置。
+ * 保存站点设置（商户自助范围）。
  *
  * - themeColor：严格校验（readThemeSettingInput），非法直接 400，
  *   不静默改成默认金色；未传则保留数据库原值；
  * - layout：只覆盖请求里出现的字段（modules / showTopbarChat /
  *   showSidebarCasinoAnim），其余沿用原值，避免把没传的开关重置成默认；
- * - logoUrl：传 null / 空字符串表示清空（前台退回商户名首字母占位），
- *   传值则必须是 normalizeTenantLogoUrl 认可的结果，非法直接 400；
+ *   其中的 themeBackground / gameCardStyle 会被强制忽略（平台配置项）；
+ * - **不接受 logoUrl**：品牌 Logo 的唯一写入口是超管的
+ *   PUT /api/tenants/[id] + POST /api/admin/tenant-logos/upload，
+ *   商户即使构造请求带上这个字段也改不动（函数签名里根本没有它）；
  * - where 固定用会话里的 tenantId，商户无法改别人的站。
  */
 export async function saveTenantSiteSettings(input: {
   tenantId: string;
   themeColor?: unknown;
   layout?: unknown;
-  logoUrl?: unknown;
   /** 备用域名池：支持数组或逗号 / 换行分隔的文本，`[]` = 清空 */
   backupDomains?: unknown;
 }): Promise<TenantSettingsResult> {
@@ -1076,27 +1078,8 @@ export async function saveTenantSiteSettings(input: {
     );
   }
 
-  if (input.logoUrl !== undefined) {
-    // 空值 = 明确要清掉 Logo，前台自动退回「商户名首字母」占位图
-    if (
-      input.logoUrl === null ||
-      (typeof input.logoUrl === "string" && input.logoUrl.trim() === "")
-    ) {
-      data.logoUrl = null;
-    } else {
-      const logoUrl = normalizeTenantLogoUrl(input.logoUrl);
-
-      if (!logoUrl) {
-        return {
-          ok: false,
-          error:
-            "Logo 必须是 http(s) 开头的图片地址，或以 / 开头的站内路径（如 /brand/logo.png）",
-        };
-      }
-
-      data.logoUrl = logoUrl;
-    }
-  }
+  // 品牌 Logo（logoUrl）刻意不处理：函数签名里没有这个字段，
+  // 老调用方即使传进来也落不到 data 上（唯一写入口是超管的 PUT /api/tenants/[id]）。
 
   /**
    * 备用域名池（多域名防封自动切换）。
