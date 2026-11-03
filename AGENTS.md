@@ -42,6 +42,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 ### 4.1 游戏封面风格：一套 GameCard + 3 组 token
 
 - 3 种风格（`cyberNeon` 赛博霓虹 / `royalGold` 黑金尊享 / `candyPop` 糖果明亮）**必须是同一个 `src/components/lobby/game-card.tsx`**，差异只允许来自 `src/lib/game-card-styles.ts` 的 `tokens`（固定 class）与 `build(art)`（随卡片主色变化的渐变）。
+- **游戏主图是卡片主体，任何风格都不许动它**：卡片渲染 `card.imageUrl`（来自 `Game.iconUrl`，`lobby-data.ts` → `LobbyGameRecord.iconUrl` → `buildCardsFromRecords` 里的 `readGameImageUrl()` 白名单校验），`object-cover` 铺满整卡、原图直出 —— **禁止**在 `<img>` 上叠纯色底 / 渐变 / 半透明遮罩 / `filter`。风格只允许作用于两处：外框（border / ring / shadow / 圆角）与底部文字区底板（`tokens.panel`）；`build()` 的渐变 + 品类图形只在「没有封面图 / 图 404」时兜底。
 - **禁止**为某个风格复制一份 `GameCard`，也禁止在组件里写 `if (style === "...")` 分支堆样式：加 / 改风格 = 改那一张 token 表。
 - 风格只管卡片视觉（底色 / 边框 / 光效 / 文字色 / 扫光 / 徽章配色）；整站主色仍只由 `Tenant.themeColor` 决定，排版仍只由 `layoutConfig.preset` 决定，数据与交互（在线人数跳动、点开游戏）一份。
 - 存储：`Tenant.layoutConfig.gameCardStyle`（JSON 内字段，无需迁移）；脏数据 / 老租户缺字段回落 `cyberNeon`（= 改造前外观）。

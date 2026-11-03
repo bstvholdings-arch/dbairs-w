@@ -12,6 +12,11 @@ export type MockGameSeed = {
   category: LobbyCategoryId;
   /** 初始排序权重：越大越靠前（后台可再手工调整） */
   sortOrder: number;
+  /**
+   * 游戏商封面图地址（真实接口接入后由上游给出，写进 Game.iconUrl）。
+   * 现在的 Mock 目录没有图，字段留空 → 大厅卡片走「渐变 + 品类图形」占位。
+   */
+  iconUrl?: string | null;
 };
 
 function seeds(entries: Array<[string, string, LobbyCategoryId]>): MockGameSeed[] {

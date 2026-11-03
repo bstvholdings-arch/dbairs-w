@@ -102,6 +102,8 @@ async function writeCatalog(
           name: seed.name,
           category: seed.category,
           sortOrder: seed.sortOrder,
+          // 上游给了封面图就一起入库（大厅卡片主体就是这张图）
+          iconUrl: seed.iconUrl?.trim() || null,
           isActive: true,
           syncedAt,
         },
@@ -109,6 +111,8 @@ async function writeCatalog(
         update: {
           name: seed.name,
           category: seed.category,
+          // 这次上游没给封面图时保留库里已有的图，避免把手工补的封面清空
+          ...(seed.iconUrl?.trim() ? { iconUrl: seed.iconUrl.trim() } : {}),
           syncedAt,
         },
       }),

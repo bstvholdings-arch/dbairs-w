@@ -43,6 +43,7 @@ export type LobbyGameArt = {
   emblem: LobbyGameEmblem;
 };
 
+/** 卡片右上角在线人数胶囊 + 封面配色，两者都由 id 稳定推导。 */
 export type LobbyGame = {
   id: string;
   titleKey: TranslationKey;
@@ -52,6 +53,8 @@ export type LobbyGame = {
   /** 卡片右上角在线人数胶囊（300 ~ 1500，客户端会持续跳动） */
   online: number;
   art: LobbyGameArt;
+  /** 真实封面图（后台 / 内置素材给出的图）；没有时用 art 的渐变 + 品类图形兜底 */
+  imageUrl?: string;
 };
 
 /** GET /api/providers 返回的上架中游戏商（大厅顶部筛选 Tab + 品牌墙的数据源） */
@@ -75,12 +78,17 @@ export type LobbyGameRecord = {
   /** slot / live / fish，来自 Game.category */
   category: string;
   sortOrder: number;
+  /**
+   * 游戏商同步过来的真实封面图（Game.iconUrl）。
+   * 可选：老接口 / 内置目录没有这个字段时按「无封面」处理，走渐变占位。
+   */
+  iconUrl?: string | null;
 };
 
 /**
  * 大厅卡片的统一渲染结构：
  * 数据库同步来的游戏与内置回退目录都会被转换成这一种形状，
- * 这样 GameCard 只关心「标题 / 游戏商 / 在线人数 / 封面」四件事。
+ * 这样 GameCard 只关心「标题 / 游戏商 / 在线人数 / 封面图 / 占位配色」五件事。
  */
 export type LobbyGameCard = {
   id: string;
@@ -92,7 +100,39 @@ export type LobbyGameCard = {
   categories: LobbyCategoryId[];
   online: number;
   art: LobbyGameArt;
+  /**
+   * 卡片主体：游戏商的真实封面图（已做 URL 白名单校验）。
+   * null = 这条游戏没有封面图，GameCard 用 art 的渐变 + 品类图形兜底。
+   */
+  imageUrl: string | null;
 };
+
+/**
+ * 封面图兜底校验：只接受 http(s)://、站内绝对路径 /xxx、data:image/，
+ * 其它（javascript:、file:、畸形值…）一律当作「没有封面图」，
+ * 避免脏数据把 <img src> 变成 XSS 入口或破图。
+ */
+export function readGameImageUrl(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+
+  if (trimmed === "") {
+    return null;
+  }
+
+  if (
+    /^https?:\/\//i.test(trimmed) ||
+    /^\/(?!\/)/.test(trimmed) ||
+    /^data:image\//i.test(trimmed)
+  ) {
+    return trimmed;
+  }
+
+  return null;
+}
 
 /**
  * 大厅游戏目录（Mock 数据）。
@@ -437,6 +477,8 @@ export function buildCardsFromRecords(
       categories: hotIds.has(record.id) ? [category, "hot"] : [category],
       online: onlineCountFor(record.id),
       art: artForKey(record.id, category),
+      // 真实封面图优先；没有就交给 GameCard 用渐变 + 品类图形兜底
+      imageUrl: readGameImageUrl(record.iconUrl),
     };
   });
 }
@@ -466,6 +508,7 @@ export function buildMockLobby(): {
     categories: game.categories,
     online: game.online,
     art: game.art,
+    imageUrl: readGameImageUrl(game.imageUrl),
   }));
 
   return { cards, providers };

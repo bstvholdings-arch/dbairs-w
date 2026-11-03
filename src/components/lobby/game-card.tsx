@@ -1,27 +1,34 @@
 "use client";
 
+import { useState } from "react";
+
 import { useLanguage } from "@/components/LanguageProvider";
 import { GameEmblem } from "@/components/lobby/game-emblem";
 import { useOnlineCount } from "@/components/lobby/use-online-count";
 import {
   GAME_CARD_STYLES,
+  buildPlaceholderSkin,
   normalizeGameCardStyle,
+  type GameCardPlaceholderSkin,
   type GameCardStyleId,
 } from "@/lib/game-card-styles";
 import { formatInteger } from "@/lib/format";
-import { cardTitle, type LobbyGameCard } from "@/lib/lobby-games";
+import { cardTitle, type LobbyGameCard, type LobbyGameArt } from "@/lib/lobby-games";
 
 /**
  * 大厅游戏卡片。
  *
- * 封面 = 高饱和渐变 + 品类图形（老虎机 / 扑克牌 / 斗鸡 / 麻将 / 龙 / 鱼 …），
- * 不再使用风景、建筑等与博彩内容无关的占位图；图形全部是内联 SVG，
- * 离线也不会出现空白卡片。
+ * 构图（由下往上，顺序不能变）：
+ * 1. **游戏主图**：`card.imageUrl`（游戏商同步过来的真实封面，见 Game.iconUrl）
+ *    用 object-cover 铺满整张卡，原图直出 —— 不叠遮罩、不叠纯色底、不叠渐变、
+ *    不加 filter。这是玩家真正要看的东西，任何风格都不许动它。
+ * 2. 没有封面图时（空库 / 上游没给图 / 图 404）才退回「渐变 + 品类图形」占位，
+ *    保证卡片不会是空白方块（内联 SVG，离线可用）。
+ * 3. **文字区底板**（游戏名 + 游戏商）：风格的第二个落点，只压卡片底部一条。
+ * 4. **外框**（边框 / 圆角 / 悬停发光）：风格的第一个落点。
  *
- * 【封面风格】后台【前台装修 → 游戏封面风格】下发 3 种风格之一
- * （赛博霓虹 / 黑金尊享 / 糖果明亮）。组件只有这一份，
- * 风格差异全部来自 src/lib/game-card-styles.ts 的 token：
- * 固定 class 走 tokens，随卡片主色变化的渐变走 build()。脏值自动回落赛博霓虹。
+ * 3 种风格（赛博霓虹 / 黑金尊享 / 糖果明亮）只改第 3、4 层与徽章配色，
+ * 差异全部来自 src/lib/game-card-styles.ts 的 token；脏值自动回落赛博霓虹。
  *
  * 右上角是【在线人数胶囊】：初始人数由服务端稳定推导（300 ~ 1500），
  * 挂载后每 2 ~ 3 秒跳动一次，并有 300 人保底。
@@ -44,7 +51,17 @@ export function GameCard({
 
   const definition = GAME_CARD_STYLES[normalizeGameCardStyle(style)];
   const { tokens } = definition;
-  const skin = definition.build(art);
+  // 占位封面与风格无关（只由游戏自己的 art 推导），有真实封面图时根本不会渲染
+  const skin = buildPlaceholderSkin(art);
+
+  /**
+   * 封面图加载失败（404 / 403 / 防盗链 / 断网）时回退到品类图形占位：
+   * 只记住「失败的那张图」的地址，换一张卡或后台换了封面地址后会自动重试，
+   * 不会因为一次失败就永久破图。
+   */
+  const [brokenImageUrl, setBrokenImageUrl] = useState<string | null>(null);
+  const imageUrl = card.imageUrl;
+  const showImage = Boolean(imageUrl) && brokenImageUrl !== imageUrl;
 
   return (
     <button
@@ -52,63 +69,28 @@ export function GameCard({
       onClick={onPlay}
       aria-label={`${title} · ${card.providerLabel}`}
       data-game-card-style={definition.id}
-      className={`group relative block aspect-[3/4] w-full overflow-hidden text-left transition-all duration-300 hover:z-10 hover:-translate-y-2 hover:scale-[1.01] focus:outline-none focus-visible:z-10 focus-visible:-translate-y-2 focus-visible:ring-2 focus-visible:ring-white/55 ${tokens.frame}`}
+      data-game-card-cover={showImage ? "image" : "placeholder"}
+      className={`group relative block aspect-[3/4] w-full overflow-hidden bg-[#05070c] text-left transition-all duration-300 hover:z-10 hover:-translate-y-2 hover:scale-[1.01] focus:outline-none focus-visible:z-10 focus-visible:-translate-y-2 focus-visible:ring-2 focus-visible:ring-white/55 ${tokens.frame}`}
     >
-      {/* 高饱和渐变底（用多少卡片主色由风格决定） */}
-      <span
-        aria-hidden="true"
-        className="absolute inset-0"
-        style={{ backgroundImage: skin.backdrop }}
-      />
-      <span
-        aria-hidden="true"
-        className="absolute inset-0"
-        style={{ backgroundImage: skin.glow }}
-      />
-      {/* 纹理层：赛博 / 黑金是机台格线，糖果是糖霜点阵 */}
-      <span aria-hidden="true" className={`absolute inset-0 ${tokens.texture}`} />
-      <span
-        aria-hidden="true"
-        className={`absolute inset-x-0 bottom-0 h-2/3 ${tokens.scrim}`}
-      />
-
-
-      {/* 中央图形：光环 + 内圈 + 图标 */}
-      <span
-        aria-hidden="true"
-        className="absolute inset-0 flex items-center justify-center pb-9"
-      >
-        <span
-          className="absolute h-[78%] w-[78%] rounded-full border transition-transform duration-500 group-hover:scale-105"
-          style={{
-            borderColor: skin.haloStroke,
-            backgroundImage: skin.haloFill,
-          }}
+      {/* ① 游戏主图 —— 卡片主体，原图直出。
+             这里刻意没有：遮罩层、纯色底、渐变、filter、blend，
+             风格一律靠外框 + 底部文字底板表达。 */}
+      {showImage && imageUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={imageUrl}
+          alt={title}
+          draggable={false}
+          loading="lazy"
+          decoding="async"
+          onError={() => setBrokenImageUrl(imageUrl)}
+          data-game-card-image
+          className="absolute inset-0 h-full w-full object-cover object-center"
         />
-        <span
-          className="absolute h-[58%] w-[58%] rounded-full border border-dashed transition-transform duration-700 group-hover:rotate-45"
-          style={{ borderColor: skin.haloDashed }}
-        />
-        <span
-          className="relative flex h-[46%] w-[46%] items-center justify-center transition-transform duration-500 group-hover:scale-110"
-          style={{ color: skin.emblem }}
-        >
-          <GameEmblem
-            emblem={art.emblem}
-            className={`h-full w-full ${skin.emblemShadow}`}
-          />
-        </span>
-      </span>
+      ) : (
+        <GameCardPlaceholder art={art} skin={skin} />
+      )}
 
-      {/* 顶部 1px 亮边 + 玻璃质感斜向反光（悬停显现） */}
-      <span
-        aria-hidden="true"
-        className={`absolute inset-x-0 top-0 h-px ${tokens.hairline}`}
-      />
-      <span
-        aria-hidden="true"
-        className={`pointer-events-none absolute inset-0 rounded-[inherit] opacity-0 transition-opacity duration-300 group-hover:opacity-100 group-focus-visible:opacity-100 ${tokens.edge}`}
-      />
 
       {/* 左上角 HOT 标 */}
       {isHot ? (
@@ -146,38 +128,40 @@ export function GameCard({
         </span>
       </span>
 
-      {/* 底部：游戏名 + 游戏商 */}
-      <span className="absolute inset-x-1.5 bottom-1.5 block">
+      {/* ③ 底部文字区底板：风格的第二个落点。
+             只压住卡片底部这一条（深色半透明 / 纯黑 / 明亮半透明白），
+             主图主体完整露出来 —— 全卡压暗的 scrim 层已经删掉了。 */}
+      <span
+        className={`absolute inset-x-0 bottom-0 flex flex-col gap-1 px-2 pb-2 pt-1.5 ${tokens.panel}`}
+      >
         <span
           className={`block truncate text-[11px] font-black uppercase leading-tight tracking-[0.03em] sm:text-[12px] ${tokens.title}`}
         >
           {title}
         </span>
         <span
-          className={`mt-1 inline-flex max-w-full items-center truncate rounded border px-1.5 py-px text-[8px] font-black uppercase italic tracking-[0.04em] sm:text-[9px] ${tokens.provider}`}
+          className={`inline-flex max-w-full items-center gap-1 self-start truncate rounded border px-1.5 py-px text-[8px] font-black uppercase italic tracking-[0.04em] sm:text-[9px] ${tokens.provider}`}
         >
           {card.providerLabel}
         </span>
       </span>
 
-      {/* 悬停：扫光（糖果风不显示，去掉金属 / 霓虹语言的沉重感）+ 播放按钮 */}
-      {tokens.sweep ? (
+      {/* ④ 悬停金色流光（只有黑金风有）：alpha ≤ 0.16 + soft-light，
+             只提亮一档，不遮挡、不偏色 —— 赛博 / 糖果风为 null，图片上什么都不加。 */}
+      {tokens.tint ? (
         <span
           aria-hidden="true"
-          className="pointer-events-none absolute inset-0 overflow-hidden"
-        >
-          <span
-            className={`absolute -left-1/2 top-0 h-full -translate-x-[160%] skew-x-[-18deg] transition-transform ease-out group-hover:translate-x-[420%] group-focus-visible:translate-x-[420%] ${tokens.sweep}`}
-          />
-        </span>
+          className={`pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-300 group-hover:opacity-100 group-focus-visible:opacity-100 ${tokens.tint}`}
+        />
       ) : null}
+
+      {/* 悬停播放按钮：只加按钮，不加暗色罩（不再压暗图片） */}
       <span
         aria-hidden="true"
-        className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity duration-300 group-hover:opacity-100"
+        className="pointer-events-none absolute inset-0 flex items-center justify-center opacity-0 transition-opacity duration-300 group-hover:opacity-100 group-focus-visible:opacity-100"
       >
-        <span className={`absolute inset-0 ${tokens.veil}`} />
         <span
-          className={`relative flex h-9 w-9 items-center justify-center rounded-full border backdrop-blur ${tokens.play}`}
+          className={`flex h-9 w-9 items-center justify-center rounded-full border backdrop-blur ${tokens.play}`}
         >
           <svg
             viewBox="0 0 24 24"
@@ -190,5 +174,54 @@ export function GameCard({
         </span>
       </span>
     </button>
+  );
+}
+
+/**
+ * 占位封面：**只在「这条游戏没有封面图 / 图加载失败」时渲染**。
+ *
+ * 与真实封面图互斥 —— 有图时这一层根本不存在，
+ * 所以游戏主图永远不会被渐变、光晕或色块盖住。
+ */
+function GameCardPlaceholder({
+  art,
+  skin,
+}: {
+  art: LobbyGameArt;
+  skin: GameCardPlaceholderSkin;
+}) {
+  return (
+    <span aria-hidden="true" className="absolute inset-0 overflow-hidden">
+      <span
+        className="absolute inset-0"
+        style={{ backgroundImage: skin.backdrop }}
+      />
+      <span
+        className="absolute inset-0"
+        style={{ backgroundImage: skin.glow }}
+      />
+      <span className="absolute inset-0 flex items-center justify-center pb-12">
+        <span
+          className="absolute h-[74%] w-[74%] rounded-full border transition-transform duration-500 group-hover:scale-105"
+          style={{
+            borderColor: skin.haloStroke,
+            backgroundImage: skin.haloFill,
+          }}
+        />
+        <span
+          className="absolute h-[56%] w-[56%] rounded-full border border-dashed transition-transform duration-700 group-hover:rotate-45"
+          style={{ borderColor: skin.haloDashed }}
+        />
+        <span
+          className="relative flex h-[44%] w-[44%] items-center justify-center transition-transform duration-500 group-hover:scale-110"
+          style={{ color: skin.emblem }}
+        >
+          <GameEmblem
+            emblem={art.emblem}
+            className={`h-full w-full ${skin.emblemShadow}`}
+          />
+        </span>
+      </span>
+    </span>
   );
 }

@@ -45,6 +45,8 @@ export const loadLobbyData = cache(async (): Promise<LobbySnapshot> => {
           providerId: true,
           category: true,
           sortOrder: true,
+          // 卡片主体：游戏商同步过来的真实封面图（null = 没有封面，前端走渐变占位）
+          iconUrl: true,
           provider: { select: { name: true } },
         },
       }),
@@ -65,6 +67,7 @@ export const loadLobbyData = cache(async (): Promise<LobbySnapshot> => {
         providerName: game.provider.name,
         category: game.category,
         sortOrder: game.sortOrder,
+        iconUrl: game.iconUrl,
       })),
     };
   } catch (error) {

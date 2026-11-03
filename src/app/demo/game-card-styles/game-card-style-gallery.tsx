@@ -6,7 +6,7 @@ import {
   GAME_CARD_STYLES,
   GAME_CARD_STYLE_ORDER,
 } from "@/lib/game-card-styles";
-import { LOBBY_GAMES, type LobbyGameCard } from "@/lib/lobby-games";
+import { LOBBY_GAMES, readGameImageUrl, type LobbyGameCard } from "@/lib/lobby-games";
 
 /**
  * 演示用 6 张卡片：取的还是大厅同一份目录（含封面图形与在线人数），
@@ -38,6 +38,8 @@ const DEMO_CARDS: LobbyGameCard[] = DEMO_GAME_IDS.flatMap((id) => {
       categories: game.categories,
       online: game.online,
       art: game.art,
+      // 演示目录没有真实封面图 → 卡片走「渐变 + 品类图形」占位
+      imageUrl: readGameImageUrl(game.imageUrl),
     },
   ];
 });
