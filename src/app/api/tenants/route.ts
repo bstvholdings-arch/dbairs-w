@@ -10,9 +10,13 @@ import { sendTenantAdminInviteEmail } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
 import { TENANT_ROLE } from "@/lib/rbac";
 import {
+  DEFAULT_TENANT_LOGO_POSITION,
+  TENANT_LOGO_POSITIONS,
+  isTenantLogoPosition,
   normalizeStorefrontLayout,
   normalizeTenantLogoUrl,
   serializeLayoutConfig,
+  type TenantLogoPosition,
 } from "@/lib/storefront";
 import { getSuperAdminFromRequest } from "@/lib/super-admin";
 import {
@@ -101,6 +105,8 @@ async function createTenantWithAdmin(input: {
    * 前台自动用商户名首字母占位（见 components/brand/tenant-brand.tsx）。
    */
   logoUrl: string | null;
+  /** Logo 在大厅顶栏的位置（left / center），开站时由超管选定 */
+  logoPosition: TenantLogoPosition;
 }): Promise<CreateTenantWithAdminResult> {
   try {
     const created = await prisma.$transaction(async (tx) => {
@@ -114,6 +120,7 @@ async function createTenantWithAdmin(input: {
           planId: input.planId,
           layoutConfig: input.layoutConfig,
           logoUrl: input.logoUrl,
+          logoPosition: input.logoPosition,
         },
         select: tenantSelectWithLayout,
       });
@@ -278,6 +285,27 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    /**
+     * Logo 显示位置（大厅顶栏）：left（默认）/ center。
+     *
+     * 与 logoUrl 同一权限口径 —— 只有超管在开站 / 编辑弹窗里能选，
+     * 商户后台与装修页都不认这个字段（见 AGENTS.md 4.2）。
+     * 显式传了就必须合法，避免脏数据落到前台把 Header 布局搞坏。
+     */
+    const rawLogoPosition = input.logoPosition;
+    let logoPosition: TenantLogoPosition = DEFAULT_TENANT_LOGO_POSITION;
+
+    if (rawLogoPosition !== undefined && rawLogoPosition !== null) {
+      if (!isTenantLogoPosition(rawLogoPosition)) {
+        return jsonError(
+          `Logo 显示位置只能是以下之一：${TENANT_LOGO_POSITIONS.join("、")}`,
+          400,
+        );
+      }
+
+      logoPosition = rawLogoPosition;
+    }
+
     const [domainExists, subdomainExists, emailOwner] = await Promise.all([
       prisma.tenant.findFirst({
         where: { domain: { equals: domain, mode: "insensitive" } },
@@ -345,6 +373,7 @@ export async function POST(request: NextRequest) {
       planId: defaultPlan?.id ?? "unassigned",
       adminEmail,
       logoUrl,
+      logoPosition,
       // 只写这一项，其余装修字段由 normalizeStorefrontLayout 补默认值，
       // 与「老租户缺字段」走同一套容错逻辑。
       layoutConfig: serializeLayoutConfig(

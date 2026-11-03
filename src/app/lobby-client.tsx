@@ -191,6 +191,17 @@ export function LobbyClient({
   // 页脚版权行与充值弹窗页脚复用同一个 brandName，避免各写一份出现穿帮。
   const brandName = resolveBrandName(storefront.tenantName);
 
+  /**
+   * Logo 在大厅顶栏的位置（超管在【租户管理 → 编辑租户】里配，见 Tenant.logoPosition）：
+   * - `left`  ：左侧品牌区（默认，= 改造前的排版，老租户升级后外观不变）；
+   * - `center`：屏幕正中央（左槽菜单按钮 / 中槽 Logo / 右槽搜索 + 语言 + 余额）。
+   *
+   * 两种位置渲染的是**同一个** <TenantBrandLockup /> 实例，只是被放进不同栅格，
+   * 不会出现「左边一个、中间又一个」。脏数据已在 storefront-data 归一化成 left。
+   */
+  const logoPosition = storefront.logoPosition;
+  const brandCentered = logoPosition === "center";
+
   // 只渲染开启的模块，数组顺序就是页面顺序
   const visibleModules = useMemo(
     () =>
@@ -225,8 +236,12 @@ export function LobbyClient({
   // 顶栏 AI 客服：由后台装修 showTopbarChat 控制入口，点击后弹出客服窗口。
   const [supportChatOpen, setSupportChatOpen] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  // 顶栏菜单（只在 Logo 居中模式下出现，用于给左侧留出对称的可点区域）：
+  // 内容是站内已有的四个去处，不新开页面，复用底栏导航的文案。
+  const [lobbyMenuOpen, setLobbyMenuOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
+  const lobbyMenuRef = useRef<HTMLDivElement | null>(null);
 
   const connectingTitleId = useId();
   const comingSoonTitleId = useId();
@@ -377,6 +392,33 @@ export function LobbyClient({
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [accountMenuOpen]);
+
+  // 顶栏菜单：同一套交互（点外部 / Esc 关闭），避免两个下拉互相打架。
+  useEffect(() => {
+    if (!lobbyMenuOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: MouseEvent) {
+      if (!lobbyMenuRef.current?.contains(event.target as Node)) {
+        setLobbyMenuOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setLobbyMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [lobbyMenuOpen]);
 
 
   // 数据库还没有同步任何游戏时（新部署 / 清库），回退到内置目录，保证大厅不空。
@@ -892,207 +934,341 @@ export function LobbyClient({
         <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.045)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.045)_1px,transparent_1px)] [background-size:64px_64px] [mask-image:radial-gradient(ellipse_at_top,black_10%,transparent_70%)] [-webkit-mask-image:radial-gradient(ellipse_at_top,black_10%,transparent_70%)]" />
       </div>
 
-      <header className="sticky top-0 z-40 border-b border-brand/10 bg-[#050505]/85 backdrop-blur-xl">
-        <div className="mx-auto flex w-full max-w-[1600px] flex-wrap items-center gap-x-4 gap-y-2.5 px-3 py-3 sm:px-5 lg:px-8">
+      {/*
+        顶栏：品牌区 / 余额 / 搜索 / 客服 / 语言 / 玩家入口。
+
+        排版由超管配置的 Logo 位置决定（Tenant.logoPosition），两种位置共用
+        **同一个** <TenantBrandLockup /> 实例，绝不渲染两份：
+        - left  ：flex-wrap，品牌区在最左（= 改造前的排版，老租户外观不变）；
+        - center：三列栅格 [1fr auto 1fr]，左槽菜单按钮 / 中槽 Logo / 右槽搜索 + 语言 + 余额。
+                  左右两列等宽，所以 Logo 精确落在屏幕中线上（≥lg 生效）；
+                  手机上中槽是 1fr —— 品牌在「菜单 + 图标组」之间的剩余空间里居中，
+                  宁可略有偏移也不挤压任何控件（手机宽度放不下等宽三列）。
+      */}
+      <header
+        className="sticky top-0 z-40 border-b border-brand/10 bg-[#050505]/85 backdrop-blur-xl"
+        data-logo-position={logoPosition}
+      >
+        <div
+          className={
+            brandCentered
+              ? "mx-auto grid w-full max-w-[1600px] grid-cols-[auto_1fr_auto] items-center gap-x-2.5 gap-y-2.5 px-3 py-3 sm:px-5 lg:grid-cols-[1fr_auto_1fr] lg:gap-x-4 lg:px-8"
+              : "mx-auto flex w-full max-w-[1600px] flex-wrap items-center gap-x-4 gap-y-2.5 px-3 py-3 sm:px-5 lg:px-8"
+          }
+        >
           {/*
-            品牌区（白标）：Logo + 商户名，统一由 TenantBrandLockup 渲染。
-            lg 档 = Logo 44px（sm 以上 48px）+ 商户名 text-xl/2xl，
-            没配 Logo 时用商户名首字母做同尺寸金色占位图，二者视觉重量一致。
+            左槽：仅 Logo 居中模式渲染。左侧不能是死区 —— 给一个真实可点的菜单按钮，
+            入口全部是站内已有页面（全部游戏 / 活动 / 我的 / 客服），不新开空白页。
           */}
-          <TenantBrandLockup
-            brandName={brandName}
-            logoUrl={storefront.tenantLogoUrl}
-            size="lg"
-            tagline={t("lobby.brandTagline")}
-            taglineClassName="hidden sm:block"
-          />
-
-          {/* 余额 + 搜索：移动端整行换到第二排，桌面端与品牌区同一条水平中线 */}
-          <div className="order-3 flex w-full items-center gap-2 sm:order-2 sm:w-auto sm:flex-1">
-            <div className="flex shrink-0 items-center gap-2 rounded-full border border-brand/25 bg-gradient-to-r from-brand/15 to-transparent px-2.5 py-1.5 sm:px-3">
-              <svg
-                viewBox="0 0 24 24"
-                className="h-3.5 w-3.5 text-brand-soft"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={1.6}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <rect x="3" y="6" width="18" height="13" rx="3" />
-                <path d="M3 10h18" />
-                <circle cx="16.8" cy="14.6" r="1.1" />
-              </svg>
-              <span className="hidden text-[8px] uppercase tracking-[0.2em] text-neutral-500 sm:inline">
-                {t("lobby.balance")}
-              </span>
-              <span className="font-mono text-[11px] font-semibold tabular-nums text-brand-pale sm:text-xs">
-                {playerLoading && !player
-                  ? "…"
-                  : player
-                    ? formatDisplayAmount(player.availableBalance, walletCurrency)
-                    : "—"}
-              </span>
-              {player ? null : (
-                <span className="hidden rounded-full border border-white/10 px-1.5 py-px text-[8px] uppercase tracking-[0.14em] text-neutral-500 md:inline">
-                  {t("lobby.guest")}
-                </span>
-              )}
-            </div>
-
-            <label className="relative flex min-w-0 flex-1 items-center">
-              <span className="sr-only">{t("lobby.searchPlaceholder")}</span>
-              <svg
-                viewBox="0 0 24 24"
-                className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-neutral-600"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={1.8}
-                strokeLinecap="round"
-                aria-hidden="true"
-              >
-                <circle cx="11" cy="11" r="7" />
-                <path d="m20 20-3.6-3.6" />
-              </svg>
-              <input
-                type="search"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder={t("lobby.searchPlaceholder")}
-                className="h-9 w-full rounded-full border border-white/[0.07] bg-white/[0.03] pl-8 pr-3 text-[11px] text-neutral-200 transition-colors placeholder:text-neutral-600 focus:border-brand/40 focus:outline-none focus:ring-1 focus:ring-brand/25"
-              />
-            </label>
-          </div>
-
-          {/* Header 固定显示 Logo / Balance / Search / Language / 玩家入口 */}
-          <div className="order-2 ml-auto flex shrink-0 items-center gap-2 sm:order-3 sm:ml-0">
-            {storefront.showTopbarChat ? (
-              <button
-                type="button"
-                onClick={openSupportChat}
-                aria-label={t("lobby.support.open")}
-                aria-haspopup="dialog"
-                aria-expanded={supportChatOpen}
-                title={t("lobby.support.open")}
-                className="relative flex h-8 w-8 items-center justify-center rounded-full border border-brand/25 bg-black/35 text-brand-soft transition-colors hover:border-brand/55 hover:bg-brand/10 hover:text-brand-pale focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 sm:h-9 sm:w-9"
-              >
-                <TopbarChatIcon className="h-4 w-4" />
-                <span
-                  aria-hidden="true"
-                  className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-emerald-400 ring-2 ring-[#050505]"
-                />
-              </button>
-            ) : null}
-
-            <LanguageSwitcher languageStyle={storefront.languageStyle} />
-
-            <div ref={accountMenuRef} className="relative">
-              {playerLoading && !player ? (
-                <span
-                  aria-hidden="true"
-                  className="block h-9 w-20 animate-pulse rounded-full border border-white/[0.06] bg-white/[0.04]"
-                />
-              ) : player ? (
+          {brandCentered ? (
+            <div className="flex min-w-0 items-center justify-start lg:col-start-1 lg:row-start-1">
+              <div ref={lobbyMenuRef} className="relative">
                 <button
                   type="button"
-                  onClick={() => setAccountMenuOpen((open) => !open)}
+                  onClick={() => setLobbyMenuOpen((open) => !open)}
                   aria-haspopup="menu"
-                  aria-expanded={accountMenuOpen}
-                  className="flex h-9 items-center gap-1.5 rounded-full border border-brand/30 bg-white/[0.03] pl-1 pr-2.5 transition-colors hover:border-brand/55 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/50"
+                  aria-expanded={lobbyMenuOpen}
+                  aria-label={t("lobby.menu.open")}
+                  title={t("lobby.menu.open")}
+                  className="flex h-9 w-9 items-center justify-center rounded-full border border-brand/25 bg-black/35 text-brand-soft transition-colors hover:border-brand/55 hover:bg-brand/10 hover:text-brand-pale focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/50"
                 >
-                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-brand-pale via-brand to-brand-deep text-[11px] font-black text-brand-ink">
-                    {player.username.slice(0, 1).toUpperCase()}
-                  </span>
-                  <span className="hidden max-w-[92px] truncate text-[11px] font-semibold text-neutral-200 sm:inline">
-                    {player.username}
-                  </span>
-                  <svg
-                    viewBox="0 0 24 24"
-                    className={`h-3 w-3 text-neutral-500 transition-transform ${accountMenuOpen ? "rotate-180" : ""}`}
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth={2}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="m6 9 6 6 6-6" />
-                  </svg>
+                  <LobbyMenuIcon className="h-4 w-4" />
                 </button>
-              ) : (
-                <div className="flex items-center gap-1.5">
-                  <Link
-                    href={loginHref}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      redirectToPlayerAuth("login");
-                    }}
-                    className="inline-flex h-8 items-center justify-center rounded-full border border-white/10 px-2.5 text-[10px] font-semibold text-neutral-300 transition-colors hover:border-brand/45 hover:text-brand-pale sm:px-3"
-                  >
-                    {t("lobby.login")}
-                  </Link>
-                  <Link
-                    href={registerHref}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      redirectToPlayerAuth("register");
-                    }}
-                    className="inline-flex h-8 items-center justify-center rounded-full bg-gradient-to-r from-brand-deep via-brand to-brand-pale px-2.5 text-[10px] font-bold text-brand-ink transition-opacity hover:opacity-90 sm:px-3"
-                  >
-                    {t("lobby.register")}
-                  </Link>
-                </div>
-              )}
 
-              {player && accountMenuOpen ? (
-                <div
-                  role="menu"
-                  className="absolute right-0 top-full z-50 mt-2 w-56 overflow-hidden rounded-xl border border-brand/25 bg-[#0a0a0a] p-1 shadow-[0_24px_70px_-20px_rgba(0,0,0,0.95)]"
-                >
-                  <div className="border-b border-white/[0.06] px-3 py-2.5">
-                    <p className="text-[8px] uppercase tracking-[0.2em] text-neutral-500">
-                      {t("lobby.account.signedInAs")}
-                    </p>
-                    <p className="mt-1 truncate text-xs font-semibold text-neutral-100">
-                      {player.username}
-                    </p>
-                    <p className="mt-0.5 truncate font-mono text-[9px] uppercase tracking-[0.14em] text-brand-soft/80">
-                      {t("lobby.account.code")}: {player.referralCode}
-                    </p>
+                {lobbyMenuOpen ? (
+                  <div
+                    role="menu"
+                    aria-label={t("lobby.menu.open")}
+                    className="absolute left-0 top-full z-50 mt-2 w-48 overflow-hidden rounded-xl border border-brand/25 bg-[#0a0a0a] p-1 shadow-[0_24px_70px_-20px_rgba(0,0,0,0.95)]"
+                  >
+                    <button
+                      role="menuitem"
+                      type="button"
+                      onClick={() => {
+                        setLobbyMenuOpen(false);
+                        document
+                          .getElementById("lobby-games")
+                          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      }}
+                      className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-[11px] text-neutral-300 transition-colors hover:bg-brand/10 hover:text-brand-pale"
+                    >
+                      {t("lobby.category.all")}
+                      <span aria-hidden="true">›</span>
+                    </button>
+                    <Link
+                      role="menuitem"
+                      href={withTenant("/promotions")}
+                      onClick={() => setLobbyMenuOpen(false)}
+                      className="flex items-center justify-between rounded-lg px-3 py-2 text-[11px] text-neutral-300 transition-colors hover:bg-brand/10 hover:text-brand-pale"
+                    >
+                      {t("playerNav.promotions")}
+                      <span aria-hidden="true">›</span>
+                    </Link>
+                    <Link
+                      role="menuitem"
+                      href={withTenant("/player/profile")}
+                      onClick={() => setLobbyMenuOpen(false)}
+                      className="flex items-center justify-between rounded-lg px-3 py-2 text-[11px] text-neutral-300 transition-colors hover:bg-brand/10 hover:text-brand-pale"
+                    >
+                      {t("playerNav.account")}
+                      <span aria-hidden="true">›</span>
+                    </Link>
+                    {storefront.showTopbarChat ? (
+                      <button
+                        role="menuitem"
+                        type="button"
+                        onClick={() => {
+                          setLobbyMenuOpen(false);
+                          openSupportChat();
+                        }}
+                        className="flex w-full items-center justify-between rounded-lg border-t border-white/[0.06] px-3 py-2 text-left text-[11px] text-neutral-300 transition-colors hover:bg-brand/10 hover:text-brand-pale"
+                      >
+                        {t("lobby.support.open")}
+                        <span aria-hidden="true">›</span>
+                      </button>
+                    ) : null}
                   </div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
 
-                  <Link
-                    role="menuitem"
-                    href={withTenant("/player/profile")}
-                    onClick={() => setAccountMenuOpen(false)}
-                    className="mt-1 flex items-center justify-between rounded-lg px-3 py-2 text-[11px] text-neutral-300 transition-colors hover:bg-brand/10 hover:text-brand-pale"
-                  >
-                    {t("lobby.account.profile")}
-                    <span aria-hidden="true">›</span>
-                  </Link>
-                  <Link
-                    role="menuitem"
-                    href={withTenant("/player/profile?tab=referral")}
-                    onClick={() => setAccountMenuOpen(false)}
-                    className="flex items-center justify-between rounded-lg px-3 py-2 text-[11px] text-neutral-300 transition-colors hover:bg-brand/10 hover:text-brand-pale"
-                  >
-                    {t("lobby.account.referral")}
-                    <span aria-hidden="true">›</span>
-                  </Link>
-                  <button
-                    role="menuitem"
-                    type="button"
-                    onClick={() => void handlePlayerLogout()}
-                    disabled={loggingOut}
-                    className="mt-1 flex w-full items-center justify-between rounded-lg border-t border-white/[0.06] px-3 py-2 text-left text-[11px] text-red-300/90 transition-colors hover:bg-red-400/10 hover:text-red-200 disabled:opacity-60"
-                  >
-                    {loggingOut
-                      ? t("player.profile.loggingOut")
-                      : t("player.profile.logout")}
-                  </button>
-                </div>
+          {/*
+            品牌区（白标）：Logo + 商户名，全局**唯一**的 TenantBrandLockup 实例。
+            lg 档 = Logo 44px（sm 以上 48px）+ 商户名 text-xl/2xl，
+            没配 Logo 时用商户名首字母做同尺寸金色占位图，二者视觉重量一致。
+            外面这层 div 只是栅格占位：left 模式下 display:contents（不改变原 flex 排版），
+            center 模式下变成「居中格」，把品牌精确顶到中槽。
+          */}
+          <div
+            className={
+              brandCentered
+                ? "flex min-w-0 items-center justify-center lg:col-start-2 lg:row-start-1"
+                : "contents"
+            }
+          >
+            <TenantBrandLockup
+              brandName={brandName}
+              logoUrl={storefront.tenantLogoUrl}
+              size="lg"
+              tagline={t("lobby.brandTagline")}
+              taglineClassName="hidden sm:block"
+            />
+          </div>
+
+          {/*
+            右侧整组（余额 + 搜索 + 客服 + 语言 + 玩家入口）。
+            center 模式下外面这层是 display:contents：手机端两个子块各自落进栅格
+            （图标组进第一排右槽、余额 + 搜索独占第二排整行）；≥lg 变回 flex 并整体
+            放进第 3 列，与左槽等宽 —— 这是 Logo 能精确居中的关键。
+            left 模式下它也是 display:contents，子元素的 order-* 布局原样保留。
+          */}
+          <div
+            className={
+              brandCentered
+                ? "contents lg:col-start-3 lg:row-start-1 lg:flex lg:min-w-0 lg:items-center lg:justify-end lg:gap-2"
+                : "contents"
+            }
+          >
+            {/* 余额 + 搜索：移动端整行换到第二排，桌面端与品牌区同一条水平中线 */}
+            <div
+              className={
+                brandCentered
+                  ? "col-span-3 row-start-2 flex w-full items-center gap-2 lg:col-auto lg:row-auto lg:w-auto lg:min-w-0 lg:flex-1"
+                  : "order-3 flex w-full items-center gap-2 sm:order-2 sm:w-auto sm:flex-1"
+              }
+            >
+              <div className="flex shrink-0 items-center gap-2 rounded-full border border-brand/25 bg-gradient-to-r from-brand/15 to-transparent px-2.5 py-1.5 sm:px-3">
+                <svg
+                  viewBox="0 0 24 24"
+                  className="h-3.5 w-3.5 text-brand-soft"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={1.6}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <rect x="3" y="6" width="18" height="13" rx="3" />
+                  <path d="M3 10h18" />
+                  <circle cx="16.8" cy="14.6" r="1.1" />
+                </svg>
+                <span className="hidden text-[8px] uppercase tracking-[0.2em] text-neutral-500 sm:inline">
+                  {t("lobby.balance")}
+                </span>
+                <span className="font-mono text-[11px] font-semibold tabular-nums text-brand-pale sm:text-xs">
+                  {playerLoading && !player
+                    ? "…"
+                    : player
+                      ? formatDisplayAmount(player.availableBalance, walletCurrency)
+                      : "—"}
+                </span>
+                {player ? null : (
+                  <span className="hidden rounded-full border border-white/10 px-1.5 py-px text-[8px] uppercase tracking-[0.14em] text-neutral-500 md:inline">
+                    {t("lobby.guest")}
+                  </span>
+                )}
+              </div>
+
+              <label className="relative flex min-w-0 flex-1 items-center">
+                <span className="sr-only">{t("lobby.searchPlaceholder")}</span>
+                <svg
+                  viewBox="0 0 24 24"
+                  className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-neutral-600"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={1.8}
+                  strokeLinecap="round"
+                  aria-hidden="true"
+                >
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="m20 20-3.6-3.6" />
+                </svg>
+                <input
+                  type="search"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder={t("lobby.searchPlaceholder")}
+                  className="h-9 w-full rounded-full border border-white/[0.07] bg-white/[0.03] pl-8 pr-3 text-[11px] text-neutral-200 transition-colors placeholder:text-neutral-600 focus:border-brand/40 focus:outline-none focus:ring-1 focus:ring-brand/25"
+                />
+              </label>
+            </div>
+
+            {/* Header 固定显示 Logo / Balance / Search / Language / 玩家入口 */}
+            <div
+              className={
+                brandCentered
+                  ? "col-start-3 row-start-1 flex shrink-0 items-center justify-end gap-2 lg:col-auto lg:row-auto"
+                  : "order-2 ml-auto flex shrink-0 items-center gap-2 sm:order-3 sm:ml-0"
+              }
+            >
+              {storefront.showTopbarChat ? (
+                <button
+                  type="button"
+                  onClick={openSupportChat}
+                  aria-label={t("lobby.support.open")}
+                  aria-haspopup="dialog"
+                  aria-expanded={supportChatOpen}
+                  title={t("lobby.support.open")}
+                  className="relative flex h-8 w-8 items-center justify-center rounded-full border border-brand/25 bg-black/35 text-brand-soft transition-colors hover:border-brand/55 hover:bg-brand/10 hover:text-brand-pale focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 sm:h-9 sm:w-9"
+                >
+                  <TopbarChatIcon className="h-4 w-4" />
+                  <span
+                    aria-hidden="true"
+                    className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-emerald-400 ring-2 ring-[#050505]"
+                  />
+                </button>
               ) : null}
+  
+              <LanguageSwitcher languageStyle={storefront.languageStyle} />
+  
+              <div ref={accountMenuRef} className="relative">
+                {playerLoading && !player ? (
+                  <span
+                    aria-hidden="true"
+                    className="block h-9 w-20 animate-pulse rounded-full border border-white/[0.06] bg-white/[0.04]"
+                  />
+                ) : player ? (
+                  <button
+                    type="button"
+                    onClick={() => setAccountMenuOpen((open) => !open)}
+                    aria-haspopup="menu"
+                    aria-expanded={accountMenuOpen}
+                    className="flex h-9 items-center gap-1.5 rounded-full border border-brand/30 bg-white/[0.03] pl-1 pr-2.5 transition-colors hover:border-brand/55 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/50"
+                  >
+                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-brand-pale via-brand to-brand-deep text-[11px] font-black text-brand-ink">
+                      {player.username.slice(0, 1).toUpperCase()}
+                    </span>
+                    <span className="hidden max-w-[92px] truncate text-[11px] font-semibold text-neutral-200 sm:inline">
+                      {player.username}
+                    </span>
+                    <svg
+                      viewBox="0 0 24 24"
+                      className={`h-3 w-3 text-neutral-500 transition-transform ${accountMenuOpen ? "rotate-180" : ""}`}
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="m6 9 6 6 6-6" />
+                    </svg>
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <Link
+                      href={loginHref}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        redirectToPlayerAuth("login");
+                      }}
+                      className="inline-flex h-8 items-center justify-center rounded-full border border-white/10 px-2.5 text-[10px] font-semibold text-neutral-300 transition-colors hover:border-brand/45 hover:text-brand-pale sm:px-3"
+                    >
+                      {t("lobby.login")}
+                    </Link>
+                    <Link
+                      href={registerHref}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        redirectToPlayerAuth("register");
+                      }}
+                      className="inline-flex h-8 items-center justify-center rounded-full bg-gradient-to-r from-brand-deep via-brand to-brand-pale px-2.5 text-[10px] font-bold text-brand-ink transition-opacity hover:opacity-90 sm:px-3"
+                    >
+                      {t("lobby.register")}
+                    </Link>
+                  </div>
+                )}
+  
+                {player && accountMenuOpen ? (
+                  <div
+                    role="menu"
+                    className="absolute right-0 top-full z-50 mt-2 w-56 overflow-hidden rounded-xl border border-brand/25 bg-[#0a0a0a] p-1 shadow-[0_24px_70px_-20px_rgba(0,0,0,0.95)]"
+                  >
+                    <div className="border-b border-white/[0.06] px-3 py-2.5">
+                      <p className="text-[8px] uppercase tracking-[0.2em] text-neutral-500">
+                        {t("lobby.account.signedInAs")}
+                      </p>
+                      <p className="mt-1 truncate text-xs font-semibold text-neutral-100">
+                        {player.username}
+                      </p>
+                      <p className="mt-0.5 truncate font-mono text-[9px] uppercase tracking-[0.14em] text-brand-soft/80">
+                        {t("lobby.account.code")}: {player.referralCode}
+                      </p>
+                    </div>
+  
+                    <Link
+                      role="menuitem"
+                      href={withTenant("/player/profile")}
+                      onClick={() => setAccountMenuOpen(false)}
+                      className="mt-1 flex items-center justify-between rounded-lg px-3 py-2 text-[11px] text-neutral-300 transition-colors hover:bg-brand/10 hover:text-brand-pale"
+                    >
+                      {t("lobby.account.profile")}
+                      <span aria-hidden="true">›</span>
+                    </Link>
+                    <Link
+                      role="menuitem"
+                      href={withTenant("/player/profile?tab=referral")}
+                      onClick={() => setAccountMenuOpen(false)}
+                      className="flex items-center justify-between rounded-lg px-3 py-2 text-[11px] text-neutral-300 transition-colors hover:bg-brand/10 hover:text-brand-pale"
+                    >
+                      {t("lobby.account.referral")}
+                      <span aria-hidden="true">›</span>
+                    </Link>
+                    <button
+                      role="menuitem"
+                      type="button"
+                      onClick={() => void handlePlayerLogout()}
+                      disabled={loggingOut}
+                      className="mt-1 flex w-full items-center justify-between rounded-lg border-t border-white/[0.06] px-3 py-2 text-left text-[11px] text-red-300/90 transition-colors hover:bg-red-400/10 hover:text-red-200 disabled:opacity-60"
+                    >
+                      {loggingOut
+                        ? t("player.profile.loggingOut")
+                        : t("player.profile.logout")}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             </div>
           </div>
         </div>
@@ -1326,6 +1502,27 @@ function TopbarChatIcon({ className }: { className?: string }) {
       <rect x="17" y="13" width="4" height="6" rx="1.6" />
       <path d="M19 19a3 3 0 0 1-3 2.4h-2" />
       <circle cx="13" cy="21.4" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+/**
+ * 顶栏菜单图标（三横线）：仅 Logo 居中模式下出现。
+ */
+function LobbyMenuIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      aria-hidden="true"
+      className={className}
+    >
+      <path d="M4 7h16" />
+      <path d="M4 12h11" />
+      <path d="M4 17h16" />
     </svg>
   );
 }

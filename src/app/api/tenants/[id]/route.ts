@@ -14,6 +14,8 @@ import {
 import { sendTenantAdminInviteEmail } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
 import {
+  TENANT_LOGO_POSITIONS,
+  isTenantLogoPosition,
   normalizeStorefrontLayout,
   normalizeTenantLogoUrl,
   serializeLayoutConfig,
@@ -300,6 +302,23 @@ async function updateTenant(
           data.logoUrl = logoUrl;
         }
       }
+    }
+
+    /**
+     * Logo 显示位置（大厅顶栏）：left / center。
+     *
+     * 与 logoUrl 同一权限口径 —— 全系统唯一写入口就在这里（标量列，不进 layoutConfig），
+     * 商户后台（saveTenantSiteSettings 的签名里没有它）构造请求也改不动。
+     */
+    if (hasOwn(input, "logoPosition")) {
+      if (!isTenantLogoPosition(input.logoPosition)) {
+        return jsonError(
+          `Logo 显示位置只能是以下之一：${TENANT_LOGO_POSITIONS.join("、")}`,
+          400,
+        );
+      }
+
+      data.logoPosition = input.logoPosition;
     }
 
     /**

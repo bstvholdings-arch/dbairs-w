@@ -16,6 +16,7 @@ import { useLanguage } from "@/components/LanguageProvider";
 import { brandInitial } from "@/lib/brand";
 import {
   TENANT_LOGO_URL_MAX_LENGTH,
+  normalizeTenantLogoPosition,
   normalizeTenantLogoUrl,
 } from "@/lib/storefront";
 import {
@@ -34,6 +35,7 @@ import {
 } from "@/lib/tenant-domains";
 
 import {
+  LOGO_POSITION_OPTIONS,
   TENANT_STATUS_OPTIONS,
   WITHDRAWAL_APPROVAL_OPTIONS,
   type TenantAdminProvisionInfo,
@@ -82,6 +84,8 @@ export function TenantFormModal({
     subdomain: tenant?.subdomain ?? "",
     // 品牌 Logo：超管上传后拿到 /api/tenant-logos/<uuid>.png，原样回填
     logoUrl: tenant?.logoUrl ?? "",
+    // Logo 位置：老租户 / 脏数据统一回落到左侧（= 改造前的排版）
+    logoPosition: normalizeTenantLogoPosition(tenant?.logoPosition),
     // 备用域名池：进输入框时一行一个，提交前再归一化成数组
     backupDomains: formatBackupDomains(tenant?.backupDomains ?? []),
     status: tenant?.status ?? "active",
@@ -313,6 +317,8 @@ export function TenantFormModal({
             themeBackground: normalizeThemeBackground(form.themeBackground),
             // 品牌 Logo：只有这里能写；空字符串 = 清空（前台回退商户名首字母）
             logoUrl: form.logoUrl.trim(),
+            // Logo 位置：只有这里能写（left / center），商户后台与装修页都不认
+            logoPosition: normalizeTenantLogoPosition(form.logoPosition),
             // 新建租户一律为 active（后端默认值），只有编辑时才提交状态。
             ...(mode === "edit" ? { status: form.status } : {}),
           }),
@@ -618,6 +624,104 @@ export function TenantFormModal({
                     {logoError}
                   </p>
                 ) : null}
+
+                {/* Logo 显示位置（left / center）：大厅顶栏唯一的 Logo 实例放在哪一格。
+                    居中模式下左侧让位给菜单按钮、右侧是搜索 / 语言 / 余额 —— 不会出现两个 Logo。 */}
+                <div className="mt-3 border-t border-white/[0.06] pt-3" data-tenant-logo-position>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] uppercase tracking-[0.16em] text-neutral-600">
+                      {t("tenants.form.logoPosition")}
+                    </span>
+                    <span className="text-[10px] text-[#f0d27c]">
+                      {form.logoPosition === "center"
+                        ? t("tenants.form.logoPositionCenter")
+                        : t("tenants.form.logoPositionLeft")}
+                    </span>
+                  </div>
+
+                  <div
+                    role="radiogroup"
+                    aria-label={t("tenants.form.logoPosition")}
+                    className="mt-2 grid grid-cols-2 gap-1.5"
+                  >
+                    {LOGO_POSITION_OPTIONS.map((option) => {
+                      const active = form.logoPosition === option.value;
+                      const centered = option.value === "center";
+
+                      return (
+                        <label
+                          key={option.value}
+                          data-logo-position-option={option.value}
+                          data-logo-position-active={active ? "true" : "false"}
+                          className={`cursor-pointer rounded-lg border px-2 py-1.5 transition-colors has-[:focus-visible]:ring-1 has-[:focus-visible]:ring-[#d4af37]/60 ${
+                            active
+                              ? "border-[#d4af37]/60 bg-[#d4af37]/[0.08]"
+                              : "border-white/[0.08] bg-black/30 hover:border-white/20"
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name="logoPosition"
+                            value={option.value}
+                            checked={active}
+                            onChange={() =>
+                              updateField("logoPosition", option.value)
+                            }
+                            className="sr-only"
+                          />
+                          {/* 顶栏示意：左滑菜单 / 中间 Logo / 右侧搜索 + 头像 */}
+                          <span
+                            aria-hidden="true"
+                            className={`flex h-8 w-full items-center gap-1 rounded-md border px-1.5 ${
+                              active
+                                ? "border-[#d4af37]/35 bg-black/60"
+                                : "border-white/[0.06] bg-black/40"
+                            }`}
+                          >
+                            {centered ? (
+                              <span className="flex shrink-0 items-center gap-0.5">
+                                <span className="block h-2 w-2 rounded-[1px] bg-neutral-600" />
+                                <span className="block h-0.5 w-1 rounded-full bg-neutral-700" />
+                              </span>
+                            ) : null}
+                            <span
+                              className={`flex min-w-0 flex-1 items-center ${
+                                centered ? "justify-center" : "justify-start"
+                              }`}
+                            >
+                              <span
+                                className={`block h-2.5 rounded-[1px] bg-gradient-to-r from-[#f5e6b8] via-[#d4af37] to-[#8a6d1f] ${
+                                  centered ? "w-6" : "w-5"
+                                }`}
+                              />
+                            </span>
+                            <span className="flex shrink-0 items-center gap-0.5">
+                              <span className="block h-1.5 w-3 rounded-full bg-neutral-700" />
+                              <span className="block h-2 w-2 rounded-full bg-neutral-700" />
+                            </span>
+                          </span>
+
+                          <span
+                            className={`mt-1 block text-[10px] leading-4 ${
+                              active
+                                ? "font-semibold text-[#f0d27c]"
+                                : "text-neutral-400"
+                            }`}
+                          >
+                            {t(option.labelKey)}
+                          </span>
+                          <span className="mt-0.5 block text-[9px] leading-3.5 text-neutral-600">
+                            {t(option.hintKey)}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+
+                  <p className="mt-2 text-[10px] leading-4 text-neutral-600">
+                    {t("tenants.form.logoPositionNote")}
+                  </p>
+                </div>
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">

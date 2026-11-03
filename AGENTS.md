@@ -64,6 +64,12 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 - 唯一事实来源是 `Tenant.logoUrl`：http(s) 绝对地址，或以 `/` 开头的站内路径（上传接口返回的 `/api/tenant-logos/<uuid>.png` 就属于后者）。所有读写都必须过 `src/lib/storefront.ts` 的 `normalizeTenantLogoUrl()`，认不出来的值一律当「未配置」（`javascript:` / `data:` / `//host/x.png` 会被拒，因为它们最终直接进 `<img src>`）。
 - **唯一写入口**：超管【租户管理 → 新建 / 编辑租户】弹窗里的 Tenant Logo 组件 → `POST /api/admin/tenant-logos/upload`（超管会话；PNG / JPG / WEBP，≤ 2MB，按文件头嗅探，**不收 SVG**，否则等于开放存储型 XSS）拿到 `/api/tenant-logos/<uuid>.png`，再随 `POST /api/tenants` / `PUT /api/tenants/[id]` 落库。
+- **Logo 显示位置 `Tenant.logoPosition`**（`left` 默认 / `center`）：同一权限口径，也只能在上面那个弹窗里选（单选卡片，标签见 `LOGO_POSITION_OPTIONS`）。
+  - 读侧一律过 `normalizeTenantLogoPosition()`，脏数据 / 老租户回落 `left`（= 改造前的排版，升级后老站点外观不变）。
+  - 大厅顶栏**只有一份** `TenantBrandLockup`：`left` 用原来的 flex-wrap（品牌在最左），`center` 用三列栅格 `[1fr_auto_1fr]`（左槽菜单按钮 / 中槽 Logo / 右槽搜索 + 语言 + 余额），左右等宽才能保证 Logo 精确落在屏幕中线。
+  - **禁止**为了居中在左侧再渲染一个 Logo，也**禁止**为两种位置各复制一份 Header 组件；位置差异只能来自 Grid 的列 / `display: contents` 与 `Tenant.logoPosition`。
+  - 手机（<lg）放不下等宽三列：中槽是 `1fr`，品牌在「菜单 + 图标组」之间居中，第二排整行留给余额 + 搜索 —— 宁可略有偏移，也不挤压任何控件。
+  - 商户后台（`PATCH /api/tenant/settings` / `saveTenantSiteSettings`）与装修页（`PUT /api/admin/storefront`）**都不认这个字段**，进了 `layoutConfig` 也不行（它是 `Tenant` 上的独立列）。
 - **商户端零写入能力（不可回退）**：`/tenant/settings` 不渲染任何 Logo 组件、按钮、输入框或说明文案；`PATCH /api/tenant/settings` 与 `saveTenantSiteSettings` 的签名里都没有 `logoUrl`，商户构造请求也改不动。不要以「方便商户」为由把入口加回来 —— 与 `themeBackground` 同一权限口径。
 - 玩家面所有露出品牌名的地方（大厅、`/provider/[code]`、登录 / 注册、玩家中心、实名认证、活动页）必须复用 `src/components/brand/tenant-brand.tsx` 的 `TenantBrandLockup`：`logoUrl` 有值显示图，加载失败或未配置降级成商户名首字母金色方块。**禁止**各页面自写 `<img>` + 品牌名。
 - 存储走 `src/lib/tenant-logo-storage.ts`（演示实现落盘 `.tenant-logo-storage/`，已在 `.gitignore`）；生产环境只把 `saveTenantLogo` 换成 Supabase Storage / S3 上传并返回 CDN 直链，`/api/tenant-logos/[key]` 可整段删掉，前端组件与 `Tenant.logoUrl` 口径不变。

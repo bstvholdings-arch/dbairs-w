@@ -1,6 +1,32 @@
+import type { TenantLogoPosition } from "@/lib/storefront";
 import type { ThemeBackgroundId } from "@/lib/theme-backgrounds";
 
 export const WITHDRAWAL_APPROVAL_OPTIONS = [1, 2, 3] as const;
+
+/**
+ * Logo 显示位置的可选项（大厅顶栏）。
+ *
+ * 用「单选卡片」而不是原生 <select>：卡片里能直接画出该位置的 Header 示意，
+ * 超管一眼就知道选完长什么样；原生下拉还依赖浏览器弹层，容易「点了没反应」。
+ */
+export const LOGO_POSITION_OPTIONS = [
+  {
+    value: "left",
+    labelKey: "tenants.form.logoPositionLeft",
+    hintKey: "tenants.form.logoPositionLeftHint",
+  },
+  {
+    value: "center",
+    labelKey: "tenants.form.logoPositionCenter",
+    hintKey: "tenants.form.logoPositionCenterHint",
+  },
+] as const satisfies ReadonlyArray<{
+  value: TenantLogoPosition;
+  labelKey: "tenants.form.logoPositionLeft" | "tenants.form.logoPositionCenter";
+  hintKey:
+    | "tenants.form.logoPositionLeftHint"
+    | "tenants.form.logoPositionCenterHint";
+}>;
 
 export const TENANT_STATUS_OPTIONS = [
   { value: "active", labelKey: "tenant.status.active" },
@@ -27,6 +53,12 @@ export type TenantRow = {
    * **只有超管能写** —— 上传入口就在本目录的租户弹窗里。
    */
   logoUrl: string | null;
+  /**
+   * Logo 在玩家大厅顶栏的位置（Tenant.logoPosition，已归一化）：
+   * left = 左侧品牌区（默认）/ center = 屏幕正中央。
+   * 与 logoUrl 同一权限口径：只有超管能在本弹窗里改。
+   */
+  logoPosition: TenantLogoPosition;
   status: string;
   withdrawalRequiredApprovals: number;
   /** 主题背景色（存在 Tenant.layoutConfig 里，前台大厅与品牌展馆共用） */
@@ -70,6 +102,14 @@ export type TenantFormValues = {
    * **这是全系统唯一写入口**：商户后台没有任何上传或修改控件。
    */
   logoUrl: string;
+  /**
+   * Logo 显示位置（left / center）。
+   *
+   * 与 logoUrl 同一口径：只有超管在【新建 / 编辑租户】弹窗里能选，
+   * 决定玩家大厅顶栏把**同一个** Logo 放在左侧还是屏幕正中央
+   * （居中时左侧让位给菜单按钮、右侧放搜索 / 语言 / 余额）。
+   */
+  logoPosition: TenantLogoPosition;
   /**
    * 备用域名池（多域名防封自动切换），输入框里一行一个 / 逗号分隔。
    * 编辑器里保持字符串原样，提交时再走 readBackupDomainsInput 归一化成数组。

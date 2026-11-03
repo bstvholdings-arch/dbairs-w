@@ -5,6 +5,10 @@ import {
   type ThemeBackgroundId,
 } from "./theme-backgrounds";
 import {
+  normalizeTenantLogoPosition,
+  type TenantLogoPosition,
+} from "./storefront";
+import {
   DOMAIN_PATTERN,
   SUBDOMAIN_PATTERN,
   normalizeDomain,
@@ -31,6 +35,11 @@ export const tenantSelect = {
    * 商户后台只读甚至看不到入口（见 AGENTS.md「品牌 Logo」）。
    */
   logoUrl: true,
+  /**
+   * Logo 在玩家大厅顶栏的位置（left / center）。
+   * 与 logoUrl 同一权限口径：只有超管能写，商户后台只读。
+   */
+  logoPosition: true,
   status: true,
   withdrawalRequiredApprovals: true,
   createdAt: true,
@@ -51,16 +60,27 @@ export type TenantSelectRow = Prisma.TenantGetPayload<{
   select: typeof tenantSelectWithLayout;
 }>;
 
-/** 列表 / 详情统一的租户形状：layoutConfig → themeBackground（已归一化） */
-export function toTenantPayload<T extends { layoutConfig: unknown }>(
-  tenant: T,
-): Omit<T, "layoutConfig"> & { themeBackground: ThemeBackgroundId } {
-  const { layoutConfig, ...rest } = tenant;
+/**
+ * 列表 / 详情统一的租户形状：layoutConfig → themeBackground（已归一化），
+ * logoPosition 同样归一化（脏数据 / 老数据回落 left）。
+ */
+export function toTenantPayload<
+  T extends {
+    layoutConfig: unknown;
+    logoPosition: string;
+  },
+>(tenant: T): Omit<T, "layoutConfig" | "logoPosition"> & {
+  themeBackground: ThemeBackgroundId;
+  logoPosition: TenantLogoPosition;
+} {
+  const { layoutConfig, logoPosition, ...rest } = tenant;
 
   return {
     ...rest,
     // 脏数据 / 老租户缺字段 → 回落经典暗黑（= 改造前的大厅观感）
     themeBackground: normalizeThemeBackground(layoutConfig),
+    // 认不出来的位置一律当「左侧」（= 改造前的排版）
+    logoPosition: normalizeTenantLogoPosition(logoPosition),
   };
 }
 

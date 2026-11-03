@@ -41,6 +41,8 @@ export default async function AdminTenantsPage() {
       backupDomains: payload.backupDomains ?? [],
       // 品牌 Logo：编辑弹窗要回填当前图 / 首字母占位（玩家前台渲染的同一份数据）
       logoUrl: payload.logoUrl ?? null,
+      // Logo 位置（left / center）：编辑弹窗的单选卡片要回填当前选择
+      logoPosition: payload.logoPosition,
       status: payload.status,
       withdrawalRequiredApprovals: payload.withdrawalRequiredApprovals,
       // 开站 / 编辑弹窗要回填当前主题背景色

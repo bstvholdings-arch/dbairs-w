@@ -16,9 +16,11 @@ import {
   DEFAULT_STOREFRONT_MODULES,
   DEFAULT_STOREFRONT_SIDEBAR_CASINO,
   DEFAULT_STOREFRONT_TOPBAR_CHAT,
+  DEFAULT_TENANT_LOGO_POSITION,
   DEFAULT_THEME_BRIGHTNESS,
   DEFAULT_THEME_COLOR,
   normalizeStorefrontLayout,
+  normalizeTenantLogoPosition,
   normalizeTenantLogoUrl,
   parseThemeSetting,
   type StorefrontSettings,
@@ -40,6 +42,8 @@ const STOREFRONT_SELECT = {
   name: true,
   // 白标品牌 Logo：大厅顶栏优先渲染它，没配则用商户名首字母占位
   logoUrl: true,
+  // Logo 位置（left / center）：由超管在租户弹窗里配，前台只读
+  logoPosition: true,
   currency: true,
   themeColor: true,
   layoutConfig: true,
@@ -49,6 +53,7 @@ type StorefrontTenantRow = {
   id: string;
   name: string;
   logoUrl: string | null;
+  logoPosition: string;
   currency: string;
   themeColor: string;
   layoutConfig: unknown;
@@ -59,6 +64,7 @@ export const FALLBACK_STOREFRONT: StorefrontSettings = {
   tenantId: null,
   tenantName: null,
   tenantLogoUrl: null,
+  logoPosition: DEFAULT_TENANT_LOGO_POSITION,
   currency: DEFAULT_CURRENCY,
   themeColor: DEFAULT_THEME_COLOR,
   themeBrightness: DEFAULT_THEME_BRIGHTNESS,
@@ -80,6 +86,7 @@ function toSettings(row: StorefrontTenantRow): StorefrontSettings {
     tenantId: row.id,
     tenantName: row.name,
     tenantLogoUrl: normalizeTenantLogoUrl(row.logoUrl),
+    logoPosition: normalizeTenantLogoPosition(row.logoPosition),
     currency: normalizeCurrency(row.currency),
     themeColor: theme.hex,
     themeBrightness: theme.brightness,

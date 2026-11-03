@@ -73,6 +73,14 @@ model Tenant {
   //             也会显式忽略 logoUrl。读取侧走 normalizeTenantLogoUrl() 校验。
   logoUrl String?
 
+  // Logo 显示位置（玩家大厅顶栏）：left = 左侧品牌区（默认，= 改造前的排版）；
+  // center = 屏幕正中央。全局只渲染**一个** Logo 实例 —— 居中时左侧让位给
+  // 菜单按钮、右侧放搜索 / 语言 / 余额，不会出现「左边一个、中间又一个」。
+  // 与 logoUrl 同一权限口径：只能由超管在【租户管理 → 新增 / 编辑】写入；
+  // 商户后台（/api/tenant/settings）与装修页（/api/admin/storefront）都不认这个字段。
+  // 脏数据 / 老租户缺字段一律回落 "left"（见 src/lib/storefront.ts）。
+  logoPosition String @default("left")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

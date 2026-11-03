@@ -722,6 +722,12 @@ export type StorefrontSettings = {
    */
   tenantLogoUrl: string | null;
   /**
+   * Logo 在大厅顶栏的位置（Tenant.logoPosition，已归一化）。
+   * `left` = 左侧品牌区（默认）；`center` = 屏幕正中央。
+   * 位置只是把**同一个** Logo 放进不同栅格，不会渲染两份，见 src/app/lobby-client.tsx。
+   */
+  logoPosition: TenantLogoPosition;
+  /**
    * 租户记账货币（Tenant.currency，已归一化，默认 MYR）。
    * 大厅顶栏 BALANCE、玩家中心所有金额都用它渲染符号，见 src/lib/currency.ts。
    */
@@ -797,6 +803,46 @@ export function normalizeTenantLogoUrl(raw: unknown): string | null {
   } catch {
     return null;
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/* 品牌 Logo 显示位置（玩家大厅顶栏）                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Logo 在大厅顶栏的位置。
+ *
+ * - `left`  ：左侧品牌区（**默认** = 改造前的排版，老租户升级后外观完全不变）；
+ * - `center`：屏幕正中央（左槽放菜单按钮、右槽放搜索 / 语言 / 余额）。
+ *
+ * 关键约定：位置只决定「同一个 Logo 被放进哪一格栅格」，
+ * **不是**在左边再画一个 —— 全局永远只有一个 Logo 实例（见 AGENTS.md 4.2）。
+ *
+ * 权限与 logoUrl 完全一致：只有超管在【租户管理 → 新增 / 编辑租户】能写；
+ * 商户后台（/api/tenant/settings）与装修页（/api/admin/storefront）都不认它，
+ * 所以它不是 layoutConfig 里的字段，而是 Tenant 上的独立列。
+ */
+export const TENANT_LOGO_POSITIONS = ["left", "center"] as const;
+export type TenantLogoPosition = (typeof TENANT_LOGO_POSITIONS)[number];
+export const DEFAULT_TENANT_LOGO_POSITION: TenantLogoPosition = "left";
+
+export function isTenantLogoPosition(
+  value: unknown,
+): value is TenantLogoPosition {
+  return (
+    typeof value === "string" &&
+    (TENANT_LOGO_POSITIONS as readonly string[]).includes(value)
+  );
+}
+
+/**
+ * 读取侧统一兜底：脏数据 / 老租户缺字段 / null 一律当作 `left`，
+ * 保证「后台存进去的值」与「前台认的值」同一口径，且升级后老站点外观不变。
+ */
+export function normalizeTenantLogoPosition(
+  raw: unknown,
+): TenantLogoPosition {
+  return isTenantLogoPosition(raw) ? raw : DEFAULT_TENANT_LOGO_POSITION;
 }
 
 
