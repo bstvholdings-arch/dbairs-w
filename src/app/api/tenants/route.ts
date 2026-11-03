@@ -2,9 +2,10 @@ import { Prisma } from "@prisma/client";
 import type { NextRequest } from "next/server";
 
 import {
-  DEFAULT_GAME_CARD_STYLE,
-  isGameCardStyleId,
-} from "@/lib/game-card-styles";
+  DEFAULT_THEME_BACKGROUND,
+  isThemeBackgroundId,
+  THEME_BACKGROUND_IDS,
+} from "@/lib/theme-backgrounds";
 import { sendTenantAdminInviteEmail } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
 import { TENANT_ROLE } from "@/lib/rbac";
@@ -60,7 +61,7 @@ export async function GET(request: NextRequest) {
     });
 
     return Response.json(
-      // 只把 layoutConfig 里的 gameCardStyle 抽出来，整份装修配置不外泄
+      // 只把 layoutConfig 里的 themeBackground 抽出来，整份装修配置不外泄
       { tenants: tenants.map(toTenantPayload) },
       { headers: { "Cache-Control": "no-store" } },
     );
@@ -99,7 +100,7 @@ async function createTenantWithAdmin(input: {
   withdrawalRequiredApprovals: number;
   planId: string;
   adminEmail: string;
-  /** 开站时选定的游戏封面风格（写进 layoutConfig，前台大厅与品牌展馆共用） */
+  /** 开站时选定的主题背景色（写进 layoutConfig，前台大厅与品牌展馆共用） */
   layoutConfig: ReturnType<typeof serializeLayoutConfig>;
 }): Promise<CreateTenantWithAdminResult> {
   try {
@@ -231,20 +232,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 开站时选定的游戏封面风格：显式传了就必须合法（避免脏数据落到前台），
-    // 不传则用默认的赛博霓虹（= 改造前外观）。
-    const rawGameCardStyle = input.gameCardStyle;
+    // 开站时选定的主题背景色：显式传了就必须合法（避免脏数据落到前台），
+    // 不传则用默认的经典暗黑（= 改造前的大厅观感）。
+    const rawThemeBackground = input.themeBackground;
 
-    if (rawGameCardStyle !== undefined && !isGameCardStyleId(rawGameCardStyle)) {
+    if (
+      rawThemeBackground !== undefined &&
+      !isThemeBackgroundId(rawThemeBackground)
+    ) {
       return jsonError(
-        "游戏封面风格只能是 cyberNeon、royalGold 或 candyPop",
+        `主题背景色只能是以下之一：${THEME_BACKGROUND_IDS.join("、")}`,
         400,
       );
     }
 
-    const gameCardStyle = isGameCardStyleId(rawGameCardStyle)
-      ? rawGameCardStyle
-      : DEFAULT_GAME_CARD_STYLE;
+    const themeBackground = isThemeBackgroundId(rawThemeBackground)
+      ? rawThemeBackground
+      : DEFAULT_THEME_BACKGROUND;
 
     const [domainExists, subdomainExists, emailOwner] = await Promise.all([
       prisma.tenant.findFirst({
@@ -296,7 +300,7 @@ export async function POST(request: NextRequest) {
       // 只写这一项，其余装修字段由 normalizeStorefrontLayout 补默认值，
       // 与「老租户缺字段」走同一套容错逻辑。
       layoutConfig: serializeLayoutConfig(
-        normalizeStorefrontLayout({ gameCardStyle }),
+        normalizeStorefrontLayout({ themeBackground }),
       ),
     });
 

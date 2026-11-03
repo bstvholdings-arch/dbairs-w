@@ -18,31 +18,35 @@ import {
 import { ProviderBrandMark } from "@/components/lobby/provider-brand";
 import { ProviderWall } from "@/components/lobby/provider-wall";
 import { formatInteger } from "@/lib/format";
-import type { GameCardStyleId } from "@/lib/game-card-styles";
+import type { ThemeBackgroundId } from "@/lib/theme-backgrounds";
 import { LOBBY_CATEGORY_LABEL_KEYS } from "@/lib/i18n-keys";
 import {
   LOBBY_FEATURE_CONTENT,
   type LobbyFeature,
 } from "@/lib/lobby-features";
-import type {
-  LobbyCategoryId,
-  LobbyGameCard,
-  LobbyProviderOption,
+import {
+  matchesCategory,
+  type LobbyCategoryId,
+  type LobbyGameCard,
+  type LobbyProviderOption,
 } from "@/lib/lobby-games";
 import { providerBrand } from "@/lib/lobby-providers";
 import { buildStorefrontTheme } from "@/lib/storefront";
+import { buildThemeBackgroundStyle } from "@/lib/theme-backgrounds";
 
 const CONNECTING_AUTO_CLOSE_MS = 3400;
 const FOOTER_YEAR = new Date().getFullYear();
 
-/** 展馆里品类统计的展示顺序 */
+/**
+ * 展馆里品类统计的展示顺序。
+ * 与大厅左侧导航保持一致：旧的 esport（电竞）已并入 sport（体育），不再单列。
+ */
 const CATEGORY_ORDER: LobbyCategoryId[] = [
   "slot",
   "live",
   "sport",
   "poker",
   "fish",
-  "esport",
   "cockfight",
 ];
 
@@ -60,7 +64,7 @@ export function ProviderHallClient({
   onlineTotals,
   themeColor,
   themeBrightness,
-  gameCardStyle,
+  themeBackground,
   languageStyle,
   brandName,
 }: {
@@ -73,8 +77,8 @@ export function ProviderHallClient({
   themeColor: string;
   /** 后台装修的深浅调节 0-100（50 = 色号原样） */
   themeBrightness: number;
-  /** 后台装修的游戏封面风格（与大厅同源，见 lib/game-card-styles.ts） */
-  gameCardStyle: GameCardStyleId;
+  /** 后台装修的主题背景色（与大厅同源，见 lib/theme-backgrounds.ts） */
+  themeBackground: ThemeBackgroundId;
   /** 后台装修的语言按钮文案，形如 CH/EN */
   languageStyle: string;
   /** 当前商户品牌名（Tenant.name），页脚版权行用它，白标站不能露出平台名 */
@@ -86,6 +90,11 @@ export function ProviderHallClient({
   const theme = useMemo(
     () => buildStorefrontTheme({ hex: themeColor, brightness: themeBrightness }),
     [themeBrightness, themeColor],
+  );
+  // 主题背景色（--tb-*）：与大厅同一份配置，否则玩家点进品牌馆会「换了个底色」
+  const backgroundStyle = useMemo(
+    () => buildThemeBackgroundStyle(themeBackground),
+    [themeBackground],
   );
 
   const [connectingGame, setConnectingGame] = useState<LobbyGameCard | null>(
@@ -106,22 +115,16 @@ export function ProviderHallClient({
     [cards],
   );
 
-  const categoryCounts = useMemo(() => {
-    const counts = new Map<LobbyCategoryId, number>();
-
-    for (const card of cards) {
-      for (const category of card.categories) {
-        counts.set(category, (counts.get(category) ?? 0) + 1);
-      }
-    }
-
-    return CATEGORY_ORDER.filter(
-      (category) => (counts.get(category) ?? 0) > 0,
-    ).map((category) => ({
-      category,
-      count: counts.get(category) ?? 0,
-    }));
-  }, [cards]);
+  const categoryCounts = useMemo(
+    () =>
+      CATEGORY_ORDER.map((category) => ({
+        category,
+        // 用 matchesCategory 而不是直接看 card.categories：
+        // 「体育」要连带收录历史 esport 游戏，否则展馆里会漏统计。
+        count: cards.filter((card) => matchesCategory(card, category)).length,
+      })).filter((entry) => entry.count > 0),
+    [cards],
+  );
 
   const topGame = cards[0] ?? null;
   const modalOpen = connectingGame !== null || comingSoon !== null;
@@ -173,8 +176,9 @@ export function ProviderHallClient({
 
   return (
     <div
-      className="relative min-h-screen bg-[#040404] font-sans text-neutral-200"
-      style={theme.style as CSSProperties}
+      className="tb-lobby-bg relative min-h-screen font-sans text-neutral-200"
+      style={{ ...(theme.style as CSSProperties), ...backgroundStyle }}
+      data-theme-background={themeBackground}
       data-theme-color={theme.brand}
       data-theme-brightness={theme.brightness}
       data-theme-primary={theme.primary}
@@ -374,7 +378,6 @@ export function ProviderHallClient({
               <li key={card.id}>
                 <GameCard
                   card={card}
-                  style={gameCardStyle}
                   onPlay={() => setConnectingGame(card)}
                 />
               </li>

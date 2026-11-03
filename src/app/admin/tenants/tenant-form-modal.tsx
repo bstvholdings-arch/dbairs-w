@@ -7,18 +7,20 @@ import {
   useId,
   useRef,
   useState,
+  type CSSProperties,
   type FormEvent,
 } from "react";
 import { createPortal } from "react-dom";
 
 import { useLanguage } from "@/components/LanguageProvider";
 import {
-  DEFAULT_GAME_CARD_STYLE,
-  GAME_CARD_STYLES,
-  GAME_CARD_STYLE_ORDER,
-  GAME_CARD_STYLE_PREVIEW_PATH,
-  normalizeGameCardStyle,
-} from "@/lib/game-card-styles";
+  buildThemeBackgroundStyle,
+  DEFAULT_THEME_BACKGROUND,
+  normalizeThemeBackground,
+  THEME_BACKGROUNDS,
+  THEME_BACKGROUND_ORDER,
+  THEME_BACKGROUND_PREVIEW_PATH,
+} from "@/lib/theme-backgrounds";
 import { isValidTenantAdminEmail } from "@/lib/tenant-admin-email";
 
 import {
@@ -59,8 +61,8 @@ export function TenantFormModal({
     status: tenant?.status ?? "active",
     withdrawalRequiredApprovals:
       tenant?.withdrawalRequiredApprovals ?? 1,
-    // 老租户 / 脏数据统一回落到赛博霓虹（= 改造前外观）
-    gameCardStyle: tenant?.gameCardStyle ?? DEFAULT_GAME_CARD_STYLE,
+    // 老租户 / 脏数据统一回落到经典暗黑（= 改造前的大厅观感）
+    themeBackground: tenant?.themeBackground ?? DEFAULT_THEME_BACKGROUND,
     adminEmail: "",
   });
   const [error, setError] = useState("");
@@ -81,10 +83,9 @@ export function TenantFormModal({
   const [copied, setCopied] = useState(false);
   const [savedDone, setSavedDone] = useState(false);
 
-  // 当前选中的封面风格（下拉框下方的配色示意与说明都用它）。
-  // 走 normalizeGameCardStyle 兜底：万一数据脏了也只会退回赛博霓虹，不会白屏。
-  const selectedCardStyle =
-    GAME_CARD_STYLES[normalizeGameCardStyle(form.gameCardStyle)];
+  // 当前选中的主题背景色（单选框下方的实时预览与说明都用它）。
+  // 走 normalizeThemeBackground 兜底：万一数据脏了也只会退回经典暗黑，不会白屏。
+  const selectedBackgroundId = normalizeThemeBackground(form.themeBackground);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -183,8 +184,8 @@ export function TenantFormModal({
             subdomain,
             adminEmail,
             withdrawalRequiredApprovals: form.withdrawalRequiredApprovals,
-            // 游戏封面风格：只有这里能写（商户后台与装修页均无入口）
-            gameCardStyle: normalizeGameCardStyle(form.gameCardStyle),
+            // 主题背景色：只有这里能写（商户后台与装修页均无入口）
+            themeBackground: normalizeThemeBackground(form.themeBackground),
             // 新建租户一律为 active（后端默认值），只有编辑时才提交状态。
             ...(mode === "edit" ? { status: form.status } : {}),
           }),
@@ -472,52 +473,52 @@ export function TenantFormModal({
                 </label>
               </div>
 
-              {/* 游戏封面风格（Game Card Cover Style）：只在开站 / 编辑租户时可配。
-                  商户后台与装修页都没有入口 —— 撤销商户自助切换是产品决策。 */}
+              {/* 主题背景色（Theme Background Color，15 选 1）：只在开站 / 编辑租户时可配。
+                  商户后台与装修页都没有入口 —— 撤销商户自助切换是产品决策。
+                  永远深色底：颜色只作用于环境光与卡片外框 / 文字底板描边。 */}
               <div
                 className="rounded-xl border border-white/[0.08] bg-white/[0.015] p-3.5"
-                data-tenant-game-card-style
-                data-game-card-style-selected={normalizeGameCardStyle(
-                  form.gameCardStyle,
-                )}
+                data-tenant-theme-background
+                data-theme-background-selected={selectedBackgroundId}
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-[10px] uppercase tracking-[0.16em] text-neutral-600">
-                    {t("tenants.form.gameCardStyle")}
+                    {t("tenants.form.themeBackground")}
                   </span>
                   <span
                     className="text-[10px] text-[#f0d27c]"
-                    data-game-card-style-current
+                    data-theme-background-current
                   >
-                    {t(selectedCardStyle.labelKey)}
+                    {t(THEME_BACKGROUNDS[selectedBackgroundId].labelKey)}
                   </span>
                 </div>
 
                 {/*
-                  3 种风格用「单选卡片」而不是原生 <select>：
+                  15 种主题色用「单选色卡」而不是原生 <select>：
                   - 原生下拉需要浏览器弹层，弹层被上层元素遮挡 / 被 portal 裁切时
                     表现就是「点了没反应」，且展开后看不到配色；
-                  - 单选卡片常显 4 个色点（与前台卡片同源 token），点一下立即高亮 +
-                    下方说明实时变化，选择结果一眼可见；
+                  - 每张色卡常显 2 个色点（深色底 + 点缀色，与前台同源），
+                    点一下立即高亮 + 下方实时预览跟着变，选择结果一眼可见；
                   - 用真实 <input type="radio">：鼠标、触屏、键盘（方向键）都能切换，
                     onChange 由浏览器保证触发，不依赖自定义弹层。
                 */}
                 <div
                   role="radiogroup"
-                  aria-label={t("tenants.form.gameCardStyle")}
-                  className="mt-2 grid gap-2 sm:grid-cols-3"
+                  aria-label={t("tenants.form.themeBackground")}
+                  className="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-3"
                 >
-                  {GAME_CARD_STYLE_ORDER.map((id) => {
-                    const option = GAME_CARD_STYLES[id];
-                    const active =
-                      normalizeGameCardStyle(form.gameCardStyle) === id;
+                  {THEME_BACKGROUND_ORDER.map((id) => {
+                    const option = THEME_BACKGROUNDS[id];
+                    const active = selectedBackgroundId === id;
 
                     return (
                       <label
                         key={id}
-                        data-game-card-style-option={id}
-                        data-game-card-style-active={active ? "true" : "false"}
-                        className={`flex cursor-pointer flex-col gap-1.5 rounded-lg border p-2.5 transition-colors has-[:focus-visible]:ring-1 has-[:focus-visible]:ring-[#d4af37]/60 ${
+                        data-theme-background-option={id}
+                        data-theme-background-active={
+                          active ? "true" : "false"
+                        }
+                        className={`flex cursor-pointer items-center gap-1.5 rounded-lg border px-2 py-1.5 transition-colors has-[:focus-visible]:ring-1 has-[:focus-visible]:ring-[#d4af37]/60 ${
                           active
                             ? "border-[#d4af37]/60 bg-[#d4af37]/[0.08]"
                             : "border-white/[0.08] bg-black/30 hover:border-white/20"
@@ -525,63 +526,88 @@ export function TenantFormModal({
                       >
                         <input
                           type="radio"
-                          name="gameCardStyle"
+                          name="themeBackground"
                           value={id}
                           checked={active}
-                          onChange={() => updateField("gameCardStyle", id)}
+                          onChange={() => updateField("themeBackground", id)}
                           className="sr-only"
                         />
                         <span
-                          className="flex items-center gap-1"
+                          className="flex shrink-0 items-center gap-0.5"
                           aria-hidden="true"
                         >
-                          {[
-                            option.swatch.frame,
-                            option.swatch.glow,
-                            option.swatch.rim,
-                            option.swatch.ink,
-                          ].map((color, index) => (
-                            <span
-                              key={`${id}-${color}-${index}`}
-                              className="h-3.5 w-3.5 rounded-full border border-white/15"
-                              style={{ backgroundColor: color }}
-                            />
-                          ))}
                           <span
-                            className={`ml-auto text-[10px] ${active ? "text-[#f0d27c]" : "text-transparent"}`}
-                          >
-                            ✓
-                          </span>
+                            className="h-3.5 w-3.5 rounded-full border border-white/18"
+                            style={{ backgroundColor: option.base }}
+                          />
+                          <span
+                            className="h-3.5 w-3.5 rounded-full border border-white/18"
+                            style={{ backgroundColor: option.accent }}
+                          />
                         </span>
                         <span
-                          className={`text-[11px] leading-4 ${active ? "font-semibold text-[#f0d27c]" : "text-neutral-400"}`}
+                          className={`min-w-0 flex-1 truncate text-[10px] leading-4 ${active ? "font-semibold text-[#f0d27c]" : "text-neutral-400"}`}
                         >
                           {t(option.labelKey)}
+                        </span>
+                        <span
+                          className={`text-[9px] ${active ? "text-[#f0d27c]" : "text-transparent"}`}
+                          aria-hidden="true"
+                        >
+                          ✓
                         </span>
                       </label>
                     );
                   })}
                 </div>
 
-                {/* 选中风格的说明：跟在单选卡片下面实时变化 */}
-                <p
-                  className="mt-2 text-[10px] leading-4 text-neutral-500"
-                  data-game-card-style-hint
+                {/* 实时预览：直接把选中的主题色套到前台同一套 .tb-* class 上，
+                    深色底 + 呼吸光晕 + 卡片外框 / 文字底板描边都是真实渲染结果。 */}
+                <div
+                  className="tb-lobby-bg relative mt-2 flex items-center gap-3 overflow-hidden rounded-lg border border-white/[0.08] p-2.5"
+                  style={
+                    buildThemeBackgroundStyle(selectedBackgroundId) as CSSProperties
+                  }
+                  data-theme-background-preview={selectedBackgroundId}
                 >
-                  {t(selectedCardStyle.hintKey)}
-                </p>
+                  <span
+                    aria-hidden="true"
+                    className="tb-aura -left-6 -top-8 h-24 w-24"
+                  />
+                  <span
+                    aria-hidden="true"
+                    className="tb-card relative block h-[62px] w-[46px] shrink-0 overflow-hidden rounded-lg bg-[#05070c]"
+                  >
+                    <span className="tb-card__plate absolute inset-x-0 bottom-0 flex flex-col gap-0.5 px-1 py-0.5">
+                      <span className="tb-card__name block truncate text-[6px] font-black uppercase leading-none">
+                        DEMO
+                      </span>
+                      <span className="tb-card__provider inline-flex self-start rounded px-1 text-[5px] font-black uppercase italic leading-none">
+                        PG
+                      </span>
+                    </span>
+                  </span>
+                  <span className="relative min-w-0">
+                    <span className="block text-[11px] font-semibold text-neutral-200">
+                      {t(THEME_BACKGROUNDS[selectedBackgroundId].labelKey)}
+                    </span>
+                    <span className="mt-0.5 block text-[10px] leading-4 text-neutral-500">
+                      {t("tenants.form.themeBackgroundHint")}
+                    </span>
+                  </span>
+                </div>
 
-                <p className="mt-1.5 text-[10px] leading-4 text-neutral-600">
-                  {t("tenants.form.gameCardStyleHint")}
+                <p className="mt-2 text-[10px] leading-4 text-neutral-600">
+                  {t("tenants.form.themeBackgroundNote")}
                 </p>
 
                 <Link
-                  href={GAME_CARD_STYLE_PREVIEW_PATH}
+                  href={THEME_BACKGROUND_PREVIEW_PATH}
                   target="_blank"
                   rel="noreferrer"
                   className="mt-2 inline-flex h-7 items-center rounded-lg border border-white/[0.08] px-2.5 text-[10px] text-neutral-400 transition-colors hover:border-[#d4af37]/30 hover:text-[#f0d27c]"
                 >
-                  {t("tenants.form.gameCardStylePreview")}
+                  {t("tenants.form.themeBackgroundPreview")}
                 </Link>
               </div>
 

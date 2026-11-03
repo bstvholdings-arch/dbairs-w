@@ -50,6 +50,18 @@
   --sf-soft-a90: rgb(240 210 124 / 0.9);
   --sf-soft-a95: rgb(240 210 124 / 0.95);
   --sf-soft-a100: rgb(240 210 124 / 1);
+
+  /*
+   * 主题背景色（Theme Background Color）的默认值 = 经典暗黑 + 经典金。
+   * / 与 /provider/[code] 的根节点会用内联样式覆盖成租户配置（15 选 1），
+   * 色表见 src/lib/theme-backgrounds.ts，消费规则见本文件末尾的「主题背景色」区块。
+   *   --tb-base    站点底色（深色）
+   *   --tb-accent  点缀色（徽章 / 描边 / 高亮）
+   *   --tb-rgb     点缀色三分量 → rgb(var(--tb-rgb) / 0.26)
+   */
+  --tb-base: #0b0f1a;
+  --tb-accent: #d4af37;
+  --tb-rgb: 212 175 55;
 }
 
 @theme inline {
@@ -715,3 +727,695 @@ button:not(:disabled):hover .withdrawal-button-sheen {
 }
 
 
+
+/*
+ * ============================================================
+ * 主题背景色（Theme Background Color）
+ * ============================================================
+ *
+ * 架构红线：**一套 GameCard + 15 组色值**（见 src/lib/theme-backgrounds.ts）。
+ * 颜色是运行时配置，所以这里**不生成 class、不写死任何色号**，只消费 3 个 CSS 变量：
+ *   --tb-base    站点底色（深色，铺大厅底）
+ *   --tb-accent  点缀色（徽章 / 描边 / 高亮）
+ *   --tb-rgb     点缀色的 `r g b` 三分量 → rgb(var(--tb-rgb) / 0.26)
+ *
+ * 变量由根节点（大厅 / 品牌展馆 / 后台预览 / 演示页）用
+ * buildThemeBackgroundStyle() 内联下发；本节只声明「怎么用」。
+ * 默认值写在文件顶部的 :root（经典暗黑金），漏挂根节点的场景也不会变成透明。
+ *
+ * 铁律：主题色一律**半透明叠加在深色底上**，卡片底板永远是 rgb(3 5 10 / .82)。
+ * 任何一条规则都不许出现浅色 / 白色不透明底 —— 那会把暗黑电竞风洗成白卡。
+ */
+
+/* 大厅 / 品牌展馆底色：深色底 + 一点点点缀色，永远比卡片更暗 */
+.tb-lobby-bg {
+  background-color: var(--tb-base);
+}
+
+/*
+ * 环境光晕：两层错开节奏做「底色在呼吸」的效果。
+ * 只动 opacity / transform（不重算颜色），GPU 友好；
+ * 颜色全部来自 --tb-rgb，所以换主题色不需要碰 CSS。
+ */
+.tb-aura {
+  position: absolute;
+  border-radius: 9999px;
+  pointer-events: none;
+  background-image: radial-gradient(
+    circle,
+    rgb(var(--tb-rgb) / 0.22) 0%,
+    transparent 68%
+  );
+  filter: blur(90px);
+  will-change: opacity, transform;
+  animation: tb-breathe 16s ease-in-out infinite;
+}
+
+/* 第二层放慢一倍并错开相位，两层叠起来才不会像同步频闪 */
+.tb-aura--slow {
+  animation-duration: 22s;
+  animation-delay: -7s;
+}
+
+@keyframes tb-breathe {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.12);
+  }
+}
+
+/* 卡片外框：1px 点缀色描边 + 深色投影；悬停整圈提亮（不加任何底色） */
+.tb-card {
+  border-width: 1px;
+  border-style: solid;
+  border-color: rgb(var(--tb-rgb) / 0.22);
+  box-shadow: 0 20px 44px -30px rgb(0 0 0 / 0.92);
+  transition:
+    border-color 0.3s ease,
+    box-shadow 0.3s ease,
+    transform 0.3s ease;
+}
+
+.tb-card:hover,
+.tb-card:focus-visible {
+  border-color: rgb(var(--tb-rgb) / 0.6);
+  box-shadow:
+    0 0 0 1px rgb(var(--tb-rgb) / 0.3),
+    0 26px 50px -26px rgb(var(--tb-rgb) / 0.45);
+}
+
+/* 底部文字区底板：深黑半透明 + 点缀色细描边（压住底部一条，主图完整透出） */
+.tb-card__plate {
+  background-color: rgb(3 5 10 / 0.82);
+  border-top: 1px solid rgb(var(--tb-rgb) / 0.3);
+  backdrop-filter: blur(3px);
+}
+
+/* 游戏名：白字 + 深色投影，任何主题色下都清楚 */
+.tb-card__name {
+  color: rgb(255 255 255 / 0.96);
+  text-shadow: 0 2px 6px rgb(0 0 0 / 0.92);
+}
+
+/* 游戏商徽章：点缀色文字 + 深黑底，保证对比度 */
+.tb-card__provider {
+  color: rgb(var(--tb-rgb) / 0.95);
+  border: 1px solid rgb(var(--tb-rgb) / 0.4);
+  background-color: rgb(0 0 0 / 0.6);
+}
+
+/* 在线人数胶囊：中性深色，不抢主题色 */
+.tb-card__online {
+  color: rgb(226 232 240 / 0.92);
+  border: 1px solid rgb(255 255 255 / 0.12);
+  background-color: rgb(0 0 0 / 0.6);
+}
+
+/* HOT 标：点缀色淡底 */
+.tb-card__hot {
+  color: rgb(var(--tb-rgb) / 0.95);
+  border: 1px solid rgb(var(--tb-rgb) / 0.45);
+  background-color: rgb(var(--tb-rgb) / 0.16);
+}
+
+/* 悬停播放按钮：只有描边与图标跟随主题色，中心仍是深色玻璃 */
+.tb-card__play {
+  border: 1px solid rgb(var(--tb-rgb) / 0.7);
+  background-color: rgb(0 0 0 / 0.55);
+  color: rgb(var(--tb-rgb));
+  backdrop-filter: blur(2px);
+}
+
+/* 减弱动态效果：关掉呼吸动画，光晕保持静止但仍可见 */
+@media (prefers-reduced-motion: reduce) {
+  .tb-aura {
+    animation: none;
+    opacity: 0.75;
+  }
+}
+
+/* ==========================================================================
+   大厅左侧品类导航 · Hot Games 火焰图标
+   --------------------------------------------------------------------------
+   火焰在**未选中**时也要一直轻轻跳动，才能持续抓眼球；选中态只是换个底色，
+   所以动画挂在图标本身（.tb-flame），不跟 active 状态耦合。
+   只动 transform / text-shadow：不触发重排，也不会拖慢整页滚动。
+   ========================================================================== */
+@keyframes tb-flame-flicker {
+  0%,
+  100% {
+    transform: translateY(0) scale(1) rotate(-2deg);
+    text-shadow: 0 0 6px rgb(249 115 22 / 0.5);
+  }
+  35% {
+    transform: translateY(-2px) scale(1.12) rotate(1.5deg);
+    text-shadow: 0 0 11px rgb(249 115 22 / 0.85);
+  }
+  70% {
+    transform: translateY(-1px) scale(1.05) rotate(-1deg);
+    text-shadow: 0 0 8px rgb(251 146 60 / 0.7);
+  }
+}
+
+.tb-flame {
+  display: block;
+  transform-origin: 50% 88%;
+  animation: tb-flame-flicker 1.6s ease-in-out infinite;
+  will-change: transform;
+}
+
+/* 减弱动态效果：火焰保持静止，但仍然带一圈暖色光 */
+@media (prefers-reduced-motion: reduce) {
+  .tb-flame {
+    animation: none;
+    text-shadow: 0 0 6px rgb(249 115 22 / 0.45);
+  }
+}
+
+
+/* ==========================================================================
+   大厅核心功能岛 · Deposit 金币雨 / Withdraw 钱袋摇晃 + 金币飞出
+   --------------------------------------------------------------------------
+   纯 CSS 物理动效，不引入任何动画库。所有关键帧只动 transform / opacity，
+   跑在合成层上，滚动 / 点击都不会掉帧：
+   - Deposit：金色发光钱袋徽章 + 4 枚 ≥24px 的大金币自转着坠落、闪烁，形成「金币雨」；
+   - Withdraw：💰 常态呼吸缩放，悬停 / 键盘聚焦时左右剧烈摇晃 + 袋口金币抛物线飞出。
+   金币元素一律 pointer-events: none；金币雨 z-[5] 压在图标之上、文案之下，既不挡点击也不压字。
+   ========================================================================== */
+
+/* ---------- Deposit：金色发光钱袋徽章（主图标） ---------- */
+
+/* 背后呼吸的金色光晕：往外扩散，让整张卡像一座亮着的金矿 */
+.tb-deposit-glow {
+  background: radial-gradient(
+    circle,
+    rgb(255 214 74 / 0.9) 0%,
+    rgb(255 170 0 / 0.45) 45%,
+    transparent 72%
+  );
+  filter: blur(7px);
+  animation: tb-deposit-pulse 2.6s ease-in-out infinite;
+}
+
+@keyframes tb-deposit-pulse {
+  0%,
+  100% {
+    opacity: 0.72;
+    transform: scale(0.9);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+}
+
+/* 币面：径向金色渐变 + 中心略微压暗（让 💰 更跳）+ 金边 + 内高光 + 底部暗面 */
+.tb-deposit-medal {
+  background:
+    radial-gradient(circle at 50% 58%, rgb(72 40 0 / 0.5) 0%, rgb(72 40 0 / 0) 60%),
+    radial-gradient(circle at 50% 26%, #ffe89a 0%, #f5b731 26%, #c8860d 58%, #6d3f00 100%);
+  box-shadow:
+    inset 0 0 0 2px rgb(255 246 200 / 0.9),
+    inset 0 4px 8px rgb(255 246 200 / 0.5),
+    inset 0 -6px 10px rgb(90 50 0 / 0.55),
+    0 0 16px rgb(255 190 0 / 0.75),
+    0 0 32px rgb(255 150 0 / 0.35);
+}
+
+/* 表面流光：一条高光缓慢扫过币面，金属感的来源 */
+.tb-deposit-medal::after {
+  content: "";
+  position: absolute;
+  inset: -40%;
+  background: linear-gradient(
+    115deg,
+    transparent 38%,
+    rgb(255 255 255 / 0.8) 50%,
+    transparent 62%
+  );
+  animation: tb-deposit-sheen 3.2s ease-in-out infinite;
+}
+
+@keyframes tb-deposit-sheen {
+  0%,
+  55% {
+    transform: translateX(-75%);
+  }
+  100% {
+    transform: translateX(75%);
+  }
+}
+
+/* ---------- Deposit：大金币雨 ---------- */
+
+/* 行程按断点给值：手机卡约 77px 高、桌面卡约 110px 高，正好从顶边落到文案下方 */
+.tb-coin-rain {
+  --tb-coin-travel: 86px;
+}
+
+@media (min-width: 640px) {
+  .tb-coin-rain {
+    --tb-coin-travel: 118px;
+  }
+}
+
+/* 单枚金币：≥24px（sm 28px），金面 + 白色内高光 + 强金色外发光 */
+.tb-coin {
+  position: absolute;
+  top: -30px;
+  width: 24px;
+  height: 24px;
+  border-radius: 9999px;
+  opacity: 0;
+  background: radial-gradient(
+    circle at 34% 26%,
+    #fffaea 0%,
+    #ffd84d 22%,
+    #f0b01e 55%,
+    #a9760a 85%,
+    #7a4d00 100%
+  );
+  box-shadow:
+    inset 0 0 0 2px rgb(255 248 210 / 0.85),
+    inset 0 3px 5px rgb(255 255 255 / 0.6),
+    inset 0 -4px 6px rgb(110 66 0 / 0.6),
+    0 0 15px rgba(255, 215, 0, 0.8),
+    0 0 26px rgba(255, 170, 0, 0.45);
+  animation: tb-coin-fall 2.2s linear infinite;
+  will-change: transform, opacity;
+}
+
+@media (min-width: 640px) {
+  .tb-coin {
+    width: 28px;
+    height: 28px;
+  }
+}
+
+/* 币面刻花：五角星（雕刻感；不用货币符号，避免和 Tenant.currency 混淆） */
+.tb-coin::before {
+  content: "★";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  line-height: 1;
+  color: rgb(150 92 0 / 0.8);
+  text-shadow: 0 1px 0 rgb(255 245 200 / 0.8); /* 浮雕：投影 + 上方高光 */
+}
+
+@media (min-width: 640px) {
+  .tb-coin::before {
+    font-size: 13px;
+  }
+}
+
+/* 币面高光点：一闪一闪，远看就是反光的金属圆片 */
+.tb-coin::after {
+  content: "";
+  position: absolute;
+  left: 16%;
+  top: 12%;
+  width: 36%;
+  height: 28%;
+  border-radius: 9999px;
+  background: radial-gradient(circle, rgb(255 255 255 / 0.95), transparent 70%);
+  animation: tb-coin-sparkle 1.1s ease-in-out infinite;
+}
+
+@keyframes tb-coin-sparkle {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+}
+
+/* 错落有致：4 枚金币不同的 left / 时长 / 负延迟，错开成真正的雨 */
+.tb-coin--1 {
+  left: 2%;
+  animation-duration: 2.4s;
+}
+
+.tb-coin--2 {
+  left: 28%;
+  animation-duration: 2.9s;
+  animation-delay: -0.7s;
+}
+
+.tb-coin--3 {
+  left: 54%;
+  animation-duration: 2.6s;
+  animation-delay: -1.4s;
+}
+
+.tb-coin--4 {
+  left: 78%;
+  animation-duration: 3.1s;
+  animation-delay: -2s;
+}
+
+/* 下落 + 自转 360° + 一闪一闪（1 → 0.5 → 1） */
+@keyframes tb-coin-fall {
+  0% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+    opacity: 0;
+  }
+  6% {
+    opacity: 1;
+  }
+  22% {
+    opacity: 0.55;
+  }
+  38% {
+    opacity: 1;
+  }
+  54% {
+    opacity: 0.5;
+  }
+  70% {
+    opacity: 1;
+  }
+  88% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: translate3d(0, var(--tb-coin-travel), 0) rotate(360deg);
+    opacity: 0;
+  }
+}
+
+/* ---------- Withdraw：钱袋呼吸 / 摇晃 ---------- */
+
+.tb-moneybag {
+  display: block;
+  transform-origin: 50% 85%; /* 以袋底为支点，摇晃才像挂在腰上的钱袋 */
+  animation: tb-moneybag-breathe 3.6s ease-in-out infinite;
+  will-change: transform;
+}
+
+/* 常态：极其轻微的放大缩小，幅度控制在 7% 以内，避免抢戏 */
+@keyframes tb-moneybag-breathe {
+  0%,
+  100% {
+    transform: scale(1) rotate(0deg);
+  }
+  50% {
+    transform: scale(1.07) rotate(-2deg);
+  }
+}
+
+/* 悬停：左右剧烈摇晃，±10deg 来回摆 */
+@keyframes tb-moneybag-shake {
+  0%,
+  100% {
+    transform: rotate(-10deg) scale(1.04);
+  }
+  25% {
+    transform: rotate(9deg) scale(1.06);
+  }
+  50% {
+    transform: rotate(-8deg) scale(1.05);
+  }
+  75% {
+    transform: rotate(10deg) scale(1.04);
+  }
+}
+
+[data-lobby-action="withdraw"]:is(:hover, :focus-visible) .tb-moneybag {
+  animation: tb-moneybag-shake 0.55s ease-in-out infinite;
+}
+
+/* ---------- Withdraw：袋心「疯狂喷金币」 ---------- */
+
+/* 喷射锚点：零尺寸的一个点，钉在钱袋中心，8 枚金币都从这里起飞。
+   --tb-coin-size / --tb-bag-reach / --tb-bag-lift / --tb-bag-drop 是整场爆炸的统一缩放参数：
+   断点只改这四个值就整体放大/缩小，不用逐个金币改。
+   上限由「卡片 + 外层 section 的 padding」决定（Withdraw 卡自己不裁切，但 section 会裁），
+   所以手机给到 ±30px 横向 / 25px 上升，桌面放宽到 ±56px / 32px。 */
+.tb-bag-coins {
+  width: 0;
+  height: 0;
+  left: 50%;
+  top: 42%;
+  --tb-coin-size: 14px;
+  --tb-bag-reach: 30px;
+  --tb-bag-lift: 25px;
+  --tb-bag-drop: 20px;
+}
+
+@media (min-width: 640px) {
+  .tb-bag-coins {
+    --tb-coin-size: 18px;
+    --tb-bag-reach: 56px;
+    --tb-bag-lift: 32px;
+    --tb-bag-drop: 30px;
+  }
+}
+
+/* 喷发闪光：每次喷发亮一下，撑住「炸开」的冲击力（垫在袋身下面，不糊住 💰） */
+.tb-bag-flash {
+  left: 50%;
+  top: 42%;
+  width: 26px;
+  height: 26px;
+  margin: -13px 0 0 -13px;
+  border-radius: 9999px;
+  background: radial-gradient(
+    circle,
+    rgb(255 240 170 / 0.95) 0%,
+    rgb(255 196 0 / 0.45) 45%,
+    transparent 72%
+  );
+  opacity: 0;
+  animation: tb-bag-flash 1.15s ease-out infinite paused;
+  will-change: transform, opacity;
+}
+
+@keyframes tb-bag-flash {
+  0% {
+    transform: scale(0.35);
+    opacity: 0;
+  }
+  12% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  40%,
+  100% {
+    transform: scale(1.4);
+    opacity: 0;
+  }
+}
+
+/* 金币本体：135° 金渐变（浅金 → 正金 → 暗金）+ 极强金色外发光 + 白色内高光 */
+.tb-fly-coin {
+  /* 单枚尺寸 = 基准尺寸 × 各自的 --tb-fly-scale（★ 刻花字号也跟着走） */
+  --tb-fly-size: calc(var(--tb-coin-size) * var(--tb-fly-scale, 1));
+  --tb-fly-dir: 1; /* 默认值，真正方向在下面的 .tb-fly-coin--N 里 */
+  --tb-fly-reach: 1;
+  --tb-fly-rise: 1;
+  --tb-fly-drop: 1;
+  --tb-fly-x: calc(var(--tb-fly-dir) * var(--tb-fly-reach) * var(--tb-bag-reach));
+  --tb-fly-peak: calc(-1 * var(--tb-fly-rise) * var(--tb-bag-lift));
+  --tb-fly-end: calc(var(--tb-fly-drop) * var(--tb-bag-drop));
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--tb-fly-size);
+  height: var(--tb-fly-size);
+  /* 把金币中心挪到锚点上，不管这枚是多大 */
+  margin-left: calc(-0.5 * var(--tb-fly-size));
+  margin-top: calc(-0.5 * var(--tb-fly-size));
+  border-radius: 9999px;
+  background: linear-gradient(
+    135deg,
+    #fff3ad 0%,
+    #ffd94f 26%,
+    #f0ac05 62%,
+    #d18f04 82%,
+    #a9720a 100%
+  );
+  box-shadow:
+    0 0 15px #ffd700,
+    0 0 30px rgb(255 180 0 / 0.55),
+    inset 0 0 0 1px rgb(255 253 220 / 0.9),
+    inset 0 -2px 3px rgb(120 70 0 / 0.55);
+  opacity: 0;
+  /* 默认暂停：空闲时零绘制，只有 hover / focus-visible 才 running */
+  animation: tb-coin-burst 1.15s cubic-bezier(0.22, 0.68, 0.32, 1) infinite paused;
+  will-change: transform, opacity;
+}
+
+/* 币面刻花：★ 浮雕，十几像素也一眼是钱 */
+.tb-fly-coin::before {
+  content: "★";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(var(--tb-fly-size) * 0.52);
+  line-height: 1;
+  color: rgb(140 84 0 / 0.8);
+  text-shadow: 0 1px 0 rgb(255 250 210 / 0.75);
+}
+
+/* 8 枚金币的抛物线参数 + 0.14s 递增延迟：
+   --tb-fly-dir   飞散方向（-1 左 / +1 右 / 小数 = 斜飞）
+   --tb-fly-reach 横向距离系数
+   --tb-fly-rise  上升高度系数（越大越飘）
+   --tb-fly-drop  落地深度系数
+   --tb-fly-scale 尺寸系数 */
+.tb-fly-coin--1 {
+  --tb-fly-dir: -1;
+  --tb-fly-reach: 1;
+  --tb-fly-rise: 1;
+  --tb-fly-drop: 1.5;
+  --tb-fly-scale: 1;
+}
+
+.tb-fly-coin--2 {
+  --tb-fly-dir: 1;
+  --tb-fly-reach: 0.92;
+  --tb-fly-rise: 1.25;
+  --tb-fly-drop: 1.3;
+  --tb-fly-scale: 0.85;
+  animation-delay: 0.14s;
+}
+
+.tb-fly-coin--3 {
+  --tb-fly-dir: -0.55;
+  --tb-fly-reach: 1.13;
+  --tb-fly-rise: 1.3;
+  --tb-fly-drop: 0.9;
+  --tb-fly-scale: 1.15;
+  animation-delay: 0.28s;
+}
+
+.tb-fly-coin--4 {
+  --tb-fly-dir: 0.6;
+  --tb-fly-reach: 1.17;
+  --tb-fly-rise: 0.95;
+  --tb-fly-drop: 1.6;
+  --tb-fly-scale: 0.9;
+  animation-delay: 0.42s;
+}
+
+.tb-fly-coin--5 {
+  --tb-fly-dir: -0.5;
+  --tb-fly-reach: 0.8;
+  --tb-fly-rise: 0.85;
+  --tb-fly-drop: 1.7;
+  --tb-fly-scale: 1.05;
+  animation-delay: 0.56s;
+}
+
+.tb-fly-coin--6 {
+  --tb-fly-dir: 1;
+  --tb-fly-reach: 1.18;
+  --tb-fly-rise: 1.15;
+  --tb-fly-drop: 1.2;
+  --tb-fly-scale: 0.8;
+  animation-delay: 0.7s;
+}
+
+.tb-fly-coin--7 {
+  --tb-fly-dir: -0.35;
+  --tb-fly-reach: 1;
+  --tb-fly-rise: 1.25;
+  --tb-fly-drop: 1.4;
+  --tb-fly-scale: 1.1;
+  animation-delay: 0.84s;
+}
+
+.tb-fly-coin--8 {
+  --tb-fly-dir: 0.4;
+  --tb-fly-reach: 1.2;
+  --tb-fly-rise: 1.05;
+  --tb-fly-drop: 1.55;
+  --tb-fly-scale: 0.95;
+  animation-delay: 0.98s;
+}
+
+/* 只有 hover / 键盘聚焦才真跑：金币 + 闪光一起启动 */
+[data-lobby-action="withdraw"]:is(:hover, :focus-visible) .tb-fly-coin,
+[data-lobby-action="withdraw"]:is(:hover, :focus-visible) .tb-bag-flash {
+  animation-play-state: running;
+}
+
+/* 抛物线：袋心起飞 → 向两侧张开并抛到最高（Y 为负）→ 受重力回落到袋下 → 360° 自转 */
+@keyframes tb-coin-burst {
+  0% {
+    transform: translate3d(0, 0, 0) scale(0.5) rotate(0deg);
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  /* 上升段：X 已飞出一半，Y 接近顶点 */
+  38% {
+    transform: translate3d(
+        calc(var(--tb-fly-x) * 0.55),
+        calc(var(--tb-fly-peak) * 0.85),
+        0
+      )
+      scale(1.06) rotate(140deg);
+    opacity: 1;
+  }
+  /* 抛物线顶点：Y 抛到最高、X 继续外扩，这一段速度最慢（滞空感） */
+  52% {
+    transform: translate3d(calc(var(--tb-fly-x) * 0.78), var(--tb-fly-peak), 0) scale(1.06)
+      rotate(215deg);
+    opacity: 1;
+  }
+  /* 重力回落 */
+  80% {
+    transform: translate3d(
+        calc(var(--tb-fly-x) * 0.94),
+        calc(var(--tb-fly-end) * 0.55),
+        0
+      )
+      scale(0.98) rotate(310deg);
+    opacity: 0.9;
+  }
+  100% {
+    transform: translate3d(var(--tb-fly-x), var(--tb-fly-end), 0) scale(0.9) rotate(360deg);
+    opacity: 0;
+  }
+}
+
+/* 减弱动态效果：金币不出场，钱袋静止，悬停不摇晃 */
+@media (prefers-reduced-motion: reduce) {
+  .tb-coin,
+  .tb-fly-coin,
+  .tb-bag-flash {
+    animation: none;
+    opacity: 0;
+  }
+
+  /* 图标保留静态的金边与光晕，只停掉呼吸 / 扫光 */
+  .tb-deposit-glow,
+  .tb-deposit-medal::after,
+  .tb-moneybag {
+    animation: none;
+  }
+
+  [data-lobby-action="withdraw"]:is(:hover, :focus-visible) .tb-moneybag,
+  [data-lobby-action="withdraw"]:is(:hover, :focus-visible) .tb-fly-coin,
+  [data-lobby-action="withdraw"]:is(:hover, :focus-visible) .tb-bag-flash {
+    animation: none;
+  }
+}

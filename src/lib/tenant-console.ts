@@ -1053,9 +1053,11 @@ export async function saveTenantSiteSettings(input: {
         ? { ...(input.layout as Record<string, unknown>) }
         : {};
 
-    // 游戏封面风格是平台配置项（合规决策，见 AGENTS.md 4.1）：
+    // 主题背景色是平台配置项（合规决策，见 AGENTS.md 4.1）：
     // 只能由超管在【租户管理 → 新增 / 编辑租户】时写入。
     // 商户后台即使构造请求带上这个字段也必须忽略，否则等于开了后门。
+    // 老的 gameCardStyle（3 种封面风格）同样必须忽略。
+    delete patch.themeBackground;
     delete patch.gameCardStyle;
 
     data.layoutConfig = serializeLayoutConfig(

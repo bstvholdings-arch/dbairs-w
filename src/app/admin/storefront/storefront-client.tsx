@@ -5,11 +5,12 @@ import { useCallback, useMemo, useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
 import {
-  DEFAULT_GAME_CARD_STYLE,
-  GAME_CARD_STYLES,
-  GAME_CARD_STYLE_ORDER,
-  type GameCardStyleId,
-} from "@/lib/game-card-styles";
+  DEFAULT_THEME_BACKGROUND,
+  normalizeThemeBackground,
+  THEME_BACKGROUNDS,
+  THEME_BACKGROUND_ORDER,
+  type ThemeBackgroundId,
+} from "@/lib/theme-backgrounds";
 import {
   buildStorefrontTheme,
   DEFAULT_STOREFRONT_LANGUAGE_STYLE,
@@ -139,35 +140,31 @@ function PresetThumb({
 }
 
 /**
- * 游戏封面风格缩略图：只画「卡片的视觉语言」（底色 / 边框 / 中央图形 / 文字条），
- * 颜色直接取自 GAME_CARD_STYLES 的 swatch，因此缩略图与前台卡片永远同源。
+ * 主题背景色缩略图：只画「这套配色长什么样」（深色底 + 点缀色描边 + 文字条），
+ * 颜色直接取自 THEME_BACKGROUNDS，因此缩略图与前台卡片永远同源。
  */
-function GameCardStyleThumb({ id }: { id: GameCardStyleId }) {
-  const { swatch } = GAME_CARD_STYLES[id];
+function ThemeBackgroundThumb({ id }: { id: ThemeBackgroundId }) {
+  const { base, accent } = THEME_BACKGROUNDS[id];
 
   return (
     <div
       aria-hidden="true"
-      className="relative h-24 w-full overflow-hidden rounded-lg border"
-      style={{ backgroundColor: swatch.frame, borderColor: swatch.rim }}
+      className="relative h-14 w-full overflow-hidden rounded-lg border"
+      style={{ backgroundColor: base, borderColor: `${accent}66` }}
     >
       <span
         className="absolute inset-0"
         style={{
-          backgroundImage: `radial-gradient(75% 60% at 50% 26%, ${swatch.glow}55 0%, transparent 72%)`,
+          backgroundImage: `radial-gradient(75% 60% at 50% 26%, ${accent}3d 0%, transparent 72%)`,
         }}
       />
       <span
-        className="absolute left-1/2 top-[34%] h-7 w-7 -translate-x-1/2 -translate-y-1/2 rounded-full border"
-        style={{ borderColor: swatch.rim, backgroundColor: `${swatch.glow}22` }}
-      />
-      <span
         className="absolute inset-x-2 bottom-4 h-1.5 rounded-full"
-        style={{ backgroundColor: swatch.ink }}
+        style={{ backgroundColor: `${accent}33` }}
       />
       <span
         className="absolute inset-x-2 bottom-1.5 h-1 w-8 rounded-full"
-        style={{ backgroundColor: swatch.rim }}
+        style={{ backgroundColor: accent }}
       />
     </div>
   );
@@ -204,14 +201,15 @@ export function StorefrontClient({
     selected?.preset ?? DEFAULT_STOREFRONT_PRESET,
   );
   /**
-   * 游戏封面风格：**只读**。
+   * 主题背景色：**只读**。
    *
-   * 产品 / 合规决策（见 AGENTS.md 4.1）：风格只能由超管在
+   * 产品 / 合规决策（见 AGENTS.md 4.1）：主题色只能由超管在
    * 【租户管理 → 新增 / 编辑】时配置，商户后台与装修页都不提供切换入口，
-   * 因此这里没有 setter 的写入路径 —— 只用于把当前风格展示给超管。
+   * 因此这里没有 setter 的写入路径 —— 只用于把当前配色展示给超管。
    */
-  const gameCardStyle: GameCardStyleId =
-    selected?.gameCardStyle ?? DEFAULT_GAME_CARD_STYLE;
+  const themeBackground: ThemeBackgroundId = normalizeThemeBackground(
+    selected?.themeBackground ?? DEFAULT_THEME_BACKGROUND,
+  );
   const [themeColor, setThemeColor] = useState(
     selected?.themeColor ?? DEFAULT_THEME_COLOR,
   );
@@ -353,7 +351,7 @@ export function StorefrontClient({
           tenantId: selected.id,
           // 服务端会存成 {"hex":"#d4af37","brightness":50}
           themeColor: { hex: themeColor, brightness },
-          // 注意：gameCardStyle 不在这里提交 —— 它只能由【租户管理】的开站弹窗写入，
+          // 注意：themeBackground 不在这里提交 —— 它只能由【租户管理】的开站弹窗写入，
           // 服务端也会显式忽略该字段（见 /api/admin/storefront 的写白名单）。
           layoutConfig: {
             preset,
@@ -584,52 +582,50 @@ export function StorefrontClient({
             </div>
           </section>
 
-          {/* ③ 游戏封面风格：只读。配置权已收回平台 —— 只能由超管在
+          {/* ③ 主题背景色：只读。配置权已收回平台 —— 只能由超管在
               【租户管理 → 新增 / 编辑】时设置（商户后台无入口），
-              因此这里只展示状态 + 跳转入口，保存按钮不会提交该字段。 */}
+              因此这里只展示当前配色 + 跳转入口，保存按钮不会提交该字段。 */}
           <section
             className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-3.5"
-            data-game-card-style-picker
-            data-game-card-style-readonly
+            data-theme-background-picker
+            data-theme-background-readonly
           >
             <SectionTitle
-              title={t("storefront.gameCard.title")}
-              hint={t("storefront.gameCard.readonlyHint")}
+              title={t("storefront.themeBackground.title")}
+              hint={t("storefront.themeBackground.readonlyHint")}
             />
 
-            <div className="mt-3 grid gap-2 sm:grid-cols-3" aria-readonly="true">
-              {GAME_CARD_STYLE_ORDER.map((id) => {
-                const definition = GAME_CARD_STYLES[id];
-                const active = gameCardStyle === id;
+            <div
+              className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-5"
+              aria-readonly="true"
+            >
+              {THEME_BACKGROUND_ORDER.map((id) => {
+                const definition = THEME_BACKGROUNDS[id];
+                const active = themeBackground === id;
 
                 return (
                   <div
                     key={id}
-                    data-game-card-style-option={id}
+                    data-theme-background-option={id}
                     aria-current={active ? "true" : undefined}
-                    className={`rounded-xl border p-2.5 ${
+                    className={`rounded-xl border p-1.5 ${
                       active
                         ? "border-brand-soft/60 bg-brand/[0.08]"
-                        : "border-white/[0.07] bg-white/[0.015] opacity-60"
+                        : "border-white/[0.07] bg-white/[0.015] opacity-55"
                     }`}
                   >
-                    <GameCardStyleThumb id={id} />
-                    <span className="mt-2 flex items-center justify-between gap-2">
-                      <span
-                        className={`truncate text-[11px] font-semibold ${
-                          active ? "text-brand-soft" : "text-neutral-400"
-                        }`}
-                      >
-                        {t(definition.labelKey)}
-                      </span>
+                    <ThemeBackgroundThumb id={id} />
+                    <span
+                      className={`mt-1.5 flex items-center justify-between gap-1 text-[10px] font-semibold ${
+                        active ? "text-brand-soft" : "text-neutral-400"
+                      }`}
+                    >
+                      <span className="truncate">{t(definition.labelKey)}</span>
                       {active ? (
-                        <span className="shrink-0 rounded-full border border-brand/40 bg-brand/15 px-1.5 py-px text-[9px] font-bold text-brand-soft">
-                          {t("storefront.gameCard.active")}
+                        <span aria-hidden="true" className="shrink-0">
+                          ✓
                         </span>
                       ) : null}
-                    </span>
-                    <span className="mt-1 block text-[9px] leading-relaxed text-neutral-500">
-                      {t(definition.hintKey)}
                     </span>
                   </div>
                 );
@@ -638,13 +634,13 @@ export function StorefrontClient({
 
             <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
               <p className="text-[10px] leading-4 text-neutral-500">
-                {t("storefront.gameCard.adminOnly")}
+                {t("storefront.themeBackground.adminOnly")}
               </p>
               <Link
                 href="/admin/tenants"
                 className="inline-flex h-8 items-center rounded-lg border border-white/[0.08] px-3 text-[10px] font-semibold text-neutral-300 transition-colors hover:border-brand/30 hover:text-brand-soft"
               >
-                {t("storefront.gameCard.manage")}
+                {t("storefront.themeBackground.manage")}
               </Link>
             </div>
           </section>

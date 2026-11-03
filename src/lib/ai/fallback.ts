@@ -1,6 +1,4 @@
-import {
-  buildGameCardStylePreviewLinks,
-} from "../game-card-styles";
+import { buildThemeBackgroundPreviewLinks } from "../theme-backgrounds";
 
 import {
   bucketKeyForReason,
@@ -39,7 +37,7 @@ const TRAFFIC_PATTERN =
   /(没流量|无流量|没人|没玩家|没客户|没渠道|没资源|无资源|推广不了)/;
 /** 客户问「网站长什么样 / 有没有别的风格 / 能不能换封面」 */
 const STYLE_QUESTION_PATTERN =
-  /(风格|样式|皮肤|封面|模板|长什么样|好看|配色|外观|style|theme|skin|template)/i;
+  /(风格|样式|皮肤|封面|模板|长什么样|好看|配色|外观|主题色|背景色|底色|style|theme|skin|template)/i;
 
 /** 仅在客户明确拒绝时才返回原因，避免把正常比价误判成战败。 */
 export function detectFailureReason(text: string): string | null {
@@ -111,16 +109,16 @@ function fallbackReplyForReason(reason: string, hasLead: boolean) {
 }
 
 /**
- * 客户问「网站风格 / 封面皮肤」时的本地兜底：给出 3 个预览链接 + 配置口径。
- * 与销冠 AI 的 System Prompt 规则保持一致：风格由平台在开站时配置，商户后台不可自助切换。
+ * 客户问「网站风格 / 主题背景色」时的本地兜底：给出 15 个预览链接 + 配置口径。
+ * 与销冠 AI 的 System Prompt 规则保持一致：颜色由平台在开站时配置，商户后台不可自助切换。
  */
 function stylePreviewReply(baseUrl?: string | null) {
-  const links = buildGameCardStylePreviewLinks(baseUrl);
+  const links = buildThemeBackgroundPreviewLinks(baseUrl);
   const list = links
     .map((link) => `· ${link.label}：${link.url}`)
     .join("\n");
 
-  return `网站封面有 3 种风格，您可以先看效果：\n${list}\n\n这 3 种都是平台统一维护的，您选好后我们开站时直接帮您配置好；商户后台不提供自助切换，后续想换随时找我。`;
+  return `网站有 15 种主题背景色，您可以先看效果（底色始终是深色电竞风，换颜色只换环境光与卡片描边）：\n${list}\n\n这 15 种都是平台统一维护的，您选好后我们开站时直接帮您配置好；商户后台不提供自助切换，后续想换随时找我。`;
 }
 
 function qualificationReply(
@@ -150,7 +148,7 @@ function qualificationReply(
 
   const userTurns = messages.filter((message) => message.role === "user").length;
 
-  // 客户问网站风格 / 封面皮肤：直接给 3 个预览链接（销冠口径，见 prompts.ts）。
+  // 客户问网站风格 / 主题背景色：直接给 15 个预览链接（销冠口径，见 prompts.ts）。
   if (STYLE_QUESTION_PATTERN.test(lastUserMessage(messages))) {
     return stylePreviewReply(baseUrl);
   }

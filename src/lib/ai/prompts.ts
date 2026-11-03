@@ -1,4 +1,4 @@
-import { buildGameCardStylePreviewLinks } from "../game-card-styles";
+import { buildThemeBackgroundPreviewLinks } from "../theme-backgrounds";
 
 import type { AiAgentTypeValue, ReasonCount } from "./constants";
 import type {
@@ -12,9 +12,9 @@ import type {
  * 关键约束：
  * 1. 客户明确表示不打算开站时，模型必须调用
  *    save_lead_failure_reason(reason)，并把原因压缩到 5 个字以内。
- * 2. 客户问「网站风格 / 封面皮肤」时，模型必须发 3 个封面风格预览链接，
- *    并说明风格由平台在开站时配置（商户后台不可自助切换）。
- *    链接由 buildGameCardStylePreviewGuide 按当前域名动态注入。
+ * 2. 客户问「网站风格 / 主题背景色 / 配色」时，模型必须发 15 个主题背景色预览链接，
+ *    并说明颜色由平台在开站时配置（商户后台不可自助切换）。
+ *    链接由 buildThemeBackgroundPreviewGuide 按当前域名动态注入。
  * 工具的真正执行在 src/app/api/ai/chat/route.ts（模型只负责给参数）。
  */
 
@@ -118,10 +118,10 @@ ${knowledge}`;
 }
 
 /** 区块标题即幂等标记：Prompt 里已有这一段就不再重复追加。 */
-export const STYLE_PREVIEW_GUIDE_HEADING = "【网站封面风格预览】";
+export const THEME_BACKGROUND_GUIDE_HEADING = "【网站主题背景色预览】";
 
 /**
- * 封面风格预览链接区块（只给销冠 AI）。
+ * 主题背景色预览链接区块（只给销冠 AI）。
  *
  * 为什么由代码注入而不是写死在基础人设里：链接必须带当前对外域名
  * （正式域名 / staging / localhost 自动切换），且商户可在 AI 控制中心
@@ -129,18 +129,20 @@ export const STYLE_PREVIEW_GUIDE_HEADING = "【网站封面风格预览】";
  *
  * baseUrl 为空时退回相对路径，保证任何环境下都不会拼出死链。
  */
-export function buildGameCardStylePreviewGuide(baseUrl?: string | null): string {
-  const links = buildGameCardStylePreviewLinks(baseUrl);
+export function buildThemeBackgroundPreviewGuide(
+  baseUrl?: string | null,
+): string {
+  const links = buildThemeBackgroundPreviewLinks(baseUrl);
   const lines = links
     .map((link, index) => `${index + 1}. ${link.label}：${link.url}`)
     .join("\n");
 
-  return `${STYLE_PREVIEW_GUIDE_HEADING}
-客户问「网站长什么样 / 有没有别的风格 / 能不能换封面皮肤」时，直接把下面这 3 个预览链接原样发给客户（每条独占一行，链接必须完整可点击，不要改写、不要截断）：
+  return `${THEME_BACKGROUND_GUIDE_HEADING}
+客户问「网站长什么样 / 有没有别的配色 / 能不能换主题色」时，先把下面这 15 个主题背景色预览链接原样发给客户（每条独占一行，链接必须完整可点击，不要改写、不要截断）：
 ${lines}
 
-发完链接后补一句口径（不要多说）：「这 3 种是平台统一维护的封面风格，您选好后我们开站时直接配置好；商户后台不提供自助切换，后续要更换随时找我们调整。」
-不要承诺平台不存在的风格、也不要让客户去后台自己找开关。`;
+发完链接后补一句口径（不要多说）：「这 15 种是平台统一维护的主题背景色，站点底色永远是深色电竞风，换颜色只换环境光与卡片描边；您选好后我们开站时直接配置好，商户后台不提供自助切换，后续要更换随时找我们调整。」
+不要承诺平台不存在的配色、也不要让客户去后台自己找开关。`;
 }
 
 /**
@@ -159,13 +161,13 @@ export function buildEffectiveSystemPrompt(
 ): string {
   const base = config?.systemPrompt?.trim() || buildAgentSystemPrompt(agentType);
 
-  // 风格预览链接是平台口径，必须随销冠 AI 一起下发；
+  // 主题背景色预览链接是平台口径，必须随销冠 AI 一起下发；
   // 商户自己改写过的 Prompt 里若已包含这一段，就不重复追加。
   const withStyleGuide =
-    agentType === "sales" && !base.includes(STYLE_PREVIEW_GUIDE_HEADING)
+    agentType === "sales" && !base.includes(THEME_BACKGROUND_GUIDE_HEADING)
       ? `${base}
 
-${buildGameCardStylePreviewGuide(options?.baseUrl)}`
+${buildThemeBackgroundPreviewGuide(options?.baseUrl)}`
       : base;
 
   return composeSystemPrompt(withStyleGuide, config?.tactics ?? "");

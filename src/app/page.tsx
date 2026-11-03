@@ -4,6 +4,7 @@ import { connection } from "next/server";
 import { resolveBrandName } from "@/lib/brand";
 import { loadLobbyData } from "@/lib/lobby-data";
 import { getPlayerSessionFromCookies } from "@/lib/player-session";
+import { loadHeroBanners } from "@/lib/promotions";
 import { requireStorefront } from "@/lib/storefront-data";
 
 import { LobbyClient, type LobbyPlayerSummary } from "./lobby-client";
@@ -63,6 +64,13 @@ export default async function PlayerLobbyPage({
     getPlayerSessionFromCookies(),
   ]);
 
+  // Hero 海报：后台【活动管理】里启用中的活动（最多 5 张，先按运营排序再按最新）。
+  // 必须带 tenantId 才能查 —— 站点没解析出来时直接给空数组，Hero 退回内置文案轮播。
+  // 这一步放在 storefront 之后：tenantId 只来自 requireStorefront()，绝不接受前端传的 tenant。
+  const heroBanners = storefront.tenantId
+    ? await loadHeroBanners(storefront.tenantId)
+    : [];
+
   const initialPlayer: LobbyPlayerSummary | null = playerSession
     ? {
         id: playerSession.id,
@@ -81,6 +89,7 @@ export default async function PlayerLobbyPage({
       storefront={storefront}
       initialPlayer={initialPlayer}
       previewTenantKey={tenantKey}
+      heroBanners={heroBanners}
     />
   );
 }

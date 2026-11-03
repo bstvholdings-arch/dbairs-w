@@ -25,6 +25,7 @@ type NavIconName =
   | "finance"
   | "players"
   | "kyc"
+  | "promotions"
   | "ai"
   | "staff"
   | "integrations"
@@ -127,6 +128,12 @@ const TENANT_ADMIN_NAV: NavItem[] = [
   { labelKey: "nav.tenantPlayers", href: "/tenant/players", icon: "players" },
   // KYC 审核：只处理本站玩家提交的实名资料
   { labelKey: "nav.tenantKyc", href: "/tenant/kyc", icon: "kyc" },
+  // 活动管理：玩家前台 /promotions 的分类与 Banner（活动图上传 + 跳转链接）
+  {
+    labelKey: "nav.tenantPromotions",
+    href: "/tenant/promotions",
+    icon: "promotions",
+  },
   // 支付网关：商户自行对接支付商（充值通道的唯一来源）
   {
     labelKey: "nav.tenantPayments",
@@ -265,6 +272,16 @@ function NavIcon({ name }: { name: NavIconName }) {
           <circle cx="9" cy="8" r="3.2" />
           <path d="M3.5 20c0-3 2.5-5.5 5.5-5.5s5.5 2.5 5.5 5.5" />
           <path d="M17 5.5 18.6 7 21 4.5" />
+        </svg>
+      );
+    case "promotions":
+      return (
+        <svg {...common}>
+          <rect x="3.5" y="9" width="17" height="11" rx="1.8" />
+          <path d="M3.5 13h17" />
+          <path d="M12 9v11" />
+          <path d="M12 9C10.5 6 9.3 5 8 5a2 2 0 0 0 0 4Z" />
+          <path d="M12 9c1.5-3 2.7-4 4-4a2 2 0 0 1 0 4Z" />
         </svg>
       );
     case "preview":

@@ -17,6 +17,7 @@ import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { TenantBrandLockup } from "@/components/brand/tenant-brand";
 import { LobbyActionBar, type LobbyActionId } from "@/components/lobby/action-bar";
 import { PlayerDepositModal } from "@/components/player/deposit-modal";
+import { PlayerBottomNav } from "@/components/player/player-bottom-nav";
 import {
   ComingSoonDialog,
   ConnectingDialog,
@@ -28,6 +29,10 @@ import {
   WithdrawIcon,
 } from "@/components/lobby/hall-actions";
 import { HeroCarousel, type HeroBannerMetric } from "@/components/lobby/hero-carousel";
+import {
+  PromoHeroCarousel,
+  type HeroPromoBanner,
+} from "@/components/lobby/promo-hero-carousel";
 import { ProviderWall } from "@/components/lobby/provider-wall";
 import { SidebarCasinoAnimation } from "@/components/lobby/sidebar-casino-animation";
 import { SupportChatDialog } from "@/components/lobby/support-chat-dialog";
@@ -61,6 +66,7 @@ import {
   type StorefrontSettings,
 } from "@/lib/storefront";
 import { buildStorefrontPresetStyle } from "@/lib/storefront-presets";
+import { buildThemeBackgroundStyle } from "@/lib/theme-backgrounds";
 
 /** 大厅顶栏需要的玩家摘要；余额已由服务端序列化成字符串。 */
 export type LobbyPlayerSummary = {
@@ -115,6 +121,7 @@ export function LobbyClient({
   storefront,
   initialPlayer = null,
   previewTenantKey = null,
+  heroBanners = [],
 }: {
   initialProviders: LobbyProviderOption[];
   initialGames: LobbyGameRecord[];
@@ -128,6 +135,11 @@ export function LobbyClient({
    * （展馆 / 登录 / 玩家中心）就会丢掉租户上下文、回落到别家站点。
    */
   previewTenantKey?: string | null;
+  /**
+   * Hero 海报（后台【活动管理】里启用中的活动，最多 5 张，服务端已按租户取好）。
+   * 有图 → 全屏轮播海报；空数组 → 自动退回内置文案轮播（原 Hero 保底兜底）。
+   */
+  heroBanners?: HeroPromoBanner[];
 }) {
   const { t } = useLanguage();
   const router = useRouter();
@@ -156,6 +168,14 @@ export function LobbyClient({
   const presetStyle = useMemo(
     () => buildStorefrontPresetStyle(storefront.preset),
     [storefront.preset],
+  );
+
+  // 主题背景色（15 选 1）：只产出 --tb-base / --tb-accent / --tb-rgb 三个变量，
+  // 由根节点继承给环境光晕与所有游戏卡片（规则见 globals.css 的「主题背景色」区块）。
+  // 卡片组件本身不接收任何颜色 prop —— 换主题色不需要动组件。
+  const backgroundStyle = useMemo(
+    () => buildThemeBackgroundStyle(storefront.themeBackground),
+    [storefront.themeBackground],
   );
 
   // ── 白标品牌区 ─────────────────────────────────────────────────────────
@@ -446,7 +466,7 @@ export function LobbyClient({
     [cards],
   );
 
-  // 该品类后台还没有上架任何游戏（例如刚补上的 Sport / E-sport）：
+  // 该品类后台还没有上架任何游戏（例如刚补上的 Sport / Cockfight）：
   // 显示「即将上线」而不是像搜索失败一样的「无结果」。
   const emptyCategory =
     category !== "all" && (categoryCounts.get(category) ?? 0) === 0;
@@ -749,11 +769,20 @@ export function LobbyClient({
       case "hero":
         return (
           <div key="hero" data-module="hero">
-            <HeroCarousel
-              banners={LOBBY_BANNERS}
-              metrics={heroMetrics}
-              onAction={handleBannerAction}
-            />
+            {/* 后台配了启用中的海报 → 全屏轮播图（点击跳 linkUrl）；
+                一张都没配 → 退回原本的暗黑文案轮播（Tonight's luck…），保底兜底。 */}
+            {heroBanners.length > 0 ? (
+              <PromoHeroCarousel
+                banners={heroBanners}
+                tenantKey={previewTenantKey}
+              />
+            ) : (
+              <HeroCarousel
+                banners={LOBBY_BANNERS}
+                metrics={heroMetrics}
+                onAction={handleBannerAction}
+              />
+            )}
           </div>
         );
       case "action":
@@ -796,21 +825,25 @@ export function LobbyClient({
 
   return (
     <div
-      className="relative min-h-screen bg-[#040404] font-sans text-neutral-200"
-      style={{ ...theme.style, ...presetStyle } as CSSProperties}
+      className="tb-lobby-bg relative min-h-screen font-sans text-neutral-200"
+      style={
+        { ...theme.style, ...presetStyle, ...backgroundStyle } as CSSProperties
+      }
       data-storefront-preset={storefront.preset}
+      data-theme-background={storefront.themeBackground}
       data-theme-color={theme.brand}
       data-theme-brightness={theme.brightness}
       data-theme-primary={theme.primary}
     >
-      {/* 背景：黑金 + 霓虹光晕 + 细网格 */}
+      {/* 背景：深色底（--tb-base）+ 主题色呼吸光晕 + 品牌金 + 细网格。
+          光晕的颜色与节奏全部由 --tb-* 决定，见 globals.css「主题背景色」区块。 */}
       <div
         aria-hidden="true"
         className="pointer-events-none fixed inset-0 overflow-hidden"
       >
-        <div className="absolute -left-40 -top-40 h-[32rem] w-[32rem] rounded-full bg-brand/10 blur-[150px]" />
-        <div className="absolute -right-40 top-10 h-[28rem] w-[28rem] rounded-full bg-fuchsia-600/10 blur-[150px]" />
-        <div className="absolute bottom-[-18rem] left-1/3 h-[32rem] w-[32rem] rounded-full bg-cyan-500/10 blur-[170px]" />
+        <div className="tb-aura -left-40 -top-40 h-[32rem] w-[32rem]" />
+        <div className="tb-aura tb-aura--slow bottom-[-18rem] left-1/3 h-[34rem] w-[34rem]" />
+        <div className="absolute -right-40 top-10 h-[28rem] w-[28rem] rounded-full bg-brand/10 blur-[150px]" />
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,var(--sf-a10),transparent_55%)]" />
         <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.045)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.045)_1px,transparent_1px)] [background-size:64px_64px] [mask-image:radial-gradient(ellipse_at_top,black_10%,transparent_70%)] [-webkit-mask-image:radial-gradient(ellipse_at_top,black_10%,transparent_70%)]" />
       </div>
@@ -1021,7 +1054,7 @@ export function LobbyClient({
         </div>
       </header>
 
-      <main className="relative mx-auto w-full max-w-[var(--sf-shell-max,1600px)] px-3 pb-12 pt-4 sm:px-5 lg:px-8">
+      <main className="relative mx-auto w-full max-w-[var(--sf-shell-max,1600px)] px-3 pb-28 pt-4 sm:px-5 lg:px-8">
         {/*
           ② ③ ④ 可选模块区：Hero 轮播 / 核心功能岛 / 品牌墙。
           显示与顺序完全由后台【前台装修】的 layoutConfig 决定（Tenant.layoutConfig），
@@ -1043,13 +1076,13 @@ export function LobbyClient({
             visibleModules.length > 0 ? "mt-5" : "mt-1"
           }`}
         >
-          {/* 左侧分类导航：桌面竖排，手机横向滑动 */}
-          <aside className="lg:w-[212px] lg:shrink-0">
+          {/* 左侧分类导航：桌面 2 列图标卡，手机横向滑动条（单卡 ≥ 64px 高，手指好点） */}
+          <aside className="lg:w-[236px] lg:shrink-0">
             <div className="lg:sticky lg:top-[96px]">
               {/* 左侧导航只放游戏品类；游戏商展示全部交给顶部 PROVIDER SHOWCASE 品牌墙 */}
               <nav
                 aria-label={t("nav.mainAria")}
-                className="flex gap-2 overflow-x-auto pb-1 lg:flex-col lg:overflow-visible lg:pb-0"
+                className="flex snap-x snap-mandatory gap-2 overflow-x-auto pb-1 lg:grid lg:grid-cols-2 lg:gap-2 lg:overflow-visible lg:pb-0"
               >
                 {LOBBY_CATEGORY_ORDER.map((id) => {
                   const active = category === id;
@@ -1060,26 +1093,22 @@ export function LobbyClient({
                       type="button"
                       onClick={() => setCategory(id)}
                       aria-pressed={active}
-                      className={`group relative flex shrink-0 items-center gap-2 rounded-xl border px-3 py-2 text-[11px] font-semibold tracking-wide transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-soft/60 lg:w-full lg:px-3.5 lg:py-2.5 ${
+                      data-lobby-category={id}
+                      data-lobby-category-active={active ? "true" : "false"}
+                      className={`group relative flex w-[76px] min-h-[64px] shrink-0 snap-start flex-col items-center justify-center gap-1 rounded-xl border px-1 pb-1.5 pt-2.5 transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-soft/60 active:scale-[0.97] lg:w-auto lg:min-h-[74px] ${
                         active
-                          ? "border-transparent bg-gradient-to-r from-brand-soft via-brand-mid to-brand-deep text-brand-ink shadow-[0_12px_28px_-14px_var(--sf-a95)]"
-                          : "border-white/[0.06] bg-white/[0.02] text-neutral-400 hover:border-brand/30 hover:text-brand-soft"
+                          ? "border-transparent bg-gradient-to-b from-brand-soft via-brand-mid to-brand-deep text-brand-ink shadow-[0_12px_28px_-14px_var(--sf-a95)]"
+                          : "border-white/[0.06] bg-white/[0.02] text-neutral-400 hover:border-brand/30 hover:bg-white/[0.04] hover:text-brand-soft"
                       }`}
                     >
-                      {active ? (
-                        <span
-                          aria-hidden="true"
-                          className="absolute inset-y-1.5 left-0 hidden w-[3px] rounded-full bg-brand-ink/60 lg:block"
-                        />
-                      ) : null}
                       <CategoryIcon id={id} />
-                      <span className="whitespace-nowrap">
+                      <span className="max-w-full truncate text-[9.5px] font-semibold leading-none tracking-wide sm:text-[10px]">
                         {t(LOBBY_CATEGORY_LABEL_KEYS[id])}
                       </span>
                       <span
-                        className={`ml-auto rounded-full px-1.5 py-px text-[9px] tabular-nums ${
+                        className={`absolute right-1 top-1 rounded-full px-1 text-[8px] font-bold leading-[1.4] tabular-nums ${
                           active
-                            ? "bg-brand-ink/15 text-brand-ink"
+                            ? "bg-brand-ink/20 text-brand-ink"
                             : "bg-white/[0.06] text-neutral-500"
                         }`}
                       >
@@ -1141,11 +1170,7 @@ export function LobbyClient({
               <ul className="grid grid-cols-3 gap-[var(--sf-game-gap,0.75rem)] sm:grid-cols-4 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
                 {visibleGames.map((card) => (
                   <li key={card.id} className="min-w-0">
-                    <GameCard
-                      card={card}
-                      style={storefront.gameCardStyle}
-                      onPlay={() => openGame(card)}
-                    />
+                    <GameCard card={card} onPlay={() => openGame(card)} />
                   </li>
                 ))}
               </ul>
@@ -1162,6 +1187,10 @@ export function LobbyClient({
           </div>
         </footer>
       </main>
+
+      {/* 玩家端底部导航（大厅 / 活动 / 我的）：活动大厅 /promotions 的一级入口，
+          预览模式下自动透传 ?tenant=（见 components/player/player-bottom-nav.tsx） */}
+      <PlayerBottomNav tenantKey={previewTenantKey} />
 
       {connectingGame ? (
         <ConnectingDialog
@@ -1255,94 +1284,34 @@ function TopbarChatIcon({ className }: { className?: string }) {
 }
 
 /**
- * 左侧品类图标：全部是 24×24 的内联描边 SVG，颜色跟随文字（currentColor），
- * 选中态自动变成深色，不需要另配一套图标。
+ * 左侧品类图标：统一用 emoji —— 一眼能认出玩法、零图片请求、也不受主题色影响。
+ *
+ * 为什么不用 emoji 图片化 / SVG：emoji 在各端都是彩色字形，
+ * 手机上 19px 依旧清晰，后台换主题色也不用重做一套图标。
+ * Hot Games 的火焰额外挂 `.tb-flame`（见 globals.css），未选中也在持续跳动。
  */
-function CategoryIcon({ id }: { id: LobbyCategoryFilter }) {
-  const common = {
-    viewBox: "0 0 24 24",
-    fill: "none",
-    stroke: "currentColor",
-    strokeWidth: 1.7,
-    strokeLinecap: "round" as const,
-    strokeLinejoin: "round" as const,
-    "aria-hidden": true,
-    className: "h-3.5 w-3.5 shrink-0",
-  };
+const LOBBY_CATEGORY_EMOJI = {
+  all: "🎮",
+  hot: "🔥",
+  slot: "🎰",
+  live: "🎲",
+  sport: "⚽",
+  poker: "🃏",
+  fish: "🐟",
+  esport: "⚽",
+  cockfight: "🐓",
+} as const satisfies Record<LobbyCategoryFilter, string>;
 
-  switch (id) {
-    case "all":
-      return (
-        <svg {...common}>
-          <rect x="3" y="3" width="7" height="7" rx="1.6" />
-          <rect x="14" y="3" width="7" height="7" rx="1.6" />
-          <rect x="3" y="14" width="7" height="7" rx="1.6" />
-          <rect x="14" y="14" width="7" height="7" rx="1.6" />
-        </svg>
-      );
-    case "hot":
-      return (
-        <svg {...common}>
-          <path d="M12 3c.6 3.2-2.2 4.4-2.2 6.7 0 1.2.9 2 2 2s2-.8 2-2c0-.6-.2-1.1-.5-1.7 2.3 1.2 3.7 3.4 3.7 5.8A5.2 5.2 0 0 1 12 21a5.2 5.2 0 0 1-5-3.2C5.3 13.2 9.4 10.1 12 3Z" />
-        </svg>
-      );
-    case "slot":
-      return (
-        <svg {...common}>
-          <rect x="3" y="4" width="18" height="16" rx="2.5" />
-          <path d="M8 9.5h.01M12 9.5h.01M16 9.5h.01M8 14.5h.01M12 14.5h.01M16 14.5h.01" />
-        </svg>
-      );
-    case "live":
-      return (
-        <svg {...common}>
-          <circle cx="12" cy="12" r="3" />
-          <path d="M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8" />
-        </svg>
-      );
-    case "fish":
-      return (
-        <svg {...common}>
-          <path d="M3 12c3-4 7-6 11-6 3 0 5.5 2.5 7 6-1.5 3.5-4 6-7 6-4 0-8-2-11-6Z" />
-          <circle cx="9" cy="11" r="0.9" fill="currentColor" stroke="none" />
-          <path d="M17 9.5 21 7v10l-4-2.5" />
-        </svg>
-      );
-    case "sport":
-      return (
-        <svg {...common}>
-          <circle cx="12" cy="12" r="8.4" />
-          <path d="M12 8.2l3 2.2-1.1 3.5H10L8.9 10.4l3.1-2.2Z" />
-          <path d="M6.4 8.9l2.5 1.5M17.6 8.9l-2.5 1.5M9.6 18.9l.4-3M14.4 18.9l-.4-3" opacity="0.6" />
-        </svg>
-      );
-    case "poker":
-      return (
-        <svg {...common}>
-          <rect x="3.6" y="6.4" width="8.6" height="12.4" rx="1.6" transform="rotate(-14 8 12.6)" />
-          <rect x="11" y="4.8" width="9.4" height="13.6" rx="1.6" />
-          <path d="M15.7 9.3c1.1 1.3 2 2 2 3.1a2 2 0 1 1-4 0c0-1.1.9-1.8 2-3.1Z" />
-        </svg>
-      );
-    case "esport":
-      return (
-        <svg {...common}>
-          <path d="M8 8.6h8c2.4 0 4 1.8 4.4 4.4.3 2.4-.6 4.3-2 4.3-1 0-1.7-.6-2.4-1.3-.5-.5-1-.9-1.7-.9h-4.6c-.7 0-1.2.4-1.7.9-.7.7-1.4 1.3-2.4 1.3-1.4 0-2.3-1.9-2-4.3C4 10.4 5.6 8.6 8 8.6Z" />
-          <path d="M8.2 10.8v3M6.7 12.3h3" />
-          <circle cx="15.4" cy="11.6" r="0.95" fill="currentColor" stroke="none" />
-          <circle cx="17.2" cy="13.6" r="0.95" fill="currentColor" stroke="none" />
-        </svg>
-      );
-    case "cockfight":
-      return (
-        <svg {...common}>
-          <path d="M11 5.9c.7-1 1.6-1.3 2.2-.5.4.6.4 1.2.1 2" />
-          <circle cx="12.2" cy="10.6" r="3.8" />
-          <path d="M16.1 9.8h2.1l-2.1 1.5" />
-          <path d="M12.6 14.2c-.2 1.2.5 1.8 1.5 1.8s1.7-.7 1.7-1.6" />
-          <path d="M8.6 11.3c-1.7.8-2.7 2.4-2.7 4.2 0 2 1.4 3.5 3.5 3.5 1.5 0 2.7-.7 3.3-1.8" />
-          <circle cx="13.2" cy="10.4" r="0.55" fill="currentColor" stroke="none" />
-        </svg>
-      );
-  }
+function CategoryIcon({ id }: { id: LobbyCategoryFilter }) {
+  return (
+    <span
+      aria-hidden="true"
+      data-lobby-category-icon={id}
+      className={`block shrink-0 select-none text-[19px] leading-none ${
+        id === "hot" ? "tb-flame" : ""
+      }`}
+    >
+      {LOBBY_CATEGORY_EMOJI[id]}
+    </span>
+  );
 }

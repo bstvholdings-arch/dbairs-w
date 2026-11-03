@@ -1,9 +1,9 @@
 import { Prisma } from "@prisma/client";
 
 import {
-  normalizeGameCardStyle,
-  type GameCardStyleId,
-} from "./game-card-styles";
+  normalizeThemeBackground,
+  type ThemeBackgroundId,
+} from "./theme-backgrounds";
 
 export const tenantSelect = {
   id: true,
@@ -16,9 +16,9 @@ export const tenantSelect = {
 } satisfies Prisma.TenantSelect;
 
 /**
- * 开站 / 编辑弹窗要回填「游戏封面风格」，它存在 Tenant.layoutConfig 里，
+ * 开站 / 编辑弹窗要回填「主题背景色」，它存在 Tenant.layoutConfig 里，
  * 所以多读一个 JSON 字段。对外出口必须走 toTenantPayload()，
- * 把 layoutConfig 剥离成单个 gameCardStyle，避免整份装修配置外泄。
+ * 把 layoutConfig 剥离成单个 themeBackground，避免整份装修配置外泄。
  */
 export const tenantSelectWithLayout = {
   ...tenantSelect,
@@ -29,16 +29,16 @@ export type TenantSelectRow = Prisma.TenantGetPayload<{
   select: typeof tenantSelectWithLayout;
 }>;
 
-/** 列表 / 详情统一的租户形状：layoutConfig → gameCardStyle（已归一化） */
+/** 列表 / 详情统一的租户形状：layoutConfig → themeBackground（已归一化） */
 export function toTenantPayload<T extends { layoutConfig: unknown }>(
   tenant: T,
-): Omit<T, "layoutConfig"> & { gameCardStyle: GameCardStyleId } {
+): Omit<T, "layoutConfig"> & { themeBackground: ThemeBackgroundId } {
   const { layoutConfig, ...rest } = tenant;
 
   return {
     ...rest,
-    // 脏数据 / 老租户缺字段 → 回落 cyberNeon（= 改造前外观）
-    gameCardStyle: normalizeGameCardStyle(layoutConfig),
+    // 脏数据 / 老租户缺字段 → 回落经典暗黑（= 改造前的大厅观感）
+    themeBackground: normalizeThemeBackground(layoutConfig),
   };
 }
 

@@ -350,7 +350,13 @@ export const LOBBY_GAMES: LobbyGame[] = [
   },
 ];
 
-/** 顶部导航展示的分类顺序。 */
+/**
+ * 左侧导航展示的分类顺序（「全部游戏」+ 7 个品类入口）。
+ *
+ * 这里刻意**不含 esport**：旧的 E-sport（电子竞技）已经并入 Sport（体育），
+ * 见下方 CATEGORY_ALIASES。否则同一个玩法会在导航里出现「Sport」「E-sport」两个入口。
+ * `LobbyCategoryFilter` 仍保留 esport，只为兼容库里历史 category 数据。
+ */
 export const LOBBY_CATEGORY_ORDER: LobbyCategoryFilter[] = [
   "all",
   "hot",
@@ -359,15 +365,36 @@ export const LOBBY_CATEGORY_ORDER: LobbyCategoryFilter[] = [
   "sport",
   "poker",
   "fish",
-  "esport",
   "cockfight",
 ];
+
+/**
+ * 导航分类 → 实际数据分类的别名表。
+ *
+ * 「体育 Sport」同时收录 sport 与历史遗留的 esport 游戏：
+ * 玩家点一次体育就能看到全部球类 / 电竞游戏，库里老数据也不用迁移。
+ */
+const CATEGORY_ALIASES: Partial<
+  Record<LobbyCategoryFilter, readonly LobbyCategoryId[]>
+> = {
+  sport: ["sport", "esport"],
+};
 
 export function matchesCategory(
   game: { categories: LobbyCategoryId[] },
   category: LobbyCategoryFilter,
 ): boolean {
-  return category === "all" || game.categories.includes(category);
+  if (category === "all") {
+    return true;
+  }
+
+  const aliases = CATEGORY_ALIASES[category];
+
+  if (aliases) {
+    return aliases.some((alias) => game.categories.includes(alias));
+  }
+
+  return game.categories.includes(category);
 }
 
 /** 封面配色池：数据库游戏没有 iconUrl 时按 id 稳定哈希取一组。 */

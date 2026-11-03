@@ -39,17 +39,18 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 分栏只在 `lg`(≥1024px) 生效，手机永远纵向堆叠；后台关掉 Hero 时必须自动退回堆叠（见 `globals.css` 里的 `:has()` 规则），不能留半列空白。
 - 模板 id 归一化必须容错：脏数据回落到 `classic`，老租户（`layoutConfig` 无 `preset`）升级后外观不变。
 
-### 4.1 游戏封面风格：一套 GameCard + 3 组 token
+### 4.1 主题背景色：一套 GameCard + 15 组色值（永远深色底）
 
-- 3 种风格（`cyberNeon` 赛博霓虹 / `royalGold` 黑金尊享 / `candyPop` 糖果明亮）**必须是同一个 `src/components/lobby/game-card.tsx`**，差异只允许来自 `src/lib/game-card-styles.ts` 的 `tokens`（固定 class）与 `build(art)`（随卡片主色变化的渐变）。
-- **游戏主图是卡片主体，任何风格都不许动它**：卡片渲染 `card.imageUrl`（来自 `Game.iconUrl`，`lobby-data.ts` → `LobbyGameRecord.iconUrl` → `buildCardsFromRecords` 里的 `readGameImageUrl()` 白名单校验），`object-cover` 铺满整卡、原图直出 —— **禁止**在 `<img>` 上叠纯色底 / 渐变 / 半透明遮罩 / `filter`。风格只允许作用于两处：外框（border / ring / shadow / 圆角）与底部文字区底板（`tokens.panel`）；`build()` 的渐变 + 品类图形只在「没有封面图 / 图 404」时兜底。
-- **禁止**为某个风格复制一份 `GameCard`，也禁止在组件里写 `if (style === "...")` 分支堆样式：加 / 改风格 = 改那一张 token 表。
-- 风格只管卡片视觉（底色 / 边框 / 光效 / 文字色 / 扫光 / 徽章配色）；整站主色仍只由 `Tenant.themeColor` 决定，排版仍只由 `layoutConfig.preset` 决定，数据与交互（在线人数跳动、点开游戏）一份。
-- 存储：`Tenant.layoutConfig.gameCardStyle`（JSON 内字段，无需迁移）；脏数据 / 老租户缺字段回落 `cyberNeon`（= 改造前外观）。
-- 弹窗里用 **3 张单选卡片**（真实 `<input type="radio">` + 常显色点）而不是原生 `<select>`：原生下拉依赖浏览器弹层，弹层被上层元素遮挡 / 弹窗被祖先 `transform` 裁切时表现为「点了没反应」，且失焦即关、看不到配色。弹窗本身走 `createPortal` 挂到 `document.body`，不要改回直接 `fixed` 渲染。
-- **配置权限已收回平台（不可回退）**：唯一写入口是超管【租户管理 → 新建 / 编辑租户】弹窗的下拉（`POST /api/tenants`、`PUT /api/tenants/[id]` 的 `gameCardStyle`）。商户后台（`PATCH /api/tenant/settings` 的 `layout` patch）与装修页（`PUT /api/admin/storefront`）**必须显式忽略该字段**，页面也只做只读展示；否则等于给商户开了绕过权限的后门。
-- 卖站阶段由 AI 销冠发 Demo：`src/lib/ai/prompts.ts` 的 `buildGameCardStylePreviewGuide()` 在销冠 System Prompt 里注入 3 个真实渲染的预览链接（`/demo/game-card-styles#cyberNeon|royalGold|candyPop`，`src/app/demo/game-card-styles/` 复用同一个 `GameCard`），并明确「选好后由平台开站时配置」。
-- 大厅 `/` 与品牌展馆 `/provider/[code]` 必须共用同一个 `StorefrontSettings.gameCardStyle`，否则玩家点进品牌馆会「换了个封面风格」。
+- 15 种主题背景色（`obsidian` 经典暗黑 / `royalPurple` 皇家紫 / `deepSea` 深海蓝 / `cyberCyan` 赛博青 / `roseGold` 玫瑰金 / `emerald` 翡翠绿 / `bloodRed` 血月红 / `neonPink` 霓虹粉 / `moltenOrange` 熔岩橙 / `champagne` 香槟金 / `titanium` 钛金灰 / `abyssTeal` 幽潭青 / `arcticSilver` 极地银 / `solarYellow` 烈日金 / `midnightIndigo` 午夜靛蓝）**必须是同一个 `src/components/lobby/game-card.tsx`**，差异只允许来自 `src/lib/theme-backgrounds.ts` 的 `base`（深色底）+ `accent`（点缀色）两个色值。
+- **站点永远是深色 / 黑底**：主题色只允许三处落点 —— 大厅环境光晕（`.tb-aura` 呼吸动画）、卡片外框（描边 + 悬停光晕）、底部文字底板描边。**禁止**任何浅色 / 白色不透明底板（曾经的 `candyPop` 白卡就是这么来的），卡片底板固定 `rgb(3 5 10 / .82)`（`.tb-card__plate`）。
+- **颜色不进组件 prop**：根节点用 `buildThemeBackgroundStyle()` 注入 `--tb-base` / `--tb-accent` / `--tb-rgb`，卡片只吃 `.tb-card` / `.tb-card__plate` / `.tb-card__name` / `.tb-card__provider` / `.tb-card__online` / `.tb-card__hot` / `.tb-card__play` 这几个固定 class（规则见 `globals.css` 的「主题背景色」区块）。加一种颜色 = 改色表一行，不碰组件、不碰 CSS、不写 `if (id === "...")`。
+- **游戏主图是卡片主体，任何主题色都不许动它**：卡片渲染 `card.imageUrl`（来自 `Game.iconUrl`，`lobby-data.ts` → `LobbyGameRecord.iconUrl` → `buildCardsFromRecords` 里的 `readGameImageUrl()` 白名单校验），`object-cover` 铺满整卡、原图直出 —— **禁止**在 `<img>` 上叠纯色底 / 渐变 / 半透明遮罩 / `filter`。渐变 + 品类图形只在「没有封面图 / 图 404」时兜底。
+- 主题色只管环境光与卡片；整站主色仍只由 `Tenant.themeColor` 决定，排版仍只由 `layoutConfig.preset` 决定，数据与交互（在线人数跳动、点开游戏）一份。
+- 存储：`Tenant.layoutConfig.themeBackground`（JSON 内字段，无需迁移）；脏数据 / 老租户缺字段回落 `obsidian`；老的 `layoutConfig.gameCardStyle`（`cyberNeon` / `royalGold` / `candyPop`）由 `normalizeThemeBackground` 做**深色化迁移**（→ `cyberCyan` / `obsidian` / `neonPink`），老站点不会再出现白卡。
+- 弹窗里用 **15 张单选色卡**（真实 `<input type="radio">` + 常显深色底 / 点缀色两个色点 + 现场 `.tb-*` 实时预览）而不是原生 `<select>`：原生下拉依赖浏览器弹层，弹层被上层元素遮挡 / 弹窗被祖先 `transform` 裁切时表现为「点了没反应」，且失焦即关、看不到配色。弹窗本身走 `createPortal` 挂到 `document.body`，不要改回直接 `fixed` 渲染。
+- **配置权限已收回平台（不可回退）**：唯一写入口是超管【租户管理 → 新建 / 编辑租户】弹窗（`POST /api/tenants`、`PUT /api/tenants/[id]` 的 `themeBackground`）。商户后台（`PATCH /api/tenant/settings` 的 `layout` patch）与装修页（`PUT /api/admin/storefront`）**必须显式忽略 `themeBackground` 与历史字段 `gameCardStyle`**，页面也只做只读展示；否则等于给商户开了绕过权限的后门。
+- 卖站阶段由 AI 销冠发 Demo：`src/lib/ai/prompts.ts` 的 `buildThemeBackgroundPreviewGuide()` 在销冠 System Prompt 里注入 15 个真实渲染的预览链接（`/demo/theme-backgrounds#<id>`，`src/app/demo/theme-backgrounds/` 复用同一个 `GameCard`），并明确「选好后由平台开站时配置」；旧路径 `/demo/game-card-styles` 必须继续跳转到新页面（客户手里的老链接不能 404）。
+- 大厅 `/` 与品牌展馆 `/provider/[code]` 必须共用同一个 `StorefrontSettings.themeBackground`，否则玩家点进品牌馆会「换了个底色」。
 
 ### 5. AI 助手喂养：知识库走 RAG，实时数据走 Function Calling
 

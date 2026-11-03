@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 
 import { DEFAULT_CURRENCY, normalizeCurrency } from "@/lib/currency";
 import { logDataFallback } from "@/lib/data-fallback-log";
-import { DEFAULT_GAME_CARD_STYLE } from "@/lib/game-card-styles";
+import { DEFAULT_THEME_BACKGROUND } from "@/lib/theme-backgrounds";
 import {
   IMPERSONATION_COOKIE,
   verifyImpersonationTicket,
@@ -62,7 +62,7 @@ export const FALLBACK_STOREFRONT: StorefrontSettings = {
   themeColor: DEFAULT_THEME_COLOR,
   themeBrightness: DEFAULT_THEME_BRIGHTNESS,
   preset: DEFAULT_STOREFRONT_PRESET,
-  gameCardStyle: DEFAULT_GAME_CARD_STYLE,
+  themeBackground: DEFAULT_THEME_BACKGROUND,
   modules: DEFAULT_STOREFRONT_MODULES.map((module) => ({ ...module })),
   showTopbarChat: DEFAULT_STOREFRONT_TOPBAR_CHAT,
   showSidebarCasinoAnim: DEFAULT_STOREFRONT_SIDEBAR_CASINO,
@@ -83,7 +83,7 @@ function toSettings(row: StorefrontTenantRow): StorefrontSettings {
     themeColor: theme.hex,
     themeBrightness: theme.brightness,
     preset: layout.preset,
-    gameCardStyle: layout.gameCardStyle,
+    themeBackground: layout.themeBackground,
     modules: layout.modules,
     showTopbarChat: layout.showTopbarChat,
     showSidebarCasinoAnim: layout.showSidebarCasinoAnim,

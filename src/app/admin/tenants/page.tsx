@@ -30,7 +30,7 @@ export default async function AdminTenantsPage() {
   );
 
   const rows: TenantRow[] = tenants.map((tenant) => {
-    // toTenantPayload 会把 layoutConfig 收敛成 gameCardStyle，不整包传进前端
+    // toTenantPayload 会把 layoutConfig 收敛成 themeBackground，不整包传进前端
     const payload = toTenantPayload(tenant);
 
     return {
@@ -40,8 +40,8 @@ export default async function AdminTenantsPage() {
       subdomain: payload.subdomain,
       status: payload.status,
       withdrawalRequiredApprovals: payload.withdrawalRequiredApprovals,
-      // 开站 / 编辑弹窗要回填当前封面风格
-      gameCardStyle: payload.gameCardStyle,
+      // 开站 / 编辑弹窗要回填当前主题背景色
+      themeBackground: payload.themeBackground,
       createdAt: payload.createdAt.toISOString(),
       admins: adminsByTenant.get(payload.id) ?? [],
     };

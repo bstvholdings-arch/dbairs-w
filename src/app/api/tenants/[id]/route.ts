@@ -7,7 +7,10 @@ import {
   readContactEmail,
   readWalletAddress,
 } from "@/lib/integrations";
-import { isGameCardStyleId } from "@/lib/game-card-styles";
+import {
+  isThemeBackgroundId,
+  THEME_BACKGROUND_IDS,
+} from "@/lib/theme-backgrounds";
 import { sendTenantAdminInviteEmail } from "@/lib/mailer";
 import { prisma } from "@/lib/prisma";
 import {
@@ -228,17 +231,18 @@ async function updateTenant(
     }
 
     /**
-     * 游戏封面风格（Game Card Cover Style）。
+     * 主题背景色（Theme Background Color，15 选 1）。
      *
      * 权限决策：只有超管在【租户管理 → 新增 / 编辑】时能配，商户后台与装修页
-     * 都不提供切换入口（/api/admin/storefront 的写白名单已剔除该字段）。
+     * 都不提供切换入口（/api/admin/storefront 与 /api/tenant/settings 的
+     * 写白名单都已剔除该字段）。
      * 值存在 layoutConfig 里，因此只做「读旧 JSON → 覆盖这一个键 → 整体归一化」，
      * 不会把装修页配置的模块顺序 / 互动组件开关冲掉。
      */
-    if (hasOwn(input, "gameCardStyle")) {
-      if (!isGameCardStyleId(input.gameCardStyle)) {
+    if (hasOwn(input, "themeBackground")) {
+      if (!isThemeBackgroundId(input.themeBackground)) {
         return jsonError(
-          "游戏封面风格只能是 cyberNeon、royalGold 或 candyPop",
+          `主题背景色只能是以下之一：${THEME_BACKGROUND_IDS.join("、")}`,
           400,
         );
       }
@@ -247,7 +251,7 @@ async function updateTenant(
 
       data.layoutConfig = serializeLayoutConfig({
         ...currentLayout,
-        gameCardStyle: input.gameCardStyle,
+        themeBackground: input.themeBackground,
       });
     }
 

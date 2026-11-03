@@ -7,9 +7,9 @@ import { useState } from "react";
 import { useLanguage } from "@/components/LanguageProvider";
 import { formatDate } from "@/lib/format";
 import {
-  GAME_CARD_STYLES,
-  normalizeGameCardStyle,
-} from "@/lib/game-card-styles";
+  normalizeThemeBackground,
+  THEME_BACKGROUNDS,
+} from "@/lib/theme-backgrounds";
 import { TENANT_STATUS_LABEL_KEYS } from "@/lib/i18n-keys";
 
 import { TenantFormModal } from "./tenant-form-modal";
@@ -195,9 +195,11 @@ export function TenantsClient({
               ) : (
                 tenants.map((tenant) => {
                   const deleting = deletingId === tenant.id;
-                  // 封面风格：老租户缺字段 / 脏数据都归一到 cyberNeon
-                  const cardStyle = normalizeGameCardStyle(tenant.gameCardStyle);
-                  const cardOption = GAME_CARD_STYLES[cardStyle];
+                  // 主题背景色：老租户缺字段 / 脏数据都归一到经典暗黑
+                  const background = normalizeThemeBackground(
+                    tenant.themeBackground,
+                  );
+                  const backgroundOption = THEME_BACKGROUNDS[background];
                   const statusKey =
                     TENANT_STATUS_LABEL_KEYS[
                       tenant.status as keyof typeof TENANT_STATUS_LABEL_KEYS
@@ -250,16 +252,15 @@ export function TenantsClient({
                           <span className="h-1.5 w-1.5 rounded-full bg-current" />
                           {statusKey ? t(statusKey) : tenant.status}
                         </span>
-                        {/* 封面风格：在这里直接显示，保存后一眼看到是否生效 */}
+                        {/* 主题背景色：在这里直接显示，保存后一眼看到是否生效 */}
                         <span
                           className="mt-1.5 flex items-center gap-1.5 text-[10px] text-neutral-500"
-                          data-tenant-row-game-card-style={cardStyle}
+                          data-tenant-row-theme-background={background}
                         >
                           <span className="flex gap-0.5" aria-hidden="true">
                             {[
-                              cardOption.swatch.frame,
-                              cardOption.swatch.rim,
-                              cardOption.swatch.ink,
+                              backgroundOption.base,
+                              backgroundOption.accent,
                             ].map((color, index) => (
                               <span
                                 key={`${color}-${index}`}
@@ -268,7 +269,7 @@ export function TenantsClient({
                               />
                             ))}
                           </span>
-                          {t(cardOption.labelKey)}
+                          {t(backgroundOption.labelKey)}
                         </span>
                       </td>
                       <td className="px-5 py-3.5">

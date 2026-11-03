@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 import { verifyToken } from "@/lib/auth";
-import { GAME_CARD_STYLE_PREVIEW_PATH } from "@/lib/game-card-styles";
+import {
+  LEGACY_GAME_CARD_STYLE_PREVIEW_PATH,
+  THEME_BACKGROUND_PREVIEW_PATH,
+} from "@/lib/theme-backgrounds";
 import {
   IMPERSONATION_COOKIE,
   verifyImpersonationTicket,
@@ -46,6 +49,16 @@ function redirectToRoleHome(request: NextRequest, role: string, permission: stri
   url.searchParams.set("denied", permission);
 
   return NextResponse.redirect(url);
+}
+
+/**
+ * 公开演示页匹配：命中该路径本身或其子路径。
+ *
+ * 用在 /demo/*（主题背景色预览）这类「不需要登录、也不查库」的营销页面上，
+ * 避免写成 `pathname === x || pathname.startsWith(x + "/")` 的重复判断。
+ */
+function isPublicDemoPath(pathname: string, base: string) {
+  return pathname === base || pathname.startsWith(`${base}/`);
 }
 
 // Next.js 16 起，middleware 文件约定已更名为 proxy。
@@ -139,6 +152,19 @@ export function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // 活动大厅的只读接口 / 活动海报图片：访客必须能看（营销素材）。
+  // - GET /api/promotions           ：分类 + 启用中的活动列表，租户由 ?tenant= / 域名解析；
+  // - GET /api/promotions/banners/* ：后台上传的活动图直链。
+  // 写操作全部在 /api/tenant/promotions/*（走 guardTenantApi），这里不放行任何非 GET。
+  const isPublicPromotionRead =
+    (pathname === "/api/promotions" ||
+      pathname.startsWith("/api/promotions/")) &&
+    (request.method === "GET" || request.method === "HEAD");
+
+  if (isPublicPromotionRead) {
+    return NextResponse.next();
+  }
+
   // 玩家前台大厅（/）永远属于玩家：任何身份（访客 / 玩家 / 超管 / 租户管理员）
   // 打开根路径都直接渲染大厅，绝不在这里按角色重定向到后台。
   // 后台入口是独立路径，只能手动输入 /admin（租户端为 /tenant），
@@ -153,6 +179,12 @@ export function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // 玩家前台的「活动大厅」（/promotions）：与大厅同级，访客也要能看活动海报。
+  // 写操作只有商户后台 /tenant/promotions 与 /api/tenant/promotions/*，不受影响。
+  if (pathname === "/promotions" || pathname.startsWith("/promotions/")) {
+    return NextResponse.next();
+  }
+
   // 独立的商户登录页（/tenant/login）：未登录必须能访问，
   // 已登录的商户账号则直接送回控制台，避免「登录了还要再看一次表单」。
   if (pathname === TENANT_LOGIN_PATH) {
@@ -163,12 +195,13 @@ export function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // 游戏封面风格预览页（/demo/game-card-styles）：AI 销冠卖站时直接发给
+  // 主题背景色预览页（/demo/theme-backgrounds）：AI 销冠卖站时直接发给
   // 还没有任何账号的准客户看效果，必须公开可访问。
-  // 该页只渲染真实 GameCard，不查库、不写库、不读会话。
+  // 旧的 /demo/game-card-styles 只做跳转（客户手里的老链接不能 404）。
+  // 这类页面只渲染真实 GameCard，不查库、不写库、不读会话。
   if (
-    pathname === GAME_CARD_STYLE_PREVIEW_PATH ||
-    pathname.startsWith(`${GAME_CARD_STYLE_PREVIEW_PATH}/`)
+    isPublicDemoPath(pathname, THEME_BACKGROUND_PREVIEW_PATH) ||
+    isPublicDemoPath(pathname, LEGACY_GAME_CARD_STYLE_PREVIEW_PATH)
   ) {
     return NextResponse.next();
   }

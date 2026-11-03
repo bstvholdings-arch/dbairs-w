@@ -107,31 +107,15 @@ export function ReferralGiftIcon({ className = "" }: { className?: string }) {
 }
 
 /**
- * 资金 / 账户类图标：充值、提现、登录注册。
+ * 资金 / 账户类图标：提现、登录注册。
  *
- * 和上面两个奖牌 / 礼盒不同，这三个不做多色金属渐变，统一走 currentColor，
+ * 和上面两个奖牌 / 礼盒不同，这几个不做多色金属渐变，统一走 currentColor，
  * 由父级 text-brand-soft 之类的类名控制颜色，方便整卡悬停时一起高亮，
  * 也避免多张卡片同时渲染时 <linearGradient id> 冲突。
+ *
+ * 充值卡已改用「💰 + 纯 CSS 立体金币徽章」（见 action-bar.tsx 的 DepositGemIcon），
+ * 所以原来的加号 svg 已删除。
  */
-export function DepositIcon({ className = "" }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      className={className}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.6}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <circle cx="12" cy="12" r="8.4" />
-      <path d="M12 8.2v7.6M8.2 12h7.6" />
-      <path d="M12 3.4v1.4M12 19.2v1.4" opacity="0.5" />
-    </svg>
-  );
-}
-
 export function WithdrawIcon({ className = "" }: { className?: string }) {
   return (
     <svg

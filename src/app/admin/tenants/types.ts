@@ -1,4 +1,4 @@
-import type { GameCardStyleId } from "@/lib/game-card-styles";
+import type { ThemeBackgroundId } from "@/lib/theme-backgrounds";
 
 export const WITHDRAWAL_APPROVAL_OPTIONS = [1, 2, 3] as const;
 
@@ -21,8 +21,8 @@ export type TenantRow = {
   subdomain: string;
   status: string;
   withdrawalRequiredApprovals: number;
-  /** 游戏封面风格（存在 Tenant.layoutConfig 里，前台大厅与品牌展馆共用） */
-  gameCardStyle: GameCardStyleId;
+  /** 主题背景色（存在 Tenant.layoutConfig 里，前台大厅与品牌展馆共用） */
+  themeBackground: ThemeBackgroundId;
   createdAt: string;
   admins: TenantAdminBadge[];
 };
@@ -56,11 +56,12 @@ export type TenantFormValues = {
   status: string;
   withdrawalRequiredApprovals: number;
   /**
-   * 游戏封面风格（Game Card Cover Style）。
+   * 主题背景色（Theme Background Color，15 选 1）。
    * 只有超管在开站 / 编辑租户时能配：商户后台不提供自助切换，
-   * 风格决定大厅与品牌展馆的卡片视觉（见 src/lib/game-card-styles.ts）。
+   * 它决定大厅环境光与所有游戏卡片的外框 / 文字底板描边，
+   * 永远是深色底（见 src/lib/theme-backgrounds.ts）。
    */
-  gameCardStyle: GameCardStyleId;
+  themeBackground: ThemeBackgroundId;
   /**
    * 商户管理员邮箱（AdminUser.email，同时是登录账号）。
    * 新增租户时必填：后端用它创建 tenant_admin 账号并发送开通邮件；

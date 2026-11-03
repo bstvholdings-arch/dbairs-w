@@ -61,7 +61,7 @@ function serializeTenant(row: {
     themeColor: theme.hex,
     themeBrightness: theme.brightness,
     preset: layout.preset,
-    gameCardStyle: layout.gameCardStyle,
+    themeBackground: layout.themeBackground,
     modules: layout.modules,
     showTopbarChat: layout.showTopbarChat,
     showSidebarCasinoAnim: layout.showSidebarCasinoAnim,
@@ -190,9 +190,11 @@ export async function PUT(request: NextRequest) {
       }
     }
 
-    // 游戏封面风格（gameCardStyle）的写入入口已收回平台：
+    // 主题背景色（themeBackground）的写入入口已收回平台：
     // 只能由超管在【租户管理 → 新增 / 编辑】（POST / PUT /api/tenants）时配置，
     // 装修页即使被构造请求带上这个字段也必须忽略，保证写入入口唯一。
+    // 老的 gameCardStyle 一并忽略，避免旧前端把白底风格又写回来。
+    delete layoutPatch.themeBackground;
     delete layoutPatch.gameCardStyle;
 
     const modules = normalizeLayoutConfig(

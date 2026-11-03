@@ -78,6 +78,9 @@ model Tenant {
   kycRecords       PlayerKyc[]
 
   withdrawalAccounts PlayerWithdrawalAccount[]
+
+  promotionCategories PromotionCategory[]
+  promotionBanners    PromotionBanner[]
 }
 
 // 2. 套餐表 (Plan - 标准版/高阶版配置)
@@ -650,3 +653,48 @@ model IntegrationIpWhitelist {
 
   @@index([createdAt])
 }
+
+// 20. 活动分类 (PromotionCategory)
+// 玩家前台「活动大厅」（/promotions）左侧的分类导航：全部优惠（虚拟）、新人优惠、周周返水…
+// - tenantId 多租户隔离：每个商户维护自己的分类，查询必须带 tenantId；
+// - name 在同一商户内唯一（同名分类没有意义，且会让运营分不清哪条对应哪个 Banner）；
+// - sortOrder 越小越靠前，前端按 (sortOrder asc, createdAt asc) 排序，脏数据不会乱跳。
+model PromotionCategory {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  banners PromotionBanner[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, sortOrder])
+}
+
+// 21. 活动 Banner (PromotionBanner)
+// 一个分类下挂 N 张活动图，玩家端只渲染 isActive=true 的；
+// - imageUrl：商户上传（落 .promotion-storage/，走 /api/promotions/banners/<key> 直链）
+//             或直接填外站 https 图片地址，两种都由 normalizePromotionUrl() 统一校验；
+// - linkUrl：点击跳转地址，允许站内 /player/register 这类相对路径与外站 https 链接；
+// - categoryId 建了外键并级联删除：删分类即连带删掉该分类下的活动图（后台会二次确认）。
+model PromotionBanner {
+  id         String            @id @default(uuid())
+  tenantId   String
+  tenant     Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  categoryId String
+  category   PromotionCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  imageUrl   String
+  title      String?
+  linkUrl    String?
+  isActive   Boolean           @default(true)
+  sortOrder  Int               @default(0)
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+
+  @@index([tenantId, isActive, sortOrder])
+  @@index([categoryId, sortOrder])
+}
+

@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type KeyboardEvent,
+} from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
 import { GameEmblem } from "@/components/lobby/game-emblem";
@@ -27,34 +33,22 @@ const ART_EMBLEM: Record<LobbyBannerArt, LobbyGameEmblem> = {
 };
 
 /**
- * 大厅 Hero 广告轮播。
+ * 轮播引擎：索引 / 暂停 / 进度令牌 + 5 秒自动切换。
  *
- * - 纯 CSS 过渡（opacity + translate + scale）做淡入淡出 + 轻微滑动，
- *   不引入 Framer Motion，客户端包体保持最小；
- * - 每 HERO_ROTATE_MS（5 秒）自动切一张：悬停 / 键盘聚焦时暂停，
- *   标签页切到后台（document.hidden）也跳过推进，回来不会「连跳」；
- * - 尊重 prefers-reduced-motion：过渡与进度条动画都会关掉；
- * - 有 imageUrl 时用后台图当背景，没有则回退到内置 SVG 占位图。
+ * 文本轮播（本文件的 HeroCarousel）与后台海报轮播（promo-hero-carousel.tsx）
+ * 共用这一份，保证两套轮播的节奏、暂停规则、键盘操作完全一致 ——
+ * 不允许各写一套定时器（改一个值要改两处，必然走岔）。
  *
- * TODO: 此处需读取后台配置的 Banner 图片和跳转链接（见 lib/lobby-banners.ts）。
+ * 规则：
+ * - 每 HERO_ROTATE_MS（5 秒）切一张；悬停 / 键盘聚焦时暂停；
+ * - 标签页切到后台（document.hidden）时跳过推进，切回来不会「连跳」；
+ * - 每次切换 bump 一次 `round`，指示器据此把金色进度条从 0 重放；
+ * - 数量变化（后台停用了海报）时把越界索引拉回 0，避免整块空白。
  */
-export function HeroCarousel({
-  banners,
-  metrics,
-  onAction,
-}: {
-  banners: LobbyBanner[];
-  /** bannerId → 实时指标 */
-  metrics: Record<string, HeroBannerMetric | undefined>;
-  onAction: (banner: LobbyBanner) => void;
-}) {
-  const { t } = useLanguage();
+export function useHeroRotation(total: number) {
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
-  // 重新计时的令牌：手动切页后进度条与定时器都从 0 起算。
   const [round, setRound] = useState(0);
-
-  const total = banners.length;
 
   const goTo = useCallback(
     (next: number) => {
@@ -85,6 +79,186 @@ export function HeroCarousel({
     return () => window.clearInterval(timer);
   }, [paused, round, total]);
 
+  // 数量变少（后台停用了海报、热更新后数组变短）时按 0 处理越界索引：
+  // 渲染期直接派生，而不是 effect 里 setState —— 后者会触发一次多余的级联渲染，
+  // 而且 eslint 的 react-hooks/set-state-in-effect 会直接报错。
+  const safeIndex = total > 0 && index >= total ? 0 : index;
+
+  const handlers = useMemo(
+    () => ({
+      onMouseEnter: () => setPaused(true),
+      onMouseLeave: () => setPaused(false),
+      onFocusCapture: () => setPaused(true),
+      onBlurCapture: () => setPaused(false),
+      onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
+        if (event.key === "ArrowLeft") {
+          event.preventDefault();
+          goTo(safeIndex - 1);
+        }
+
+        if (event.key === "ArrowRight") {
+          event.preventDefault();
+          goTo(safeIndex + 1);
+        }
+      },
+    }),
+    [goTo, safeIndex],
+  );
+
+  return { index: safeIndex, paused, round, goTo, handlers };
+}
+
+/** 左右切换按钮：手机也保留，按小尺寸呈现；悬停或聚焦时显形（两套轮播共用） */
+export function HeroCarouselArrows({
+  total,
+  index,
+  goTo,
+}: {
+  total: number;
+  index: number;
+  goTo: (next: number) => void;
+}) {
+  const { t } = useLanguage();
+
+  if (total <= 1) {
+    return null;
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => goTo(index - 1)}
+        aria-label={t("lobby.hero.prev")}
+        className="absolute left-1.5 top-1/2 -translate-y-1/2 rounded-full border border-white/15 bg-black/45 p-1.5 text-neutral-300 opacity-0 backdrop-blur transition-all hover:border-brand-soft/60 hover:text-brand-soft focus:outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-brand-soft/60 group-hover:opacity-100 sm:left-3 sm:p-2"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          className="h-3.5 w-3.5 sm:h-4 sm:w-4"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="m15 5-7 7 7 7" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        onClick={() => goTo(index + 1)}
+        aria-label={t("lobby.hero.next")}
+        className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full border border-white/15 bg-black/45 p-1.5 text-neutral-300 opacity-0 backdrop-blur transition-all hover:border-brand-soft/60 hover:text-brand-soft focus:outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-brand-soft/60 group-hover:opacity-100 sm:right-3 sm:p-2"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          className="h-3.5 w-3.5 sm:h-4 sm:w-4"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="m9 5 7 7-7 7" />
+        </svg>
+      </button>
+    </>
+  );
+}
+
+
+/**
+ * 指示器 + 自动轮播进度：当前点的金色进度条正好走满 5 秒（两套轮播共用）。
+ * 海报轮播也用它，所以「换成图片后小圆点没了」这种事不会发生。
+ */
+export function HeroCarouselDots({
+  total,
+  index,
+  round,
+  paused,
+  goTo,
+}: {
+  total: number;
+  index: number;
+  round: number;
+  paused: boolean;
+  goTo: (next: number) => void;
+}) {
+  const { t } = useLanguage();
+
+  if (total <= 1) {
+    return null;
+  }
+
+  return (
+    <div className="absolute inset-x-0 bottom-2.5 flex items-center justify-center gap-1.5 sm:bottom-3.5">
+      {Array.from({ length: total }, (_, dotIndex) => {
+        const active = dotIndex === index;
+
+        return (
+          <button
+            key={dotIndex}
+            type="button"
+            onClick={() => goTo(dotIndex)}
+            aria-label={t("lobby.hero.goTo", { index: dotIndex + 1 })}
+            aria-current={active ? "true" : undefined}
+            className={`h-1.5 overflow-hidden rounded-full transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-soft/60 ${
+              active ? "w-8 bg-white/25" : "w-1.5 bg-white/25 hover:bg-white/45"
+            }`}
+          >
+            {active ? (
+              <span
+                key={`${dotIndex}-${round}-${paused ? "paused" : "run"}`}
+                className="block h-full rounded-full bg-gradient-to-r from-brand-soft to-brand-deep"
+                style={
+                  paused
+                    ? { width: "100%" }
+                    : {
+                        animation: `hero-progress ${HERO_ROTATE_MS}ms linear forwards`,
+                      }
+                }
+              />
+            ) : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+
+/**
+ * 大厅 Hero 广告轮播（内置文案版）。
+ *
+ * 后台【活动管理】里一张启用海报都没配时由它兜底；配了海报则由
+ * promo-hero-carousel.tsx 的 PromoHeroCarousel 接管（调用方在 lobby-client.tsx 里二选一）。
+ *
+ * - 纯 CSS 过渡（opacity + translate + scale）做淡入淡出 + 轻微滑动，
+ *   不引入 Framer Motion，客户端包体保持最小；
+ * - 每 HERO_ROTATE_MS（5 秒）自动切一张：悬停 / 键盘聚焦时暂停，
+ *   标签页切到后台（document.hidden）也跳过推进，回来不会「连跳」；
+ * - 尊重 prefers-reduced-motion：过渡与进度条动画都会关掉；
+ * - 有 imageUrl 时用后台图当背景，没有则回退到内置 SVG 占位图；
+ * - 轮播节奏 / 箭头 / 圆点全部来自本文件的共享件（useHeroRotation 等），
+ *   不要再写第二套定时器。
+ */
+export function HeroCarousel({
+  banners,
+  metrics,
+  onAction,
+}: {
+  banners: LobbyBanner[];
+  /** bannerId → 实时指标 */
+  metrics: Record<string, HeroBannerMetric | undefined>;
+  onAction: (banner: LobbyBanner) => void;
+}) {
+  const { t } = useLanguage();
+  const { index, paused, round, goTo, handlers } = useHeroRotation(banners.length);
+
+  const total = banners.length;
+
   if (total === 0) {
     return null;
   }
@@ -95,21 +269,7 @@ export function HeroCarousel({
       aria-roledescription="carousel"
       aria-label={t("lobby.hero.carousel")}
       className="group relative overflow-hidden rounded-2xl border border-brand/15 bg-[#070707] shadow-[0_28px_70px_-40px_rgba(0,0,0,0.95)] sm:rounded-3xl"
-      onMouseEnter={() => setPaused(true)}
-      onMouseLeave={() => setPaused(false)}
-      onFocusCapture={() => setPaused(true)}
-      onBlurCapture={() => setPaused(false)}
-      onKeyDown={(event) => {
-        if (event.key === "ArrowLeft") {
-          event.preventDefault();
-          goTo(index - 1);
-        }
-
-        if (event.key === "ArrowRight") {
-          event.preventDefault();
-          goTo(index + 1);
-        }
-      }}
+      {...handlers}
     >
       <div
         className="relative h-[var(--sf-hero-h,250px)] w-full sm:h-[var(--sf-hero-h-sm,286px)] lg:h-[var(--sf-hero-h-lg,330px)]"
@@ -252,85 +412,17 @@ export function HeroCarousel({
         })}
       </div>
 
-      {/* 左右切换：手机也保留，按小尺寸呈现；悬停或聚焦时显形 */}
-      {total > 1 ? (
-        <>
-          <button
-            type="button"
-            onClick={() => goTo(index - 1)}
-            aria-label={t("lobby.hero.prev")}
-            className="absolute left-1.5 top-1/2 -translate-y-1/2 rounded-full border border-white/15 bg-black/45 p-1.5 text-neutral-300 opacity-0 backdrop-blur transition-all hover:border-brand-soft/60 hover:text-brand-soft focus:outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-brand-soft/60 group-hover:opacity-100 sm:left-3 sm:p-2"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              className="h-3.5 w-3.5 sm:h-4 sm:w-4"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={2}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="m15 5-7 7 7 7" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            onClick={() => goTo(index + 1)}
-            aria-label={t("lobby.hero.next")}
-            className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full border border-white/15 bg-black/45 p-1.5 text-neutral-300 opacity-0 backdrop-blur transition-all hover:border-brand-soft/60 hover:text-brand-soft focus:outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-brand-soft/60 group-hover:opacity-100 sm:right-3 sm:p-2"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              className="h-3.5 w-3.5 sm:h-4 sm:w-4"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={2}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="m9 5 7 7-7 7" />
-            </svg>
-          </button>
+      {/* 左右切换 + 指示器：与后台海报轮播共用同一套控件
+          （见本文件 HeroCarouselArrows / HeroCarouselDots，不要各写一套） */}
+      <HeroCarouselArrows total={total} index={index} goTo={goTo} />
 
-          {/* 指示器 + 自动轮播进度：当前点的金色进度条正好走满 5 秒 */}
-          <div className="absolute inset-x-0 bottom-2.5 flex items-center justify-center gap-1.5 sm:bottom-3.5">
-            {banners.map((banner, dotIndex) => {
-              const active = dotIndex === index;
-
-              return (
-                <button
-                  key={banner.id}
-                  type="button"
-                  onClick={() => goTo(dotIndex)}
-                  aria-label={t("lobby.hero.goTo", { index: dotIndex + 1 })}
-                  aria-current={active ? "true" : undefined}
-                  className={`h-1.5 overflow-hidden rounded-full transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-soft/60 ${
-                    active
-                      ? "w-8 bg-white/25"
-                      : "w-1.5 bg-white/25 hover:bg-white/45"
-                  }`}
-                >
-                  {active ? (
-                    <span
-                      key={`${banner.id}-${round}-${paused ? "paused" : "run"}`}
-                      className="block h-full rounded-full bg-gradient-to-r from-brand-soft to-brand-deep"
-                      style={
-                        paused
-                          ? { width: "100%" }
-                          : {
-                              animation: `hero-progress ${HERO_ROTATE_MS}ms linear forwards`,
-                            }
-                      }
-                    />
-                  ) : null}
-                </button>
-              );
-            })}
-          </div>
-        </>
-      ) : null}
+      <HeroCarouselDots
+        total={total}
+        index={index}
+        round={round}
+        paused={paused}
+        goTo={goTo}
+      />
 
     </div>
   );
