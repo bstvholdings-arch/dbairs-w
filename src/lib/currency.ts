@@ -132,6 +132,40 @@ export function formatCurrency(
     : `${sign}${meta.symbol}${joiner}${body}`;
 }
 
+/**
+ * 金额 / 余额展示的全局小数位：只保留两位（530.500000 → 530.50）。
+ *
+ * 为什么需要常量：`formatCurrency` 允许调用方自己传 maximumFractionDigits，
+ * 于是历史上出现过「弹窗 530.500000、顶栏 530.50」这种同一笔钱两种口径。
+ * 余额、充值 / 提现金额、后台金额列一律走 formatDisplayAmount。
+ */
+export const DISPLAY_AMOUNT_FRACTION_DIGITS = 2;
+
+/**
+ * 金额 / 余额展示的唯一口径：千分位 + **固定两位小数** + 币种符号。
+ *
+ *   formatDisplayAmount("530.500000", "MYR")  → "RM 530.50"
+ *   formatDisplayAmount(0.1 + 0.2, "USDT")    → "USDT 0.30"
+ *
+ * 只允许「必须原样展示的应付款数额」（例如加密货币转账金额 12.345678）
+ * 继续用 formatCurrency + maximumFractionDigits 自定义小数位；
+ * 其余展示（余额、到账提示、充值 / 提现记录、后台列表）都必须走这里。
+ */
+export function formatDisplayAmount(
+  value: unknown,
+  currency?: string | null,
+  options: Omit<
+    CurrencyFormatOptions,
+    "minimumFractionDigits" | "maximumFractionDigits" | "trimZeros"
+  > = {},
+): string {
+  return formatCurrency(value, currency, {
+    ...options,
+    minimumFractionDigits: DISPLAY_AMOUNT_FRACTION_DIGITS,
+    maximumFractionDigits: DISPLAY_AMOUNT_FRACTION_DIGITS,
+  });
+}
+
 /** 带符号的金额（今日输赢、盈亏等），0 不显示 "+" */
 export function formatSignedCurrency(
   value: unknown,

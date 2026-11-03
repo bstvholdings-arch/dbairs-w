@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
 import { resolveBrandName } from "@/lib/brand";
-import { formatCurrency } from "@/lib/currency";
+import { formatCurrency, formatDisplayAmount } from "@/lib/currency";
 import { GATEWAY_PROVIDER_LABEL_KEYS } from "@/lib/i18n-keys";
 import type { TFunction } from "@/lib/i18n-types";
 import { formatGatewayRatePercent } from "@/lib/payment-gateway-rates";
@@ -78,7 +78,13 @@ function shortValue(value: string, head = 10, tail = 8) {
   return `${value.slice(0, head)}…${value.slice(-tail)}`;
 }
 
-/** 展示用金额：最多 6 位小数，去掉多余的尾随 0；符号由租户 / 通道币种决定。 */
+/**
+ * 提现金额 / 手续费 / 到账金额的展示：最多 6 位小数并去掉尾随 0。
+ *
+ * 这几个数字是「玩家要转出去的钱」，少给一位就转不到账，所以必须按原样展示；
+ * 余额（当前余额 / 可提余额 / 在途金额）不属于这个口径，一律走
+ * formatDisplayAmount —— 固定两位小数（530.500000 → 530.50）。
+ */
 function formatMoney(value: number, currency: string) {
   return formatCurrency(value, currency, {
     maximumFractionDigits: 6,
@@ -486,7 +492,7 @@ export function PlayerWithdrawModal({
                     {t("player.withdraw.balanceLabel")}
                   </p>
                   <p className="mt-0.5 font-mono text-sm font-bold tabular-nums text-neutral-200">
-                    {formatMoney(Number(balance), walletCurrency)}
+                    {formatDisplayAmount(balance, walletCurrency)}
                   </p>
                 </div>
                 <div className="text-right">
@@ -494,13 +500,13 @@ export function PlayerWithdrawModal({
                     {t("player.withdraw.availableLabel")}
                   </p>
                   <p className="mt-0.5 font-mono text-sm font-bold tabular-nums text-[#f0d27c]">
-                    {formatMoney(availableBalance, walletCurrency)}
+                    {formatDisplayAmount(availableBalance, walletCurrency)}
                   </p>
                 </div>
                 {pendingValue > 0 ? (
                   <p className="col-span-2 mt-1 text-[10px] leading-4 text-neutral-500">
                     {t("player.withdraw.pendingHint", {
-                      amount: formatMoney(pendingValue, walletCurrency),
+                      amount: formatDisplayAmount(pendingValue, walletCurrency),
                     })}
                   </p>
                 ) : null}

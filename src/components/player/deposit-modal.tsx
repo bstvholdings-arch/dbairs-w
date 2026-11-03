@@ -1,11 +1,12 @@
 "use client";
 
 import { QRCodeSVG } from "qrcode.react";
+import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
 import { resolveBrandName } from "@/lib/brand";
-import { formatCurrency } from "@/lib/currency";
+import { formatCurrency, formatDisplayAmount } from "@/lib/currency";
 import {
   GATEWAY_BANK_FIELD_LABEL_KEYS,
   GATEWAY_PROVIDER_LABEL_KEYS,
@@ -16,6 +17,7 @@ import {
   type GatewayBankDetails,
 } from "@/lib/payment-gateway-bank";
 import type { GatewayTypeValue } from "@/lib/payment-gateway-constants";
+import { notifyPlayerWalletChanged } from "@/lib/player-wallet-events";
 
 export type PlayerDepositGateway = {
   id: string;
@@ -102,6 +104,8 @@ function providerLabel(providerType: string, t: TFunction) {
 }
 
 function formatMoney(value: string, currency: string) {
+  // 「应付多少钱」必须原样显示，不能四舍五入（USDT 12.345678 少给一位就充不上），
+  // 所以这里刻意保留最多 6 位小数；余额 / 到账提示一律走 formatDisplayAmount。
   // 符号由充值通道币种决定（MYR → RM、USDT → USDT、USD → $），见 src/lib/currency.ts
   return formatCurrency(value, currency, { maximumFractionDigits: 6 });
 }
@@ -132,6 +136,7 @@ export function PlayerDepositModal({
   open,
   playerName,
   brandName,
+  walletCurrency,
   onClose,
   onDeposited,
 }: {
@@ -139,10 +144,17 @@ export function PlayerDepositModal({
   playerName?: string;
   /** 商户品牌名（Tenant.name）：只用于弹窗页脚署名，缺省回退平台名 */
   brandName?: string;
+  /**
+   * 租户记账币种（Tenant.currency）。
+   * 到账提示里的「当前余额」必须按它渲染符号与两位小数，
+   * 不能用充值通道币种（通道可能是 USDT、钱包却是 MYR）。
+   */
+  walletCurrency?: string;
   onClose: () => void;
   onDeposited?: (balance?: string | null) => void;
 }) {
   const { t } = useLanguage();
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [gateways, setGateways] = useState<PlayerDepositGateway[]>([]);
@@ -373,8 +385,18 @@ export function PlayerDepositModal({
         return;
       }
 
-      setCreditedBalance(data.balance ?? null);
-      onDeposited?.(data.balance ?? null);
+      const balance = data.balance ?? null;
+
+      setCreditedBalance(balance);
+      onDeposited?.(balance);
+
+      // 上分是「服务端事务已提交」的既成事实，这里必须把余额同步做全：
+      // 1) 广播 dbairs:player-wallet-changed —— 大厅顶栏等自己持有余额 state 的组件
+      //    收到后立刻重新拉 /api/player/me（Server Component 刷新改不动它们）；
+      // 2) router.refresh() —— 让玩家中心 / 大厅首屏这些 Server Component 重新取数。
+      // 少了任何一步都会出现「弹窗说已到账、顶部 Header 还是旧余额」。
+      notifyPlayerWalletChanged();
+      router.refresh();
     } catch {
       setError(t("common.networkError"));
     } finally {
@@ -607,7 +629,12 @@ export function PlayerDepositModal({
               {creditedBalance ? (
                 <p className="mt-3 text-center text-[11px] text-emerald-300">
                   {t("player.deposit.testPaidDone", {
-                    balance: creditedBalance,
+                    // 接口回传的是 Decimal 原样字符串（530.500000），
+                    // 展示必须走统一口径：两位小数 + 租户币种符号（RM 530.50）。
+                    balance: formatDisplayAmount(
+                      creditedBalance,
+                      walletCurrency ?? created.currency,
+                    ),
                   })}
                 </p>
               ) : null}

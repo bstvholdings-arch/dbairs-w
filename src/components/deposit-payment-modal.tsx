@@ -1,6 +1,7 @@
 "use client";
 
 import { QRCodeSVG } from "qrcode.react";
+import { useRouter } from "next/navigation";
 import { useEffect, useId, useState, type FormEvent } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
@@ -18,6 +19,7 @@ import {
   type GatewayBankDetails,
 } from "@/lib/payment-gateway-bank";
 import type { GatewayTypeValue } from "@/lib/payment-gateway-constants";
+import { notifyPlayerWalletChanged } from "@/lib/player-wallet-events";
 
 export type DepositGatewayOption = {
   id: string;
@@ -97,6 +99,13 @@ function bankDetailRows(details: GatewayBankDetails, t: TFunction) {
   })).filter((field) => Boolean(field.value));
 }
 
+/**
+ * 到账提示里的余额数字。
+ *
+ * 接口回传的是 `Player.balance` 的 Decimal 原样字符串（530.500000），
+ * 直接拼进文案就会出现「余额 530.500000」。这里统一固定两位小数，
+ * 与 formatDisplayAmount / 顶栏 BALANCE 口径完全一致。
+ */
 function formatAmountValue(value: string) {
   const amount = Number(value);
 
@@ -106,7 +115,7 @@ function formatAmountValue(value: string) {
 
   return new Intl.NumberFormat("en-US", {
     minimumFractionDigits: 2,
-    maximumFractionDigits: 6,
+    maximumFractionDigits: 2,
   }).format(amount);
 }
 
@@ -176,6 +185,7 @@ export function DepositPaymentModal({
   onDepositSuccess?: (balance?: string | null) => void;
 }) {
   const { t } = useLanguage();
+  const router = useRouter();
   const titleId = useId();
   const [gatewayId, setGatewayId] = useState(gateways[0]?.id ?? "");
   const [amount, setAmount] = useState("");
@@ -400,6 +410,12 @@ export function DepositPaymentModal({
             })
           : t("deposit.success.testCallback"),
       );
+
+      // 到账已落库：广播给所有自己持有余额 state 的组件（大厅顶栏 / 玩家中心），
+      // 再让 Server Component 重新取数，避免「提示已到账、Header 余额还是旧的」。
+      notifyPlayerWalletChanged();
+      router.refresh();
+
       onDepositSuccess?.(data.balance);
     } catch {
       setError(t("common.networkError"));

@@ -39,7 +39,11 @@ import { SupportChatDialog } from "@/components/lobby/support-chat-dialog";
 import { WinnerTicker } from "@/components/lobby/winner-ticker";
 import { formatInteger } from "@/lib/format";
 import { resolveBrandName } from "@/lib/brand";
-import { formatCurrency, normalizeCurrency } from "@/lib/currency";
+import {
+  formatCurrency,
+  formatDisplayAmount,
+  normalizeCurrency,
+} from "@/lib/currency";
 import { availableBalanceToString } from "@/lib/player-balance";
 import { subscribePlayerWalletChanged } from "@/lib/player-wallet-events";
 import { LOBBY_CATEGORY_LABEL_KEYS } from "@/lib/i18n-keys";
@@ -632,9 +636,12 @@ export function LobbyClient({
             }
           : current,
       );
-    } else {
-      void refreshPlayer();
     }
+
+    // 但本地值只是「乐观展示」：接口回传的是这笔充值后的余额，若同时还有别的
+    // 在途提现 / 多笔并发到账，本地推算就会偏。这里无条件再拉一次
+    // /api/player/me，以服务端账本为准覆盖顶栏 BALANCE。
+    void refreshPlayer();
 
     setNoticeVisible(true);
   }
@@ -889,7 +896,7 @@ export function LobbyClient({
                 {playerLoading && !player
                   ? "…"
                   : player
-                    ? formatCurrency(player.availableBalance, walletCurrency)
+                    ? formatDisplayAmount(player.availableBalance, walletCurrency)
                     : "—"}
               </span>
               {player ? null : (
@@ -1215,6 +1222,7 @@ export function LobbyClient({
           open
           playerName={player.username}
           brandName={brandName}
+          walletCurrency={walletCurrency}
           onClose={closePlayerDeposit}
           onDeposited={handleDepositSuccess}
         />
