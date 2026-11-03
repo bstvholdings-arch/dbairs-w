@@ -237,7 +237,7 @@ export function PlayerProfileClient({
       }
 
       setBonusClaimed(true);
-      notifyPlayerWalletChanged();
+      notifyPlayerWalletChanged({ balance: data.balance });
       setCurrent((prev) => {
         const nextBalance = data.balance ?? prev.summary.balance;
 
@@ -450,9 +450,9 @@ export function PlayerProfileClient({
                 <PlayerDepositButton
                   playerName={current.player.username}
                   brandName={current.player.tenant.name}
-                  onDeposited={() => {
-                    // 充值到账后广播一次：大厅顶栏（若已打开）同步刷新余额
-                    notifyPlayerWalletChanged();
+                  onDeposited={(balance) => {
+                    // 充值到账后广播余额：大厅顶栏（若已打开）立刻同步，不用等下一次拉取
+                    notifyPlayerWalletChanged({ balance });
                     router.refresh();
                   }}
                 />

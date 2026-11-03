@@ -266,6 +266,31 @@ export function LobbyClient({
     }
   }, []);
 
+  // 把服务端返回的权威余额落到顶栏 state（乐观展示）：
+  // 充值只会加钱、不会新增在途提现单，所以可用余额可以本地推算；
+  // 算完总会再拉一次 /api/player/me，以服务端账本为准覆盖（并发到账 / 在途提现都可能让推算偏）。
+  const applyWalletBalance = useCallback((balance: string) => {
+    setPlayer((current) =>
+      current
+        ? {
+            ...current,
+            balance,
+            availableBalance: availableBalanceToString(
+              balance,
+              current.pendingWithdrawalAmount,
+            ),
+          }
+        : current,
+    );
+  }, []);
+
+  // 只更新可用余额（提现 pending 不扣 Player.balance，余额本身没变）
+  const applyAvailableBalance = useCallback((availableBalance: string) => {
+    setPlayer((current) =>
+      current ? { ...current, availableBalance } : current,
+    );
+  }, []);
+
   useEffect(() => {
     // refreshPlayer 内部先 await 再 setState，属于异步回填而非同步级联渲染。
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -294,16 +319,37 @@ export function LobbyClient({
     };
   }, [refreshPlayer]);
 
-  // 玩家中心（/player/profile）里提现成功后，会广播 wallet-changed 事件：
-  // 大厅顶栏在这里重新拉一次 /api/player/me，余额立刻变成扣减后的可用余额，
-  // 不需要玩家手动刷新页面。
+  // 充值 / 提现成功后（玩家中心、充值弹窗都会广播）：
+  // 1) 广播里带了服务端刚算好的余额 → 顶栏立刻重绘，不等任何往返；
+  // 2) 再拉一次 /api/player/me，以账本为准纠正（多笔并发 / 在途提现）。
+  // 少了第 1 步，网络慢的时候就会出现「弹窗说已到账、Header 还是旧余额」。
   useEffect(
     () =>
-      subscribePlayerWalletChanged(() => {
+      subscribePlayerWalletChanged((detail) => {
+        if (detail.balance) {
+          applyWalletBalance(detail.balance);
+        } else if (detail.availableBalance) {
+          applyAvailableBalance(detail.availableBalance);
+        }
+
         void refreshPlayer();
       }),
-    [refreshPlayer],
+    [applyAvailableBalance, applyWalletBalance, refreshPlayer],
   );
+
+  // 支付商回调是**异步到账**：玩家挂着充值弹窗等 1-3 分钟时没有任何事件可订阅，
+  // 只能定时校准。只在弹窗打开期间轮询，关闭即停，不在后台空转。
+  useEffect(() => {
+    if (!playerDepositOpen) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      void refreshPlayer();
+    }, 15000);
+
+    return () => window.clearInterval(timer);
+  }, [playerDepositOpen, refreshPlayer]);
 
   // 头像下拉：点击外部或按 Esc 关闭。
   useEffect(() => {
@@ -624,18 +670,7 @@ export function LobbyClient({
   function handleDepositSuccess(balance?: string | null) {
     if (balance) {
       // 充值只是加钱，不产生在途提现单：本地先把可用余额一起抬高，避免等接口回来才变。
-      setPlayer((current) =>
-        current
-          ? {
-              ...current,
-              balance,
-              availableBalance: availableBalanceToString(
-                balance,
-                current.pendingWithdrawalAmount,
-              ),
-            }
-          : current,
-      );
+      applyWalletBalance(balance);
     }
 
     // 但本地值只是「乐观展示」：接口回传的是这笔充值后的余额，若同时还有别的

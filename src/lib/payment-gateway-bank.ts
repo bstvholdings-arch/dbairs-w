@@ -96,6 +96,27 @@ export const GATEWAY_BANK_DETAIL_FIELDS: readonly GatewayBankDetailField[] = [
   },
 ];
 
+/**
+ * 玩家端收银台的展示顺序：**收款银行 → 账户名 → 账号**，然后是
+ * IBAN / SWIFT / PayID / 路由号 / 备注 / 补充说明。
+ *
+ * 玩家真正要抄的就是前三个，所以固定排最上面；没填的字段自动隐藏
+ * （不同国家用不上同一套字段）。大厅充值弹窗与玩家中心充值弹窗共用这一份顺序，
+ * 不要在组件里各自写一遍映射 —— 后台表单顺序（GATEWAY_BANK_DETAIL_FIELDS）
+ * 是按「录入习惯」排的，和玩家端要看的顺序不是一回事。
+ */
+export const GATEWAY_BANK_DISPLAY_ORDER: readonly (keyof GatewayBankDetails)[] = [
+  "bankName",
+  "accountName",
+  "accountNumber",
+  "iban",
+  "swiftCode",
+  "payId",
+  "routingNumber",
+  "reference",
+  "instructions",
+];
+
 export function normalizeGatewayBankDetails(
   value: unknown,
 ): GatewayBankDetails {

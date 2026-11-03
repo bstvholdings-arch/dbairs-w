@@ -364,9 +364,11 @@ export function PlayerWithdrawModal({
         currency: data.withdrawal.currency,
         walletAddress: data.withdrawal.walletAddress,
       });
-      // 广播钱包变更：大厅顶栏等展示余额的组件会立即重新拉 /api/player/me，
-      // 余额马上变成扣减后的可用余额（含在途提现单）。
-      notifyPlayerWalletChanged();
+      // 广播钱包变更：带上服务端算好的可用余额，大厅顶栏等展示余额的组件
+      // 立刻重绘（再自行重新拉 /api/player/me 校准）。
+      // 注意传的是 availableBalance 而不是 balance：提现 pending 不扣 Player.balance，
+      // 传成 balance 会让订阅方再减一次在途提现，数字被扣两遍。
+      notifyPlayerWalletChanged({ availableBalance: data.availableBalance });
       onSubmitted(data.availableBalance ?? null);
     } catch {
       setError(t("common.networkError"));

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
+import { PaymentQrImage } from "@/components/payment-qr-image";
 import { resolveBrandName } from "@/lib/brand";
 import { formatCurrency, formatDisplayAmount } from "@/lib/currency";
 import {
@@ -14,6 +15,7 @@ import {
 import type { TFunction } from "@/lib/i18n-types";
 import {
   GATEWAY_BANK_DETAIL_FIELDS,
+  GATEWAY_BANK_DISPLAY_ORDER,
   type GatewayBankDetails,
 } from "@/lib/payment-gateway-bank";
 import type { GatewayTypeValue } from "@/lib/payment-gateway-constants";
@@ -60,6 +62,11 @@ type CreatedDeposit = {
   amount: string;
   currency: string;
   gatewayName: string;
+  /**
+   * 下单时选中的通道形态（接口也会回传，取不到就回落到下拉框里选中的那条）。
+   * 决定「展示银行信息」还是「展示二维码」，不能靠 amount / kind 猜。
+   */
+  gatewayType: GatewayTypeValue;
   instructions: PaymentInstructions;
   canSimulateCallback: boolean;
 };
@@ -67,12 +74,14 @@ type CreatedDeposit = {
 type CreateDepositResponse = {
   success?: boolean;
   orderNo?: string;
+  gatewayType?: GatewayTypeValue;
   order?: {
     id: string;
     orderNo?: string;
     amount: string;
     currency: string;
     gatewayName: string;
+    gatewayType?: GatewayTypeValue;
   };
   paymentInstructions?: PaymentInstructions;
   canSimulateCallback?: boolean;
@@ -110,13 +119,19 @@ function formatMoney(value: string, currency: string) {
   return formatCurrency(value, currency, { maximumFractionDigits: 6 });
 }
 
+/**
+ * 银行转账信息的展示行：按 GATEWAY_BANK_DISPLAY_ORDER（收款银行 → 账户名 → 账号
+ * → IBAN / SWIFT / PayID…）排列，没填的字段自动隐藏，不会出现一堆「—」。
+ */
 function bankRows(details: GatewayBankDetails, t: TFunction) {
-  return GATEWAY_BANK_DETAIL_FIELDS.map((field) => ({
-    key: field.key,
-    label: t(GATEWAY_BANK_FIELD_LABEL_KEYS[field.key]),
-    value: details[field.key].trim(),
-    multiline: Boolean(field.multiline),
-  })).filter((field) => Boolean(field.value));
+  return GATEWAY_BANK_DISPLAY_ORDER.map((key) => ({
+    key,
+    label: t(GATEWAY_BANK_FIELD_LABEL_KEYS[key]),
+    value: details[key].trim(),
+    multiline: Boolean(
+      GATEWAY_BANK_DETAIL_FIELDS.find((field) => field.key === key)?.multiline,
+    ),
+  })).filter((row) => Boolean(row.value));
 }
 
 /**
@@ -268,6 +283,15 @@ export function PlayerDepositModal({
     gateways.find((gateway) => gateway.id === gatewayId) ?? null;
   const currency = selectedGateway?.currency ?? "USDT";
 
+  // 订单形态只看「下单时选中的通道」（接口回传优先）：银行转账绝不渲染二维码，
+  // 静态收款图才渲染图片，跳转支付只给按钮。不要用 kind / 币种去反推。
+  const orderGatewayType = created?.gatewayType ?? null;
+  const isBankTransferOrder = orderGatewayType === "BANK_TRANSFER";
+  const isStaticQrOrder = orderGatewayType === "STATIC_QR";
+  const bankDetailRows = created?.instructions.bankDetails
+    ? bankRows(created.instructions.bankDetails, t)
+    : [];
+
   async function copyToClipboard(key: string, value: string) {
     try {
       await navigator.clipboard.writeText(value);
@@ -339,6 +363,12 @@ export function PlayerDepositModal({
         amount: data.order.amount,
         currency: data.order.currency,
         gatewayName: data.order.gatewayName,
+        // 接口回传优先；老接口没这个字段时用当前选中的通道（下单用的就是它）
+        gatewayType:
+          data.gatewayType ??
+          data.order.gatewayType ??
+          selectedGateway?.gatewayType ??
+          "STATIC_QR",
         canSimulateCallback: Boolean(data.canSimulateCallback),
         instructions: instructions ?? {
           kind: "FIAT",
@@ -391,11 +421,11 @@ export function PlayerDepositModal({
       onDeposited?.(balance);
 
       // 上分是「服务端事务已提交」的既成事实，这里必须把余额同步做全：
-      // 1) 广播 dbairs:player-wallet-changed —— 大厅顶栏等自己持有余额 state 的组件
-      //    收到后立刻重新拉 /api/player/me（Server Component 刷新改不动它们）；
+      // 1) 广播 dbairs:player-wallet-changed **并带上服务端刚算好的余额** —— 大厅顶栏
+      //    等自己持有余额 state 的组件收到后立刻重绘（不等网络往返），再自行校准；
       // 2) router.refresh() —— 让玩家中心 / 大厅首屏这些 Server Component 重新取数。
       // 少了任何一步都会出现「弹窗说已到账、顶部 Header 还是旧余额」。
-      notifyPlayerWalletChanged();
+      notifyPlayerWalletChanged({ balance });
       router.refresh();
     } catch {
       setError(t("common.networkError"));
@@ -521,7 +551,52 @@ export function PlayerDepositModal({
                 </span>
               </div>
 
-              {created.instructions.kind === "CRYPTO" ? (
+              {isBankTransferOrder ? (
+                /* 银行转账：只给收款信息，**任何情况下都不渲染二维码** */
+                <div className="mt-3 rounded-xl border border-[#d4af37]/20 bg-black/40 px-4 py-3">
+                  {bankDetailRows.length > 0 ? (
+                    <>
+                      <p className="text-[10px] uppercase tracking-[0.16em] text-neutral-600">
+                        {t("player.deposit.bankTitle")}
+                      </p>
+                      <p className="mt-1 text-[11px] leading-5 text-[#e8cf8a]">
+                        {t("player.deposit.bankInstruction")}
+                      </p>
+                      <dl className="mt-2 space-y-2">
+                        {bankDetailRows.map((row) => (
+                          <div
+                            key={row.key}
+                            className="flex items-start justify-between gap-2"
+                          >
+                            <dt className="w-24 shrink-0 text-[10px] leading-5 text-neutral-600">
+                              {row.label}
+                            </dt>
+                            <dd
+                              className={`min-w-0 flex-1 break-all font-mono text-[11px] leading-5 text-neutral-200 ${
+                                row.multiline ? "whitespace-pre-wrap" : ""
+                              }`}
+                            >
+                              {row.value}
+                            </dd>
+                            {/* 每一行都有【一键复制】：账号 / 户名都是长串，手抄必错 */}
+                            {copyButton(`bank-${row.key}`, row.value)}
+                          </div>
+                        ))}
+                      </dl>
+                      <p className="mt-2 text-[10px] leading-4 text-neutral-600">
+                        {t("player.deposit.bankHint", {
+                          orderNo: created.orderNo,
+                        })}
+                      </p>
+                    </>
+                  ) : (
+                    /* 后台配成「银行转账」却没填账号：绝不渲染空白卡片，直接引导找客服 */
+                    <p className="text-center text-[11px] leading-5 text-[#e8cf8a]">
+                      {t("player.deposit.bankMissing")}
+                    </p>
+                  )}
+                </div>
+              ) : created.instructions.kind === "CRYPTO" ? (
                 <div className="mt-3 rounded-xl border border-[#d4af37]/20 bg-black/40 px-4 py-3">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[10px] uppercase tracking-[0.16em] text-neutral-600">
@@ -560,52 +635,27 @@ export function PlayerDepositModal({
                 </div>
               ) : (
                 <div className="mt-3 space-y-3">
-                  {created.instructions.bankDetails ? (
-                    <div className="rounded-xl border border-[#d4af37]/20 bg-black/40 px-4 py-3">
-                      <p className="text-[10px] uppercase tracking-[0.16em] text-neutral-600">
-                        {t("player.deposit.bankTitle")}
-                      </p>
-                      <dl className="mt-2 space-y-2">
-                        {bankRows(created.instructions.bankDetails, t).map(
-                          (row) => (
-                            <div
-                              key={row.key}
-                              className="flex items-start justify-between gap-2"
-                            >
-                              <dt className="w-24 shrink-0 text-[10px] leading-5 text-neutral-600">
-                                {row.label}
-                              </dt>
-                              <dd
-                                className={`min-w-0 flex-1 break-all font-mono text-[11px] leading-5 text-neutral-200 ${
-                                  row.multiline ? "whitespace-pre-wrap" : ""
-                                }`}
-                              >
-                                {row.value}
-                              </dd>
-                              {copyButton(`bank-${row.key}`, row.value)}
-                            </div>
-                          ),
-                        )}
-                      </dl>
-                      <p className="mt-2 text-[10px] leading-4 text-neutral-600">
-                        {t("player.deposit.bankHint", {
-                          orderNo: created.orderNo,
-                        })}
-                      </p>
-                    </div>
-                  ) : null}
-
-                  {created.instructions.qrCodeImageUrl ? (
+                  {/*
+                    静态收款图（TNG / DuitNow…）：走 PaymentQrImage 统一兜底 ——
+                    URL 为空或图 404 / 被墙时显示黑金占位框，绝不出现浏览器裂图。
+                    跳转支付（REDIRECT_URL）没有二维码，只给按钮。
+                  */}
+                  {isStaticQrOrder ||
+                  created.instructions.qrCodeImageUrl ||
+                  !created.instructions.paymentUrl ? (
                     <div className="rounded-xl border border-[#d4af37]/20 bg-black/40 px-4 py-3 text-center">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
+                      <PaymentQrImage
                         src={created.instructions.qrCodeImageUrl}
                         alt={t("player.deposit.staticQrHint")}
-                        className="mx-auto max-h-56 w-auto rounded-lg bg-white p-2"
+                        missingText={t("player.deposit.qrMissing")}
+                        frameClassName="flex justify-center rounded-lg bg-white p-2"
+                        imageClassName="max-h-56 w-auto rounded-lg object-contain"
                       />
-                      <p className="mt-2 text-[10px] text-neutral-600">
-                        {t("player.deposit.staticQrHint")}
-                      </p>
+                      {isStaticQrOrder ? (
+                        <p className="mt-2 text-[10px] text-neutral-600">
+                          {t("player.deposit.staticQrHint")}
+                        </p>
+                      ) : null}
                     </div>
                   ) : null}
 

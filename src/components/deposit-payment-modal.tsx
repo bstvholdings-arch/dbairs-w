@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useId, useState, type FormEvent } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
+import { PaymentQrImage } from "@/components/payment-qr-image";
 import { resolveBrandName } from "@/lib/brand";
 import { formatCurrency } from "@/lib/currency";
 import {
@@ -15,6 +16,7 @@ import {
 import type { TFunction } from "@/lib/i18n-types";
 import {
   GATEWAY_BANK_DETAIL_FIELDS,
+  GATEWAY_BANK_DISPLAY_ORDER,
   hasAnyGatewayBankDetail,
   type GatewayBankDetails,
 } from "@/lib/payment-gateway-bank";
@@ -90,12 +92,18 @@ function gatewayTypeLabel(gatewayType: GatewayTypeValue, t: TFunction) {
   return key ? t(key) : gatewayType;
 }
 
+/**
+ * 银行转账信息展示行：按 GATEWAY_BANK_DISPLAY_ORDER（收款银行 → 账户名 → 账号
+ * → IBAN / SWIFT / PayID…）排列，与大厅充值弹窗共用同一份顺序；空字段自动隐藏。
+ */
 function bankDetailRows(details: GatewayBankDetails, t: TFunction) {
-  return GATEWAY_BANK_DETAIL_FIELDS.map((field) => ({
-    key: field.key,
-    label: t(GATEWAY_BANK_FIELD_LABEL_KEYS[field.key]),
-    value: details[field.key].trim(),
-    multiline: Boolean(field.multiline),
+  return GATEWAY_BANK_DISPLAY_ORDER.map((key) => ({
+    key,
+    label: t(GATEWAY_BANK_FIELD_LABEL_KEYS[key]),
+    value: details[key].trim(),
+    multiline: Boolean(
+      GATEWAY_BANK_DETAIL_FIELDS.find((field) => field.key === key)?.multiline,
+    ),
   })).filter((field) => Boolean(field.value));
 }
 
@@ -412,8 +420,9 @@ export function DepositPaymentModal({
       );
 
       // 到账已落库：广播给所有自己持有余额 state 的组件（大厅顶栏 / 玩家中心），
-      // 再让 Server Component 重新取数，避免「提示已到账、Header 余额还是旧的」。
-      notifyPlayerWalletChanged();
+      // 并把服务端刚返回的余额一起带过去 —— 订阅方不用等任何网络往返就能重绘；
+      // 再让 Server Component 重新取数。避免「提示已到账、Header 余额还是旧的」。
+      notifyPlayerWalletChanged({ balance: data.balance });
       router.refresh();
 
       onDepositSuccess?.(data.balance);
@@ -529,15 +538,15 @@ export function DepositPaymentModal({
               </div>
 
               {isStaticQrOrder ? (
-                <div className="mt-4 flex justify-center rounded-2xl border border-[#d4af37]/15 bg-white p-3">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={qrCodeImageUrl}
-                    alt={t("deposit.imageAlt.staticQr")}
-                    draggable={false}
-                    className="max-h-[260px] w-full max-w-[260px] rounded-lg object-contain"
-                  />
-                </div>
+                /* 静态收款图：走 PaymentQrImage 统一兜底 ——
+                   URL 为空 / 图 404 / 图床被墙时显示黑金占位框，绝不出现裂图 */
+                <PaymentQrImage
+                  src={qrCodeImageUrl}
+                  alt={t("deposit.imageAlt.staticQr")}
+                  missingText={t("deposit.qrMissing")}
+                  frameClassName="mt-4 flex justify-center rounded-2xl border border-[#d4af37]/15 bg-white p-3"
+                  imageClassName="max-h-[260px] w-full max-w-[260px] rounded-lg object-contain"
+                />
               ) : isDynamicQrOrder ? (
                 <div className="mt-4 flex justify-center rounded-2xl border border-[#d4af37]/15 bg-white p-4">
                   <QRCodeSVG
@@ -666,6 +675,11 @@ export function DepositPaymentModal({
                     {t("deposit.bankNote")}
                   </p>
                 </div>
+              ) : isBankOrder ? (
+                /* 后台把通道配成「银行转账」却没填账号：绝不渲染空白卡片，直接引导找客服 */
+                <p className="mt-4 rounded-xl border border-[#d4af37]/20 bg-[#d4af37]/[0.04] px-3.5 py-3 text-center text-[11px] leading-5 text-[#e8cf8a]">
+                  {t("deposit.bankMissing")}
+                </p>
               ) : null}
 
 
