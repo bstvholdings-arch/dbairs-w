@@ -9,6 +9,7 @@ import {
   useState,
   type FormEvent,
 } from "react";
+import { createPortal } from "react-dom";
 
 import { useLanguage } from "@/components/LanguageProvider";
 import {
@@ -16,7 +17,7 @@ import {
   GAME_CARD_STYLES,
   GAME_CARD_STYLE_ORDER,
   GAME_CARD_STYLE_PREVIEW_PATH,
-  type GameCardStyleId,
+  normalizeGameCardStyle,
 } from "@/lib/game-card-styles";
 import { isValidTenantAdminEmail } from "@/lib/tenant-admin-email";
 
@@ -80,8 +81,10 @@ export function TenantFormModal({
   const [copied, setCopied] = useState(false);
   const [savedDone, setSavedDone] = useState(false);
 
-  // 当前选中的封面风格（下拉框下方的配色示意与说明都用它）
-  const selectedCardStyle = GAME_CARD_STYLES[form.gameCardStyle];
+  // 当前选中的封面风格（下拉框下方的配色示意与说明都用它）。
+  // 走 normalizeGameCardStyle 兜底：万一数据脏了也只会退回赛博霓虹，不会白屏。
+  const selectedCardStyle =
+    GAME_CARD_STYLES[normalizeGameCardStyle(form.gameCardStyle)];
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -181,7 +184,7 @@ export function TenantFormModal({
             adminEmail,
             withdrawalRequiredApprovals: form.withdrawalRequiredApprovals,
             // 游戏封面风格：只有这里能写（商户后台与装修页均无入口）
-            gameCardStyle: form.gameCardStyle,
+            gameCardStyle: normalizeGameCardStyle(form.gameCardStyle),
             // 新建租户一律为 active（后端默认值），只有编辑时才提交状态。
             ...(mode === "edit" ? { status: form.status } : {}),
           }),
@@ -247,8 +250,16 @@ export function TenantFormModal({
     }
   }
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-8">
+  // 弹窗通过 portal 挂到 document.body。
+  // 后台布局里有 sticky 头部与滚动容器，只要有一个祖先元素带 transform / filter /
+  // backdrop-blur（会生成 containing block），直接 fixed 的弹窗就会被裁切、或被
+  // 后绘制出来的元素盖住，表现形式就是「弹窗里的下拉框点不动」。
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center px-4 py-8">
       <button
         type="button"
         aria-label={t("tenants.form.backdropAria")}
@@ -466,49 +477,99 @@ export function TenantFormModal({
               <div
                 className="rounded-xl border border-white/[0.08] bg-white/[0.015] p-3.5"
                 data-tenant-game-card-style
+                data-game-card-style-selected={normalizeGameCardStyle(
+                  form.gameCardStyle,
+                )}
               >
-                <label className="block">
+                <div className="flex items-center justify-between gap-2">
                   <span className="text-[10px] uppercase tracking-[0.16em] text-neutral-600">
                     {t("tenants.form.gameCardStyle")}
                   </span>
-                  <select
-                    value={form.gameCardStyle}
-                    onChange={(event) =>
-                      updateField(
-                        "gameCardStyle",
-                        event.target.value as GameCardStyleId,
-                      )
-                    }
-                    className="mt-1.5 h-10 w-full rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-neutral-200 outline-none transition-colors focus:border-[#d4af37]/50 focus:ring-1 focus:ring-[#d4af37]/30"
+                  <span
+                    className="text-[10px] text-[#f0d27c]"
+                    data-game-card-style-current
                   >
-                    {GAME_CARD_STYLE_ORDER.map((id) => (
-                      <option key={id} value={id} className="bg-[#0a0a0a]">
-                        {t(GAME_CARD_STYLES[id].labelKey)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                {/* 当前风格的配色示意：颜色与前台卡片同源（GAME_CARD_STYLES.swatch） */}
-                <div className="mt-2 flex items-center gap-2">
-                  <span className="flex shrink-0 gap-1" aria-hidden="true">
-                    {[
-                      selectedCardStyle.swatch.frame,
-                      selectedCardStyle.swatch.glow,
-                      selectedCardStyle.swatch.rim,
-                      selectedCardStyle.swatch.ink,
-                    ].map((color, index) => (
-                      <span
-                        key={`${color}-${index}`}
-                        className="h-4 w-4 rounded-full border border-white/10"
-                        style={{ backgroundColor: color }}
-                      />
-                    ))}
+                    {t(selectedCardStyle.labelKey)}
                   </span>
-                  <p className="text-[10px] leading-4 text-neutral-500">
-                    {t(selectedCardStyle.hintKey)}
-                  </p>
                 </div>
+
+                {/*
+                  3 种风格用「单选卡片」而不是原生 <select>：
+                  - 原生下拉需要浏览器弹层，弹层被上层元素遮挡 / 被 portal 裁切时
+                    表现就是「点了没反应」，且展开后看不到配色；
+                  - 单选卡片常显 4 个色点（与前台卡片同源 token），点一下立即高亮 +
+                    下方说明实时变化，选择结果一眼可见；
+                  - 用真实 <input type="radio">：鼠标、触屏、键盘（方向键）都能切换，
+                    onChange 由浏览器保证触发，不依赖自定义弹层。
+                */}
+                <div
+                  role="radiogroup"
+                  aria-label={t("tenants.form.gameCardStyle")}
+                  className="mt-2 grid gap-2 sm:grid-cols-3"
+                >
+                  {GAME_CARD_STYLE_ORDER.map((id) => {
+                    const option = GAME_CARD_STYLES[id];
+                    const active =
+                      normalizeGameCardStyle(form.gameCardStyle) === id;
+
+                    return (
+                      <label
+                        key={id}
+                        data-game-card-style-option={id}
+                        data-game-card-style-active={active ? "true" : "false"}
+                        className={`flex cursor-pointer flex-col gap-1.5 rounded-lg border p-2.5 transition-colors has-[:focus-visible]:ring-1 has-[:focus-visible]:ring-[#d4af37]/60 ${
+                          active
+                            ? "border-[#d4af37]/60 bg-[#d4af37]/[0.08]"
+                            : "border-white/[0.08] bg-black/30 hover:border-white/20"
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="gameCardStyle"
+                          value={id}
+                          checked={active}
+                          onChange={() => updateField("gameCardStyle", id)}
+                          className="sr-only"
+                        />
+                        <span
+                          className="flex items-center gap-1"
+                          aria-hidden="true"
+                        >
+                          {[
+                            option.swatch.frame,
+                            option.swatch.glow,
+                            option.swatch.rim,
+                            option.swatch.ink,
+                          ].map((color, index) => (
+                            <span
+                              key={`${id}-${color}-${index}`}
+                              className="h-3.5 w-3.5 rounded-full border border-white/15"
+                              style={{ backgroundColor: color }}
+                            />
+                          ))}
+                          <span
+                            className={`ml-auto text-[10px] ${active ? "text-[#f0d27c]" : "text-transparent"}`}
+                          >
+                            ✓
+                          </span>
+                        </span>
+                        <span
+                          className={`text-[11px] leading-4 ${active ? "font-semibold text-[#f0d27c]" : "text-neutral-400"}`}
+                        >
+                          {t(option.labelKey)}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+
+                {/* 选中风格的说明：跟在单选卡片下面实时变化 */}
+                <p
+                  className="mt-2 text-[10px] leading-4 text-neutral-500"
+                  data-game-card-style-hint
+                >
+                  {t(selectedCardStyle.hintKey)}
+                </p>
 
                 <p className="mt-1.5 text-[10px] leading-4 text-neutral-600">
                   {t("tenants.form.gameCardStyleHint")}
@@ -607,7 +668,8 @@ export function TenantFormModal({
           </div>
         </form>
       </section>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

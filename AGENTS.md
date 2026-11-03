@@ -45,6 +45,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - **禁止**为某个风格复制一份 `GameCard`，也禁止在组件里写 `if (style === "...")` 分支堆样式：加 / 改风格 = 改那一张 token 表。
 - 风格只管卡片视觉（底色 / 边框 / 光效 / 文字色 / 扫光 / 徽章配色）；整站主色仍只由 `Tenant.themeColor` 决定，排版仍只由 `layoutConfig.preset` 决定，数据与交互（在线人数跳动、点开游戏）一份。
 - 存储：`Tenant.layoutConfig.gameCardStyle`（JSON 内字段，无需迁移）；脏数据 / 老租户缺字段回落 `cyberNeon`（= 改造前外观）。
+- 弹窗里用 **3 张单选卡片**（真实 `<input type="radio">` + 常显色点）而不是原生 `<select>`：原生下拉依赖浏览器弹层，弹层被上层元素遮挡 / 弹窗被祖先 `transform` 裁切时表现为「点了没反应」，且失焦即关、看不到配色。弹窗本身走 `createPortal` 挂到 `document.body`，不要改回直接 `fixed` 渲染。
 - **配置权限已收回平台（不可回退）**：唯一写入口是超管【租户管理 → 新建 / 编辑租户】弹窗的下拉（`POST /api/tenants`、`PUT /api/tenants/[id]` 的 `gameCardStyle`）。商户后台（`PATCH /api/tenant/settings` 的 `layout` patch）与装修页（`PUT /api/admin/storefront`）**必须显式忽略该字段**，页面也只做只读展示；否则等于给商户开了绕过权限的后门。
 - 卖站阶段由 AI 销冠发 Demo：`src/lib/ai/prompts.ts` 的 `buildGameCardStylePreviewGuide()` 在销冠 System Prompt 里注入 3 个真实渲染的预览链接（`/demo/game-card-styles#cyberNeon|royalGold|candyPop`，`src/app/demo/game-card-styles/` 复用同一个 `GameCard`），并明确「选好后由平台开站时配置」。
 - 大厅 `/` 与品牌展馆 `/provider/[code]` 必须共用同一个 `StorefrontSettings.gameCardStyle`，否则玩家点进品牌馆会「换了个封面风格」。
