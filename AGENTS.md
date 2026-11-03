@@ -38,6 +38,8 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 模板只管排版（内容区宽度 / 模块间距 / 主视觉高度 / 面板圆角 / 卡片间距 / 分栏）；配色仍只由 `Tenant.themeColor` 决定，模块开关与顺序仍只由 `Tenant.layoutConfig.modules` 决定，三者不得互相耦合。
 - 分栏只在 `lg`(≥1024px) 生效，手机永远纵向堆叠；后台关掉 Hero 时必须自动退回堆叠（见 `globals.css` 里的 `:has()` 规则），不能留半列空白。
 - 模板 id 归一化必须容错：脏数据回落到 `classic`，老租户（`layoutConfig` 无 `preset`）升级后外观不变。
+- **主视觉（Hero）高度统一，不参与模板差异化**（`HERO_HEIGHT_TOKENS`：手机 220 / 平板 290 / 桌面 400px）。原因：Hero 铺的是商户自己上传的活动海报，高度一浮动，同一张图在 `compact` 与 `cinema` 下就会裁出两张完全不同的画面，运营无法「一次出图、全模板可用」。模板差异由宽度 / 间距 / 圆角 / 分栏承担。
+- **Hero 高度只能由 `globals.css` 的 `[data-hero-stage]` 给**（`clamp(200–250px)` / `clamp(240–320px)` / `clamp(350–450px)`，配 `min-height` 兜底）。组件里**禁止**再写 `h-[var(--sf-hero-h…)]` —— 两处给高度时谁生效取决于打包顺序，正是「图片忽高忽低」的来源。海报图必须是 `object-cover object-center`（等比缩放 + 居中裁剪，永不拉伸），上传处必须提示「建议 21:9 / 16:9」。
 
 ### 4.1 主题背景色：一套 GameCard + 15 组色值（永远深色底）
 

@@ -2221,6 +2221,7 @@
   "tenantPromotions.form.upload": "Upload image",
   "tenantPromotions.form.uploading": "Uploading…",
   "tenantPromotions.form.preview": "Banner image preview",
+  "tenantPromotions.form.imageHint": "Use a 21:9 or 16:9 banner image (e.g. 1920×823 / 1920×1080) so it looks its best in every layout template.",
   "tenantPromotions.form.link": "Link URL",
   "tenantPromotions.form.linkPlaceholder": "https://... or /player/register",
   "tenantPromotions.form.sort": "Sort order (lower first)",

@@ -78,11 +78,9 @@ export function PromoHeroCarousel({
       className="group relative overflow-hidden rounded-2xl border border-brand/15 bg-[#070707] shadow-[0_28px_70px_-40px_rgba(0,0,0,0.95)] sm:rounded-3xl"
       {...handlers}
     >
-      {/* 高度沿用排版模板的 --sf-hero-h* 变量：5 套模板的海拔差异照旧生效 */}
-      <div
-        className="relative h-[var(--sf-hero-h,250px)] w-full sm:h-[var(--sf-hero-h-sm,286px)] lg:h-[var(--sf-hero-h-lg,330px)]"
-        data-hero-stage
-      >
+      {/* 高度由 globals.css 的 [data-hero-stage] 统一给（clamp 夹在 200–250 / 350–450），
+          这里**不许**再写 h-[var(--sf-hero-h…)]：两处给高度必然打架，正是图片忽高忽低的来源。 */}
+      <div className="relative w-full" data-hero-stage>
         {slides.map((banner, slideIndex) => {
           const active = slideIndex === index;
           const href = banner.linkUrl?.trim()
@@ -138,7 +136,8 @@ export function PromoHeroCarousel({
                         [banner.id]: true,
                       }))
                     }
-                    className="absolute inset-0 h-full w-full object-cover"
+                    className="absolute inset-0 h-full w-full object-cover object-center"
+                    style={{ objectFit: "cover", objectPosition: "center" }}
                   />
                 )}
 

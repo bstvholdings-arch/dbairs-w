@@ -272,7 +272,7 @@ export function HeroCarousel({
       {...handlers}
     >
       <div
-        className="relative h-[var(--sf-hero-h,250px)] w-full sm:h-[var(--sf-hero-h-sm,286px)] lg:h-[var(--sf-hero-h-lg,330px)]"
+        className="relative w-full"
         data-hero-stage
       >
         {banners.map((banner, slideIndex) => {

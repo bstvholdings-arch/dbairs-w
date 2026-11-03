@@ -2221,6 +2221,7 @@
   "tenantPromotions.form.upload": "上传图片",
   "tenantPromotions.form.uploading": "上传中…",
   "tenantPromotions.form.preview": "活动图片预览",
+  "tenantPromotions.form.imageHint": "建议上传比例 21:9 或 16:9 的横幅图片（如 1920×823 / 1920×1080），以保证在任何模板下显示最佳。",
   "tenantPromotions.form.link": "跳转地址",
   "tenantPromotions.form.linkPlaceholder": "https://... 或 /player/register",
   "tenantPromotions.form.sort": "排序（越小越前）",

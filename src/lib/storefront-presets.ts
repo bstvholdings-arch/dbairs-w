@@ -49,7 +49,8 @@ export type StorefrontPresetTokens = {
   shellMaxWidth: string;
   /** 模块之间（Hero / 功能岛 / 品牌墙）的纵向间距：--sf-module-gap */
   moduleGap: string;
-  /** 主视觉高度（手机 / 平板 / 桌面）：--sf-hero-h / -sm / -lg */
+  /** 主视觉高度（手机 / 平板 / 桌面）：--sf-hero-h / -sm / -lg
+   *  所有模板共用 HERO_HEIGHT_TOKENS（见上），不要在单模板里私改。 */
   heroHeight: { base: string; sm: string; lg: string };
   /** 面板圆角（Hero / 品牌墙等大面板）：--sf-panel-radius */
   panelRadius: string;
@@ -65,9 +66,34 @@ export type StorefrontPresetDefinition = {
 };
 
 /**
+ * 主视觉（Hero）高度统一规范 —— 产品要求，不许按模板随意浮动。
+ *
+ * 为什么统一：Hero 现在铺的是后台自己上传的活动海报。高度各模板一套的话，
+ * 同一张 21:9 的图在 compact(230px) 和 cinema(440px) 下会裁出两张完全不同的画面，
+ * 运营根本没法「一次出图、全模板可用」。统一高度后，裁剪比例就只跟「屏宽」有关。
+ *
+ * 区间（globals.css 的 `[data-hero-stage]` 用 clamp 兜底，越界自动夹住）：
+ * - 手机（<640px）  ：200–250px，理想 220px
+ * - 平板（≥640px）  ：240–320px，理想 290px
+ * - 桌面（≥1024px） ：350–450px，理想 400px
+ *
+ * 模板之间的差异仍由 shellMaxWidth / moduleGap / panelRadius / gameGap / mode 承担，
+ * 所以 5 套模板看起来依旧完全不同 —— 只是主视觉那块「尺寸恒定」。
+ */
+export const HERO_HEIGHT_TOKENS = {
+  base: "220px",
+  sm: "290px",
+  lg: "400px",
+} as const;
+
+/**
  * 5 套模板。token 只有这几项是刻意克制的：
  * 越多 token 越容易做出「看起来只是换了个颜色」的假模板，
- * 现在这 6 项每一项都能让玩家一眼看出差别（宽度 / 留白 / 主视觉 / 分栏 / 圆角 / 卡片密度）。
+ * 现在这 5 项每一项都能让玩家一眼看出差别（宽度 / 留白 / 分栏 / 圆角 / 卡片密度）。
+ *
+ * 注意：主视觉高度（heroHeight）是**统一**的，不再参与模板差异化 ——
+ * 海报由商户自己上传，高度一浮动就会出现「同一张图在不同模板下裁得完全不同」，
+ * 运营没法出图。差异改由上面那 5 项承担（见 HERO_HEIGHT_TOKENS）。
  */
 export const STOREFRONT_PRESETS: Record<
   StorefrontPresetId,
@@ -81,7 +107,7 @@ export const STOREFRONT_PRESETS: Record<
       mode: "stack",
       shellMaxWidth: "1600px",
       moduleGap: "1.25rem",
-      heroHeight: { base: "250px", sm: "286px", lg: "330px" },
+      heroHeight: HERO_HEIGHT_TOKENS,
       panelRadius: "1rem",
       gameGap: "0.75rem",
     },
@@ -94,7 +120,7 @@ export const STOREFRONT_PRESETS: Record<
       mode: "stack",
       shellMaxWidth: "1780px",
       moduleGap: "1.75rem",
-      heroHeight: { base: "300px", sm: "360px", lg: "440px" },
+      heroHeight: HERO_HEIGHT_TOKENS,
       panelRadius: "1.5rem",
       gameGap: "1rem",
     },
@@ -107,7 +133,7 @@ export const STOREFRONT_PRESETS: Record<
       mode: "stack",
       shellMaxWidth: "1400px",
       moduleGap: "0.625rem",
-      heroHeight: { base: "190px", sm: "210px", lg: "230px" },
+      heroHeight: HERO_HEIGHT_TOKENS,
       panelRadius: "0.75rem",
       gameGap: "0.5rem",
     },
@@ -120,7 +146,7 @@ export const STOREFRONT_PRESETS: Record<
       mode: "bento",
       shellMaxWidth: "1520px",
       moduleGap: "1rem",
-      heroHeight: { base: "240px", sm: "270px", lg: "300px" },
+      heroHeight: HERO_HEIGHT_TOKENS,
       panelRadius: "1.25rem",
       gameGap: "0.75rem",
     },
@@ -133,7 +159,7 @@ export const STOREFRONT_PRESETS: Record<
       mode: "editorial",
       shellMaxWidth: "1680px",
       moduleGap: "1.25rem",
-      heroHeight: { base: "260px", sm: "320px", lg: "380px" },
+      heroHeight: HERO_HEIGHT_TOKENS,
       panelRadius: "1.25rem",
       gameGap: "0.875rem",
     },

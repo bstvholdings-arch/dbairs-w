@@ -328,6 +328,12 @@ export function TenantPromotionFormModal({
                   />
                 </div>
               ) : null}
+
+              {/* 比例提示：大厅 Hero 在主视觉里做 object-cover 居中裁剪，
+                  21:9 / 16:9 的图在 5 套模板下都只裁掉少量边缘，竖图会被裁得很惨。 */}
+              <p className="mt-1.5 text-[10px] leading-4 text-neutral-500">
+                {t("tenantPromotions.form.imageHint")}
+              </p>
             </div>
 
             <label className="block">

@@ -686,6 +686,36 @@ button:not(:disabled):hover .withdrawal-button-sheen {
   min-width: 0;
 }
 
+/*
+ * 主视觉舞台高度（唯一事实来源）。
+ *
+ * - token（--sf-hero-h*）只作为「理想高度」被 clamp 夹住，越界自动回落到区间边界：
+ *   手机 200–250 / 平板 240–320 / 桌面 350–450（5 套模板同步，见 storefront-presets.ts
+ *   的 HERO_HEIGHT_TOKENS）；
+ * - 高度必须由这里统一给，组件里**不许**再写 `h-[var(--sf-hero-h…)]`：
+ *   两处同时给高度时谁生效取决于打包顺序，模板一多就是「图片忽高忽低」的来源；
+ * - min-height 与 height 分开写：万一 token 被写成非法值（height 变成 auto），
+ *   min-height 仍然撑住舞台，图片不会塌成 0 高。
+ */
+[data-hero-stage] {
+  min-height: 200px;
+  height: clamp(200px, var(--sf-hero-h, 220px), 250px);
+}
+
+@media (min-width: 640px) {
+  [data-hero-stage] {
+    min-height: 240px;
+    height: clamp(240px, var(--sf-hero-h-sm, 290px), 320px);
+  }
+}
+
+@media (min-width: 1024px) {
+  [data-hero-stage] {
+    min-height: 350px;
+    height: clamp(350px, var(--sf-hero-h-lg, 400px), 450px);
+  }
+}
+
 @media (min-width: 1024px) {
   /* 卡片拼贴：主视觉独占一行，功能岛与品牌墙左右各占一半 */
   [data-storefront-preset="bento"]
