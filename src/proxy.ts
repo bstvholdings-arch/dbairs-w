@@ -132,6 +132,16 @@ export function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // 机器对机器接口：洗码结算定时任务（服务器 cron / Vercel Cron / GitHub Actions）。
+  // 路由内自行校验 x-cron-secret（或 Authorization: Bearer），用 timingSafeEqual 比较，
+  // **不读 Cookie、不认会话**。若不放行，外部定时任务永远拿 401「未登录」，
+  // 洗码一天都发不出去；而 401 又长得像「没配置」，容易被误判成别的问题。
+  // 白名单只登记具体路径（不写成 /api/cron/ 前缀）：新增定时任务必须在这里显式追加，
+  // 且各自路由内必须自带密钥校验，否则就等于开了匿名入口。
+  if (pathname === "/api/cron/rebate-settlement") {
+    return NextResponse.next();
+  }
+
   const token = request.cookies.get(AUTH_COOKIE)?.value;
   const session = token ? verifyToken(token) : null;
   const isApi = pathname.startsWith("/api/");
