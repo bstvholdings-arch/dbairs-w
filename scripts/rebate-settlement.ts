@@ -3,9 +3,12 @@
  *
  * 用法：
  *   npx tsx scripts/rebate-settlement.ts                       # 结算「昨天」（UTC）
- *   npx tsx scripts/rebate-settlement.ts --date=2026-11-03     # 指定某一天（补发）
- *   npx tsx scripts/rebate-settlement.ts --tenant=<租户 id>    # 只算这一家（排障）
+ *   npx tsx scripts/rebate-settlement.ts --date 2026-11-03     # 指定某一天（补发）
+ *   npx tsx scripts/rebate-settlement.ts --tenant <租户 id>    # 只算这一家（排障）
  *   npx tsx scripts/rebate-settlement.ts --dry-run             # 只算不发
+ *   `--date=<值>` / `--tenant=<值>` 也支持（等号形式等价）
+ *
+ * 注意：**不要**写 `--dry-run=true` 这类「给开关赋值」的形式，开关只认出现即生效。
  *
  * 行为：
  * - 按「商户 + 玩家 + 品类 + UTC 日界」聚合 BetRecord.betAmount，乘商户配置的费率；
@@ -25,7 +28,21 @@ import {
   settleDailyRebates,
 } from "../src/lib/rebate-settlement";
 
+/**
+ * 读 `--name value` 或 `--name=value`。
+ *
+ * 两种都支持是必须的：调用方（人 / CI / npm script）习惯哪种都有，
+ * 只认一种的话另一种会被**静默忽略**并退回默认值——`--date=2026-11-03`
+ * 被吃掉就会变成「结算昨天的全平台」，属于事故级静默失败。
+ */
 function readArg(name: string) {
+  const prefix = `--${name}=`;
+  const inline = process.argv.find((arg) => arg.startsWith(prefix));
+
+  if (inline) {
+    return inline.slice(prefix.length).trim();
+  }
+
   const index = process.argv.indexOf(`--${name}`);
 
   return index >= 0 ? (process.argv[index + 1] ?? "").trim() : "";
