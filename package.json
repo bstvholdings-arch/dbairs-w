@@ -13,6 +13,7 @@
     "ai:isolation:check": "tsx scripts/check-ai-isolation.ts",
     "db:sql": "tsx scripts/apply-sql.ts",
     "tenant:admin": "tsx scripts/create-tenant-admin.ts",
+    "rebate:settle": "tsx scripts/rebate-settlement.ts",
     "postinstall": "prisma skills sync || exit 0"
   },
   "dependencies": {

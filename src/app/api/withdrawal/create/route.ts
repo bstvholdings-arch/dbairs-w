@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { Prisma } from "@prisma/client";
 
+import { loadBonusTurnoverLock } from "@/lib/bonus-campaigns";
 import { parseWithdrawalAmount } from "@/lib/payment-gateway";
 import { resolvePaymentPlayerIdentity } from "@/lib/payment-player";
 import { KYC_REQUIRED_CODE, KYC_REQUIRED_MESSAGE } from "@/lib/kyc";
@@ -133,6 +134,23 @@ export async function POST(request: NextRequest) {
       return Response.json(
         { error: KYC_REQUIRED_MESSAGE, code: KYC_REQUIRED_CODE },
         { status: 403, headers: { "Cache-Control": "no-store" } },
+      );
+    }
+
+    // 红利流水闸门（防套利）：只要还有一条 PENDING 的红利领取记录（流水没打满），
+    // 一律禁止提现。这个闸门挂在领取记录上，所以活动停用 / 删除都绕不过它；
+    // pending 提现不冻结资金，因此必须在提单前拦住，等打完流水再来。
+    const bonusLock = await loadBonusTurnoverLock({
+      tenantId: player.tenantId,
+      playerId: player.id,
+      currency: normalizePayoutCurrency(player.tenant.currency),
+    });
+
+    if (bonusLock.pendingCount > 0) {
+      return jsonError(
+        `红利流水未打满：还需有效流水 ${bonusLock.outstanding} ${bonusLock.currency}，打满后即可提现`,
+        403,
+        "bonus_turnover_locked",
       );
     }
 

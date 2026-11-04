@@ -38,6 +38,23 @@ model Tenant {
   themeColor   String @default("#d4af37")
   layoutConfig Json?
 
+  // 洗码（返水）配置：**唯一事实来源**，商户后台 /tenant/rebates 自行维护。
+  // 形如
+  //   { "version": 1,
+  //     "categories": {
+  //       "slot": { "ratePercent": 0.5,  "isActive": true },
+  //       "live": { "ratePercent": 0.2,  "isActive": false },
+  //       "sport": { "ratePercent": 0.2, "isActive": false },
+  //       "poker": { "ratePercent": 0.2, "isActive": false },
+  //       "fish":  { "ratePercent": 0.2, "isActive": false },
+  //       "cockfight": { "ratePercent": 0.2, "isActive": false }
+  //     } }
+  // - ratePercent 是**百分比**：0.5 = 0.5%（不是 50%），与后台输入框「%」一栏一一对应；
+  // - isActive 是**每个品类独立**的总开关，false 时该品类一律不结算（哪怕 ratePercent > 0）；
+  // - 读侧一律过 src/lib/rebate-config.ts 的 normalizeRebateConfig()：
+  //   null / 脏数据 / 缺品类 → 全部品类视为「关闭 + 0 费率」（宁可少发，不可误发）。
+  rebateConfig Json?
+
   // API 集成中心（/admin/integrations）：商户对接资料
   // contactEmail：对接联系邮箱，发送 / 重置密钥时的默认收件人
   // apiCallbackUrl：商户专属回调地址，留空表示使用平台默认回调
@@ -102,6 +119,10 @@ model Tenant {
 
   promotionCategories PromotionCategory[]
   promotionBanners    PromotionBanner[]
+
+  bonusCampaigns BonusCampaign[]
+  bonusClaims    PlayerBonusClaim[]
+  rebatePayouts  RebatePayout[]
 }
 
 // 2. 套餐表 (Plan - 标准版/高阶版配置)
@@ -147,6 +168,8 @@ model Player {
   aiChatLogs      AiChatLog[]
   kyc             PlayerKyc? // 实名认证（一人一条，驳回后可重新提交覆盖）
   withdrawalAccounts PlayerWithdrawalAccount[] // 全球法币 / 加密货币提现账号（可多条，一条默认）
+  bonusClaims     PlayerBonusClaim[] // 红利领取记录（流水要求锁）
+  rebatePayouts   RebatePayout[] // 每日洗码结算记录
 
   @@unique([tenantId, username]) // 同一个站内账号唯一
   @@unique([tenantId, email]) // 同一站内邮箱唯一（NULL 不参与唯一约束）
@@ -407,6 +430,11 @@ model BetRecord {
   player     Player?      @relation(fields: [playerId], references: [id])
 
   externalId   String? // 游戏商注单号
+  // 游戏品类（slot / live / sport / poker / fish / cockfight / esport）：
+  // 回调带 gameCode 时按 [providerId, externalId=gameCode] 回查 Game.category 写入，
+  // 查不到时回落 "slot"。**洗码（返水）结算只认这一列**，
+  // 一旦写入就不再变动（历史账单不会因为游戏改品类而被重算）。
+  gameCategory String  @default("slot")
   currency     String  @default("USDT")
   betAmount    Decimal @db.Decimal(18, 6) // 总下注额
   payoutAmount Decimal @db.Decimal(18, 6) // 总派彩额
@@ -423,6 +451,7 @@ model BetRecord {
 
   @@unique([providerId, externalId]) // 防止游戏商回调重试造成重复注单
   @@index([tenantId, createdAt])
+  @@index([tenantId, gameCategory, createdAt]) // 每日洗码结算按「商户 + 品类 + 日界」聚合
   @@index([providerId, createdAt])
   @@index([playerId])
 }
@@ -722,5 +751,125 @@ model PromotionBanner {
 
   @@index([tenantId, isActive, sortOrder])
   @@index([categoryId, sortOrder])
+}
+// 22. 红利活动 (BonusCampaign)
+// 商户后台【活动红利管理】(/tenant/bonuses) 维护，玩家在前台点击领取。
+//
+// 防套利三道闸门（缺一不可，见 src/lib/bonus-campaigns.ts）：
+//   1. isActive 总开关，**默认 false**：建完活动不会自动上线，必须商户手动启用；
+//   2. 时间窗 startAt / endAt：领取时实时校验 now ∈ [startAt, endAt]，
+//      过了 endAt 即使 isActive 还是 true 也一律拒绝（= 自动下线，不需要定时任务）；
+//   3. 玩家 + 活动唯一：PlayerBonusClaim 的 @@unique([playerId, campaignId])。
+//
+// rewardAmount：奖励金额（本站记账币种）；
+// turnoverMultiplier：所需流水倍数（奖励 × 倍数 = 提现前必须打满的流水）；
+// currency：领取瞬间的 Tenant.currency 快照，事后商户改币种不会重算历史奖励。
+model BonusCampaign {
+  id                 String            @id @default(uuid())
+  tenantId           String
+  tenant             Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name               String
+  type               BonusCampaignType @default(register)
+  rewardAmount       Decimal           @db.Decimal(18, 6)
+  turnoverMultiplier Decimal           @db.Decimal(9, 2)
+  currency           String            @default("MYR")
+
+  startAt  DateTime
+  endAt    DateTime
+  isActive Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  claims PlayerBonusClaim[]
+
+  @@index([tenantId, isActive, startAt])
+  @@index([tenantId, endAt])
+  @@index([tenantId, createdAt])
+}
+
+// 22.1 红利类型
+//   register      注册彩金：玩家注册时间必须落在活动时间窗内；
+//   deposit       存款彩金：活动时间窗内至少有一笔成功充值；
+//   first_deposit 首充彩金：玩家的**第一笔**成功充值必须发生在活动时间窗内。
+enum BonusCampaignType {
+  register
+  deposit
+  first_deposit
+}
+
+
+// 23. 玩家红利领取记录 (PlayerBonusClaim)
+// 一条记录 = 一笔已发放的奖励 + 一笔待完成的流水要求，也是提现拦截的唯一依据。
+//
+// 状态机：
+//   PENDING   奖励已加进余额，流水要求还没打满 → **禁止提现**
+//   COMPLETED 流水要求已打满（下注回调里累计，见 accrueBonusTurnover）
+//
+// requiredTurnover = rewardAmount × turnoverMultiplier（领取时算好，事后改活动不影响历史）；
+// wageredTurnover  = 已经打掉的流水（只增不减，按下注金额累计）；
+// transactionId    ：对应的奖金入账流水（Transaction.type = "bonus"，唯一）。
+model PlayerBonusClaim {
+  id         String        @id @default(uuid())
+  tenantId   String
+  tenant     Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  campaignId String
+  campaign   BonusCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  playerId   String
+  player     Player        @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  rewardAmount     Decimal @db.Decimal(18, 6)
+  requiredTurnover Decimal @db.Decimal(18, 6)
+  wageredTurnover  Decimal @default(0) @db.Decimal(18, 6)
+  currency         String  @default("MYR")
+
+  status        BonusClaimStatus @default(PENDING)
+  transactionId String?          @unique
+  claimedAt     DateTime         @default(now())
+  completedAt   DateTime?
+  updatedAt     DateTime         @updatedAt
+
+  // 同一个玩家同一个活动只能领一次（并发重复点击由数据库兜住 → P2002）
+  @@unique([playerId, campaignId])
+  @@index([tenantId, status])
+  @@index([playerId, status])
+  @@index([tenantId, claimedAt])
+}
+
+enum BonusClaimStatus {
+  PENDING
+  COMPLETED
+}
+
+
+// 24. 每日洗码结算单 (RebatePayout)
+// Cron（scripts/rebate-settlement.ts 或 POST /api/cron/rebate-settlement）每天凌晨跑一次，
+// 按「商户 + 玩家 + 品类 + UTC 日界」聚合前一天的流水后发放。
+//
+// - 唯一键 @@unique([tenantId, playerId, category, periodStart]) 是**幂等闸门**：
+//   定时任务被重跑 / 补跑时命中 P2002 直接跳过，绝不会重复发钱；
+// - periodStart 存 UTC 日界（Date 类型），与 DailyBonusClaim.claimDate 同一口径；
+// - ratePercent 是**结算瞬间**的费率快照（0.5 = 0.5%），事后改费率不重算历史；
+// - transactionId 指向对应入账流水（Transaction.type = "rebate"）。
+model RebatePayout {
+  id          String   @id @default(uuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  playerId    String
+  player      Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  category    String
+  periodStart DateTime @db.Date
+
+  turnover     Decimal @db.Decimal(18, 6)
+  ratePercent  Decimal @db.Decimal(9, 4)
+  rebateAmount Decimal @db.Decimal(18, 6)
+  currency     String  @default("MYR")
+
+  transactionId String?  @unique
+  createdAt     DateTime @default(now())
+
+  @@unique([tenantId, playerId, category, periodStart])
+  @@index([tenantId, periodStart])
+  @@index([createdAt])
 }
 

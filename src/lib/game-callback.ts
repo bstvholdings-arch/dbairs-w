@@ -1,7 +1,9 @@
 import { Prisma } from "@prisma/client";
 
+import { accrueBonusTurnover } from "./bonus-campaigns";
 import { buildSettlementSnapshot } from "./ggr-settlement";
 import { prisma } from "./prisma";
+import { isRebateCategoryId } from "./rebate-config";
 
 /**
  * 游戏商回调的入账逻辑（扣钱 / 加钱 / 退款）。
@@ -137,6 +139,32 @@ function ledgerRef(providerId: string, eventId: string) {
  * 写注单快照并返回 BetRecord.id。
  * 同一局已有记录时按事件类型累加，保证 betAmount / payoutAmount / ggrAmount 三者恒等。
  */
+/**
+ * 回查注单所属品类：`Game.category`（按 [providerId, externalId=gameCode]）。
+ *
+ * 查不到 / 回调没带 gameCode / 值不在洗码品类白名单里 → 一律回落 "slot"
+ * （与 BetRecord.gameCategory 的默认值一致，结算逻辑永远拿到一个合法品类）。
+ *
+ * 只在**新建**注单时调用一次：品类一旦落库就是历史账，游戏事后改品类不重算。
+ */
+async function resolveBetRecordCategory(
+  tx: Prisma.TransactionClient,
+  input: GameSettlementInput,
+): Promise<string> {
+  const gameCode = input.gameCode?.trim();
+
+  if (!gameCode) {
+    return "slot";
+  }
+
+  const game = await tx.game.findFirst({
+    where: { providerId: input.provider.id, externalId: gameCode },
+    select: { category: true },
+  });
+
+  return isRebateCategoryId(game?.category) ? game.category : "slot";
+}
+
 async function applyBetRecord(
   tx: Prisma.TransactionClient,
   input: GameSettlementInput,
@@ -194,6 +222,9 @@ async function applyBetRecord(
       providerId: input.provider.id,
       playerId: input.playerId,
       externalId: input.roundId,
+      // 品类只在**新建**注单时写一次：每日洗码结算只认这一列，
+      // 历史账单不因游戏事后改品类而被重算。
+      gameCategory: await resolveBetRecordCategory(tx, input),
       currency: input.currency,
       betAmount: deltaBet,
       payoutAmount: deltaPayout,
@@ -284,6 +315,17 @@ export async function applyGameCallback(
         },
         select: { id: true },
       });
+
+      // 红利流水要求：只有「下注」累计流水，派彩 / 退款不重复计。
+      // 放在扣款同一事务里 —— 钱扣了流水一定记上；打满的那条当场转 COMPLETED，
+      // 提现闸门随之放行（见 /api/withdrawal/create 的 loadBonusTurnoverLock）。
+      if (input.type === "bet") {
+        await accrueBonusTurnover(tx, {
+          tenantId: input.tenantId,
+          playerId: input.playerId,
+          amount: input.amount,
+        });
+      }
 
       const player = await tx.player.findUnique({
         where: { id: input.playerId },

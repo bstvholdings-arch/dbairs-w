@@ -21,19 +21,26 @@ import { readPlayerPassword } from "@/lib/player-validation";
 import { buildStorefrontTheme } from "@/lib/storefront";
 
 import { PlayerWithdrawalAccounts } from "./player-withdrawal-accounts";
+import { PlayerBonusesPanel } from "./player-bonuses-panel";
 
 // 推广链接要展示真实域名：getSnapshot 只在客户端读到 window.location.origin，
 // 服务端快照返回空串，因此不会出现水合不一致；subscribe 无需订阅任何外部源。
 const subscribeNoop = () => () => {};
 const readBrowserOrigin = () => window.location.origin;
 
-export type PlayerProfileTab = "wallet" | "history" | "security" | "referral";
+export type PlayerProfileTab =
+  | "wallet"
+  | "bonuses"
+  | "history"
+  | "security"
+  | "referral";
 
 export const PLAYER_PROFILE_TABS: {
   id: PlayerProfileTab;
   labelKey: TranslationKey;
 }[] = [
   { id: "wallet", labelKey: "player.profile.tabs.wallet" },
+  { id: "bonuses", labelKey: "player.profile.tabs.bonuses" },
   { id: "history", labelKey: "player.profile.tabs.history" },
   { id: "security", labelKey: "player.profile.tabs.security" },
   { id: "referral", labelKey: "player.profile.tabs.referral" },
@@ -46,6 +53,8 @@ const TRANSACTION_TYPE_KEYS: Record<string, TranslationKey> = {
   win: "player.wallet.type.win",
   referral: "player.wallet.type.referral",
   daily_bonus: "player.wallet.type.daily_bonus",
+  // 红利领取写的是 Transaction(type="bonus")，不映射就会在流水表里露出英文原始值
+  bonus: "player.wallet.type.bonus",
 };
 
 const STATUS_KEYS: Record<string, TranslationKey> = {
@@ -752,6 +761,34 @@ export function PlayerProfileClient({
                 </SectionCard>
               </div>
             </div>
+          ) : null}
+
+          {tab === "bonuses" ? (
+            <PlayerBonusesPanel
+              currency={walletCurrency}
+              onClaimed={({ balance, amount }) => {
+                // 红利到账：钱包余额 / 累计奖励立刻更新，同时广播给大厅顶栏等订阅方
+                notifyPlayerWalletChanged({ balance });
+                setCurrent((prev) => {
+                  const nextBalance = balance ?? prev.summary.balance;
+
+                  return {
+                    ...prev,
+                    summary: {
+                      ...prev.summary,
+                      balance: nextBalance,
+                      // 红利只是加钱，不产生在途提现单，可用余额按同一口径重算
+                      availableBalance: availableBalanceToString(
+                        nextBalance,
+                        prev.summary.pendingWithdrawalAmount,
+                      ),
+                      totalRewards: addAmount(prev.summary.totalRewards, amount),
+                    },
+                  };
+                });
+                router.refresh();
+              }}
+            />
           ) : null}
 
           {tab === "history" ? (

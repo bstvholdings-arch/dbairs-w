@@ -26,6 +26,8 @@ type NavIconName =
   | "players"
   | "kyc"
   | "promotions"
+  | "bonus"
+  | "rebate"
   | "ai"
   | "staff"
   | "integrations"
@@ -133,6 +135,18 @@ const TENANT_ADMIN_NAV: NavItem[] = [
     labelKey: "nav.tenantPromotions",
     href: "/tenant/promotions",
     icon: "promotions",
+  },
+  // 红利活动：注册 / 存款 / 首充彩金 + 流水要求（领了没打满不能提现）
+  {
+    labelKey: "nav.tenantBonuses",
+    href: "/tenant/bonuses",
+    icon: "bonus",
+  },
+  // 洗码返水：按品类配置每日返水费率，定时任务结算前一天流水
+  {
+    labelKey: "nav.tenantRebates",
+    href: "/tenant/rebates",
+    icon: "rebate",
   },
   // 支付网关：商户自行对接支付商（充值通道的唯一来源）
   {
@@ -282,6 +296,20 @@ function NavIcon({ name }: { name: NavIconName }) {
           <path d="M12 9v11" />
           <path d="M12 9C10.5 6 9.3 5 8 5a2 2 0 0 0 0 4Z" />
           <path d="M12 9c1.5-3 2.7-4 4-4a2 2 0 0 1 0 4Z" />
+        </svg>
+      );
+    case "bonus":
+      return (
+        <svg {...common}>
+          <path d="M12 3.5l2.2 4.5 4.9.7-3.5 3.4.8 4.9-4.4-2.3-4.4 2.3.8-4.9L4.9 8.7l4.9-.7Z" />
+        </svg>
+      );
+    case "rebate":
+      return (
+        <svg {...common}>
+          <path d="M19 5 5 19" />
+          <circle cx="7.6" cy="7.6" r="2.3" />
+          <circle cx="16.4" cy="16.4" r="2.3" />
         </svg>
       );
     case "preview":

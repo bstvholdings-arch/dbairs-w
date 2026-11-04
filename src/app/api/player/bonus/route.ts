@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { Prisma } from "@prisma/client";
 
+import { normalizeCurrency } from "@/lib/currency";
 import { getPlayerSessionFromRequest } from "@/lib/player-session";
 import { prisma } from "@/lib/prisma";
 
@@ -52,6 +53,22 @@ export async function POST(request: NextRequest) {
   const claimDate = utcStartOfToday();
 
   try {
+    /**
+     * 币种只认 `Tenant.currency`（架构红线：金额与币种唯一事实来源）。
+     * 历史实现写死 "USDT"，会让签到流水的币种与站点记账币种对不上，
+     * 财务对账时被当成跨币种入账。
+     */
+    const owner = await prisma.player.findFirst({
+      where: { id: session.id, tenantId: session.tenantId },
+      select: { tenant: { select: { currency: true } } },
+    });
+
+    if (!owner) {
+      return jsonError("unauthorized", "未登录或登录已过期", 401);
+    }
+
+    const currency = normalizeCurrency(owner.tenant.currency);
+
     const result = await prisma.$transaction(async (tx) => {
       const claim = await tx.dailyBonusClaim.create({
         data: {
@@ -59,7 +76,7 @@ export async function POST(request: NextRequest) {
           playerId: session.id,
           claimDate,
           amount,
-          currency: "USDT",
+          currency,
         },
         select: { id: true },
       });
@@ -70,7 +87,7 @@ export async function POST(request: NextRequest) {
           playerId: session.id,
           type: "daily_bonus",
           amount,
-          currency: "USDT",
+          currency,
           status: "success",
           txHash: `bonus-${claim.id}`,
         },

@@ -1246,6 +1246,16 @@ export function LobbyClient({
                       {t("lobby.account.profile")}
                       <span aria-hidden="true">›</span>
                     </Link>
+                    {/* 红利入口：玩家点进来就能看到商户在 /tenant/bonuses 配好的活动 */}
+                    <Link
+                      role="menuitem"
+                      href={withTenant("/player/profile?tab=bonuses")}
+                      onClick={() => setAccountMenuOpen(false)}
+                      className="flex items-center justify-between rounded-lg px-3 py-2 text-[11px] text-neutral-300 transition-colors hover:bg-brand/10 hover:text-brand-pale"
+                    >
+                      {t("player.profile.tabs.bonuses")}
+                      <span aria-hidden="true">›</span>
+                    </Link>
                     <Link
                       role="menuitem"
                       href={withTenant("/player/profile?tab=referral")}

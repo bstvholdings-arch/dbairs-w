@@ -31,7 +31,13 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export const instant = false;
 
-const TABS: PlayerProfileTab[] = ["wallet", "history", "security", "referral"];
+const TABS: PlayerProfileTab[] = [
+  "wallet",
+  "bonuses",
+  "history",
+  "security",
+  "referral",
+];
 
 function readParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
