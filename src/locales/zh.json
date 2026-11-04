@@ -1604,6 +1604,8 @@
   "player.wallet.type.referral": "推广返佣",
   "player.wallet.type.daily_bonus": "每日奖励",
   "player.wallet.type.bonus": "红利彩金",
+  "player.wallet.type.rebate": "洗码返水",
+  "player.wallet.type.refund": "投注退回",
   "player.wallet.status.pending": "处理中",
   "player.wallet.status.success": "成功",
   "player.wallet.status.approved": "已通过",

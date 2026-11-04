@@ -1604,6 +1604,8 @@
   "player.wallet.type.referral": "Referral reward",
   "player.wallet.type.daily_bonus": "Daily bonus",
   "player.wallet.type.bonus": "Bonus credit",
+  "player.wallet.type.rebate": "Rebate",
+  "player.wallet.type.refund": "Bet refund",
   "player.wallet.status.pending": "Pending",
   "player.wallet.status.success": "Success",
   "player.wallet.status.approved": "Approved",

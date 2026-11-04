@@ -55,6 +55,10 @@ const TRANSACTION_TYPE_KEYS: Record<string, TranslationKey> = {
   daily_bonus: "player.wallet.type.daily_bonus",
   // 红利领取写的是 Transaction(type="bonus")，不映射就会在流水表里露出英文原始值
   bonus: "player.wallet.type.bonus",
+  // 洗码结算写的是 Transaction(type="rebate")，同理不能露出原值
+  rebate: "player.wallet.type.rebate",
+  // 游戏商退款回调写的是 Transaction(type="refund")
+  refund: "player.wallet.type.refund",
 };
 
 const STATUS_KEYS: Record<string, TranslationKey> = {
