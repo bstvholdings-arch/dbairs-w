@@ -3,6 +3,7 @@ import { connection } from "next/server";
 import { formatAmount, toNumber } from "@/lib/format";
 import { calculateGgr } from "@/lib/ggr-settlement";
 import { prisma } from "@/lib/prisma";
+import { inFlightWithdrawalStatusList } from "@/lib/withdrawal-status";
 
 import { AdminDashboardView } from "./dashboard-client";
 
@@ -41,9 +42,11 @@ export default async function AdminDashboardPage() {
       where: { type: "win", status: "success" },
       _sum: { amount: true },
     }),
-    prisma.withdrawal.count({ where: { status: "pending" } }),
+    prisma.withdrawal.count({
+      where: { status: { in: inFlightWithdrawalStatusList() } },
+    }),
     prisma.withdrawal.aggregate({
-      where: { status: "pending" },
+      where: { status: { in: inFlightWithdrawalStatusList() } },
       _sum: { amount: true },
     }),
     prisma.tenant.findMany({

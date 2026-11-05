@@ -2,6 +2,7 @@ import { Prisma, type KycStatus } from "@prisma/client";
 import { cookies } from "next/headers";
 import type { NextRequest } from "next/server";
 
+import { normalizeCurrency } from "./currency";
 import { toNumber } from "./format";
 import {
   IMPERSONATION_COOKIE,
@@ -30,6 +31,16 @@ import {
   findBackupDomainConflict,
 } from "./tenant-domain-service";
 import { readBackupDomainsInput } from "./tenant-domains";
+import { maskWithdrawalDestination } from "./withdrawal-accounts";
+import {
+  markWithdrawalFailed,
+  settleWithdrawalSuccess,
+} from "./withdrawal-settlement";
+import {
+  WITHDRAWAL_STATUS_PENDING,
+  WITHDRAWAL_STATUS_PROCESSING,
+  inFlightWithdrawalStatusList,
+} from "./withdrawal-status";
 
 /**
  * 商户后台（Tenant Dashboard）的数据访问层。
@@ -299,7 +310,8 @@ export async function loadTenantOverview(
       _sum: { betAmount: true, payoutAmount: true, ggrAmount: true },
     }),
     prisma.withdrawal.aggregate({
-      where: { tenantId, status: "pending" },
+      // 在途口径：pending（人工待审）+ processing（自动出款中），两种都还没扣余额
+      where: { tenantId, status: { in: inFlightWithdrawalStatusList() } },
       _sum: { amount: true },
       _count: { _all: true },
     }),
@@ -698,6 +710,8 @@ export type TenantFinanceRow = {
 };
 
 export type TenantFinancePage = {
+  /** 本站记账币种（`Tenant.currency`），金额展示一律用它走 formatDisplayAmount */
+  currency: string;
   kind: TenantFinanceKind;
   items: TenantFinanceRow[];
   total: number;
@@ -737,6 +751,16 @@ async function summarizeMoneyGroups(
  * 因此同一条 where 既用于列表、计数，也用于汇总，不会出现「列表隔离了、
  * 汇总却统计了全平台」这类漏洞。
  */
+/** 后台金额展示用的记账币种（脏数据 / 缺租户一律回落 DEFAULT_CURRENCY，绝不返回空串）。 */
+async function loadTenantCurrency(tenantId: string): Promise<string> {
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { currency: true },
+  });
+
+  return normalizeCurrency(tenant?.currency);
+}
+
 export async function loadTenantFinance(input: {
   tenantId: string;
   kind?: unknown;
@@ -744,6 +768,8 @@ export async function loadTenantFinance(input: {
   pageSize?: unknown;
 }): Promise<TenantFinancePage> {
   const kind = isTenantFinanceKind(input.kind) ? input.kind : "deposit";
+  // 金额符号只能来自本站记账币种，禁止在组件里写死 $
+  const currency = await loadTenantCurrency(input.tenantId);
   const { page, pageSize, skip } = normalizePaging(input);
   const tenantId = input.tenantId;
 
@@ -775,6 +801,7 @@ export async function loadTenantFinance(input: {
     ]);
 
     return {
+      currency,
       kind,
       items: items.map((item) => ({
         id: item.id,
@@ -821,6 +848,7 @@ export async function loadTenantFinance(input: {
   ]);
 
   return {
+    currency,
     kind,
     items: items.map((item) => ({
       id: item.id,
@@ -840,6 +868,329 @@ export async function loadTenantFinance(input: {
   };
 }
 
+
+/* ------------------------------------------------------------------ *
+ * 提现审批（商户端）
+ *
+ * 商户就是出款方，所以审批必须落在商户后台；口径与代付商回调完全一致，
+ * 两条路径共用同一套 CAS 状态迁移，绝不会把同一笔钱扣两次。
+ * ------------------------------------------------------------------ */
+
+/** 待审批列表一次最多取多少条（正常不会过百，留个上限防止极端数据把页面撑爆） */
+const PENDING_WITHDRAWAL_LIMIT = 200;
+/** 审批台下方「最近已处理」条数 */
+const RECENT_WITHDRAWAL_LIMIT = 10;
+
+const WITHDRAWAL_SELECT = {
+  id: true,
+  amount: true,
+  currency: true,
+  status: true,
+  /** 智能路由原因快照（为什么这单自动 / 为什么转人工） */
+  riskStatus: true,
+  /** 是否走过自动出款 */
+  isAuto: true,
+  walletAddress: true,
+  createdAt: true,
+  processedAt: true,
+  player: { select: { username: true } },
+  gateway: { select: { name: true } },
+} satisfies Prisma.WithdrawalSelect;
+
+type WithdrawalRowPayload = Prisma.WithdrawalGetPayload<{
+  select: typeof WITHDRAWAL_SELECT;
+}>;
+
+export type TenantWithdrawalRow = {
+  id: string;
+  playerName: string | null;
+  amount: number;
+  currency: string;
+  status: string;
+  /** 路由原因：auto_queued / auto_paid / auto_payout_failed / manual_* */
+  riskStatus: string | null;
+  /** 是否走了自动出款通道 */
+  isAuto: boolean;
+  /** 收款账号（已掩码：银行账号只留后 4 位） */
+  account: string;
+  gatewayName: string | null;
+  createdAt: string;
+  processedAt: string | null;
+};
+
+export type TenantWithdrawalBoard = {
+  /** 本站记账币种，前端金额符号只能用它 */
+  currency: string;
+  /** 待人工审批（pending），老单在前（积压最久的先处理） */
+  pending: TenantWithdrawalRow[];
+  pendingTotalAmount: number;
+  /**
+   * 自动出款中（processing）：已经提交给商户的代付 API，正在等结果。
+   * 不出审批按钮（自动流程还没终结，人工介入会重复出款），但要看得见。
+   */
+  processing: TenantWithdrawalRow[];
+  processingTotalAmount: number;
+  /** 最近已处理（success / failed），只用于对账查看 */
+  recent: TenantWithdrawalRow[];
+};
+
+function mapWithdrawalRow(row: WithdrawalRowPayload): TenantWithdrawalRow {
+  return {
+    id: row.id,
+    playerName: row.player?.username ?? null,
+    amount: decimal(row.amount),
+    currency: row.currency,
+    status: row.status,
+    riskStatus: row.riskStatus,
+    isAuto: row.isAuto,
+    account: maskWithdrawalDestination(row.walletAddress),
+    gatewayName: row.gateway?.name ?? null,
+    createdAt: row.createdAt.toISOString(),
+    processedAt: row.processedAt?.toISOString() ?? null,
+  };
+}
+
+/**
+ * 审批台数据：待审批全量 + 最近已处理，全部按 tenantId 过滤。
+ *
+ * 待审批不翻页：列表第一屏就是「还有多少笔钱等着出款」，
+ * 让商户翻页才能看全是导致积压的直接原因。
+ */
+export async function loadTenantWithdrawalBoard(input: {
+  tenantId: string;
+}): Promise<TenantWithdrawalBoard> {
+  const tenantId = input.tenantId;
+
+  const [tenant, inFlight, recent] = await Promise.all([
+    prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { currency: true },
+    }),
+    prisma.withdrawal.findMany({
+      // pending（人工待审）与 processing（自动出款中）都是「还没结账的钱」，
+      // 一次查回来再按状态拆开：商户要能同时看到「等我点」和「系统在打」。
+      where: { tenantId, status: { in: inFlightWithdrawalStatusList() } },
+      orderBy: { createdAt: "asc" },
+      take: PENDING_WITHDRAWAL_LIMIT,
+      select: WITHDRAWAL_SELECT,
+    }),
+    prisma.withdrawal.findMany({
+      where: { tenantId, status: { in: ["success", "failed"] } },
+      orderBy: [
+        { processedAt: { sort: "desc", nulls: "last" } },
+        { createdAt: "desc" },
+      ],
+      take: RECENT_WITHDRAWAL_LIMIT,
+      select: WITHDRAWAL_SELECT,
+    }),
+  ]);
+
+  const pendingRows = inFlight.filter(
+    (row) => row.status === WITHDRAWAL_STATUS_PENDING,
+  );
+  const processingRows = inFlight.filter(
+    (row) => row.status === WITHDRAWAL_STATUS_PROCESSING,
+  );
+
+  return {
+    currency: normalizeCurrency(tenant?.currency),
+    pending: pendingRows.map(mapWithdrawalRow),
+    pendingTotalAmount: pendingRows.reduce(
+      (sum, item) => sum + decimal(item.amount),
+      0,
+    ),
+    processing: processingRows.map(mapWithdrawalRow),
+    processingTotalAmount: processingRows.reduce(
+      (sum, item) => sum + decimal(item.amount),
+      0,
+    ),
+    recent: recent.map(mapWithdrawalRow),
+  };
+}
+
+/**
+ * 侧边栏角标用的待审批笔数。
+ *
+ * 每个后台页面都会渲染导航栏，所以这里只允许一条走索引的 count；
+ * 出错时返回 0 —— 一个角标不该把整个控制台打挂。
+ */
+export async function countTenantPendingWithdrawals(
+  tenantId: string,
+): Promise<number> {
+  try {
+    return await prisma.withdrawal.count({
+      where: { tenantId, status: "pending" },
+    });
+  } catch (error) {
+    console.error("统计待审批提现失败:", error);
+    return 0;
+  }
+}
+
+export type TenantWithdrawalReviewAction = "approve" | "reject";
+
+export type TenantWithdrawalReviewResult =
+  | {
+      ok: true;
+      action: TenantWithdrawalReviewAction;
+      status: "success" | "failed";
+      playerName: string | null;
+      amount: number;
+      currency: string;
+    }
+  | {
+      ok: false;
+      code:
+        | "not_found"
+        | "not_pending"
+        | "in_progress"
+        | "no_player"
+        | "insufficient_balance"
+        | "duplicate_reference";
+      message: string;
+    };
+
+/**
+ * 商户审批提现。
+ *
+ * 口径与代付商回调 `/api/withdrawal/callback`、自动出款引擎完全一致 ——
+ * 三者是同一笔出款的三种触发方式，共用 src/lib/withdrawal-settlement.ts：
+ *
+ * - approve：`pending → success`，扣 `Player.balance` 并写一条
+ *   `Transaction(type=withdraw)`，三步在同一事务内。
+ *   状态迁移用 `updateMany({ where: { status: "pending" } })` 做 compare-and-swap，
+ *   所以「商户点了通过 + 代付商又回调成功」不会扣两次，只有抢到迁移的请求才动余额。
+ * - reject：`pending → failed`，不动余额、不写流水（玩家可以重新提单）。
+ * - `processing`（自动出款在途）**不接受**人工审批：自动流程还没终结，
+ *   人工再点一次会变成重复出款，所以直接返回 409 in_progress。
+ * - 不创建、不扣减任何平台内部资金账户；tenantId 只来自会话，
+ *   别家商户的单号在这里等价于「不存在」。
+ * - `Withdrawal.approvals` 在通过时 +1 作为留痕；`requiredApprovals > 1` 的
+ *   多人复核流程尚未启用（当前一律单人审批即终审），不做半吊子计数。
+ */
+export async function reviewTenantWithdrawal(input: {
+  tenantId: string;
+  withdrawalId: string;
+  action: TenantWithdrawalReviewAction;
+  /** 人工打款的银行流水号 / 代付单号（可选） */
+  reference?: string;
+}): Promise<TenantWithdrawalReviewResult> {
+  const current = await prisma.withdrawal.findFirst({
+    where: { id: input.withdrawalId, tenantId: input.tenantId },
+    select: {
+      id: true,
+      playerId: true,
+      amount: true,
+      currency: true,
+      status: true,
+      player: { select: { username: true } },
+    },
+  });
+
+  if (!current) {
+    return { ok: false, code: "not_found", message: "提现单不存在" };
+  }
+
+  // 自动出款在途（processing）不允许人工介入：代付 API 已经在打款，
+  // 这时点 Approve 会「自动打一次 + 人工再打一次」，点 Reject 更糟
+  // （钱可能已经出去了，单据却被置失败）。只能等代付结果回来。
+  if (current.status === WITHDRAWAL_STATUS_PROCESSING) {
+    return {
+      ok: false,
+      code: "in_progress",
+      message: "该提现单正在自动出款中，请等代付结果返回后再操作",
+    };
+  }
+
+  if (current.status !== WITHDRAWAL_STATUS_PENDING) {
+    return {
+      ok: false,
+      code: "not_pending",
+      message: "该提现单已处理完成，无需重复操作",
+    };
+  }
+
+  const reference =
+    typeof input.reference === "string" && input.reference.trim()
+      ? input.reference.trim().slice(0, 200)
+      : null;
+  const playerName = current.player?.username ?? null;
+
+  if (input.action === "reject") {
+    const rejected = await markWithdrawalFailed({
+      withdrawalId: current.id,
+      tenantId: input.tenantId,
+      fromStatuses: [WITHDRAWAL_STATUS_PENDING],
+    });
+
+    if (!rejected.changed) {
+      return {
+        ok: false,
+        code: "not_pending",
+        message: "该提现单已被处理，请刷新后重试",
+      };
+    }
+
+    return {
+      ok: true,
+      action: "reject",
+      status: "failed",
+      playerName,
+      amount: decimal(current.amount),
+      currency: current.currency,
+    };
+  }
+
+  if (!current.playerId) {
+    return {
+      ok: false,
+      code: "no_player",
+      message: "提现单未绑定玩家，无法扣减余额",
+    };
+  }
+
+  // 与代付回调 / 自动出款走同一份结算实现（pending → success + 扣余额 + 写流水）。
+  const settled = await settleWithdrawalSuccess({
+    withdrawalId: current.id,
+    tenantId: input.tenantId,
+    fromStatuses: [WITHDRAWAL_STATUS_PENDING],
+    txHash: reference,
+    incrementApprovals: true,
+  });
+
+  if (!settled.settled) {
+    if (settled.reason === "insufficient_balance") {
+      return {
+        ok: false,
+        code: "insufficient_balance",
+        message: "玩家当前余额不足以扣减这笔提现，请先核对余额",
+      };
+    }
+
+    if (settled.reason === "duplicate_reference") {
+      return {
+        ok: false,
+        code: "duplicate_reference",
+        message: "该流水号已被其它提现单使用",
+      };
+    }
+
+    return {
+      ok: false,
+      code: "not_pending",
+      message: "该提现单已被处理，请刷新后重试",
+    };
+  }
+
+  return {
+    ok: true,
+    action: "approve",
+    status: "success",
+    playerName,
+    amount: decimal(current.amount),
+    currency: current.currency,
+  };
+}
 
 /** AI 客服监控：只读玩家与 AI 客服（agentType=support）的对话。 */
 export type TenantAiLogRow = {

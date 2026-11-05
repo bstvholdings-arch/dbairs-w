@@ -189,6 +189,36 @@ export function maskBankAccountNumber(value: string): string {
   return `****${trimmed.slice(-4)}`;
 }
 
+/** 看起来像「纯数字账号」的片段：以数字开头、至少 6 位、只含数字 / 短横线 / 空格 */
+const ACCOUNT_NUMBER_LIKE = /^[0-9][0-9\-\s]{5,}$/;
+
+/**
+ * 后台列表里的「收款信息」展示口径（`Withdrawal.walletAddress` 是拼好的完整字符串）。
+ *
+ * 银行户在提单时被拼成「银行 · 账号 · 持有人」（见 `/api/withdrawal/create`），
+ * 完整账号一旦出现在后台列表 / 截图 / 日志里就是隐私泄露，所以这里把「看起来像账号」
+ * 的那一段掩成后 4 位；链上地址（TRC20 / ERC20）本身是公开的，保持原样。
+ *
+ * 只用于展示，任何地方都不许把它回写成新的 walletAddress。
+ */
+export function maskWithdrawalDestination(
+  value: string | null | undefined,
+): string {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+
+  if (!trimmed) {
+    return "";
+  }
+
+  return trimmed
+    .split(" · ")
+    .map((part) =>
+      ACCOUNT_NUMBER_LIKE.test(part) ? maskBankAccountNumber(part) : part,
+    )
+    .join(" · ");
+}
+
+
 function readCryptoAddress(value: unknown, network: string): string {
   if (typeof value !== "string") {
     return "";

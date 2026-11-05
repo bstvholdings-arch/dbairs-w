@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 
 import { ConsoleShell } from "@/components/console-shell";
 import { getSessionUserFromCookies } from "@/lib/session";
-import { getTenantScopeForUser } from "@/lib/tenant-console";
+import { getTenantScopeForUser, countTenantPendingWithdrawals } from "@/lib/tenant-console";
 
 export const instant = false;
 
@@ -35,6 +35,11 @@ export default async function TenantLayout({
     redirect("/admin");
   }
 
+  // 侧边栏「提现审批」角标：真实待审批笔数，一次走索引的 count。
+  const pendingWithdrawalCount = await countTenantPendingWithdrawals(
+    scope.tenantId,
+  );
+
   return (
     <ConsoleShell
       role="tenant_admin"
@@ -44,6 +49,7 @@ export default async function TenantLayout({
       // 这样无论本地还是线上都能精确锁定「当前这家」的前台。
       previewTenantKey={scope.tenant.subdomain || scope.tenant.id}
       impersonation={scope.impersonation}
+      pendingWithdrawalCount={pendingWithdrawalCount}
     >
       {children}
     </ConsoleShell>

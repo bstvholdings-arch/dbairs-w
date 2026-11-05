@@ -186,6 +186,42 @@ function readDefaultTenantKey(): string {
 }
 
 /**
+ * 开发期诊断：解释「裸 `/` 为什么是 404」。
+ *
+ * 本地最容易误判的就是这一条 —— 看到 404 就以为「主页被删了」或「被路由守卫
+ * 拦了」，其实 `proxy.ts` 对 `/` 是直接放行的（见该文件的 `pathname === "/"`），
+ * 真正抛 404 的是 `requireStorefront()`：这次访问既没有 `?tenant=`，域名
+ * （localhost）也不是任何租户的主域名 / 备用域名 / 子域名，也没有商户会话或
+ * 代登录票据，而 `.env` 又没配 `DEFAULT_TENANT`。
+ *
+ * 只打一条 debug（不进 Next 的 Issues 面板），不改变任何解析结果、不做兜底 ——
+ * 回落到「随便一个租户」正是 AGENTS.md 第 7 条明令禁止的（会把陌生域名解析成
+ * 别人家的站）。要本地默认站点，只能显式配 `DEFAULT_TENANT`。
+ */
+let warnedUnresolvedStorefront = false;
+
+function warnUnresolvedStorefront(host: string): void {
+  if (process.env.NODE_ENV === "production" || warnedUnresolvedStorefront) {
+    return;
+  }
+
+  warnedUnresolvedStorefront = true;
+
+  const defaultKey = readDefaultTenantKey();
+
+  console.debug(
+    `[storefront] 本次访问解析不到租户（host="${host || "(empty)"}"）：` +
+      "没有 ?tenant=，域名不是任何租户的主域名 / 备用域名 / 子域名，" +
+      "当前也没有商户会话或超管代登录票据，" +
+      (defaultKey
+        ? `.env 的 DEFAULT_TENANT="${defaultKey}" 在库里也查不到。`
+        : ".env 也没有配置 DEFAULT_TENANT。") +
+      " 因此裸 / 返回「站点不存在」。本地调试请在 .env 里加一行 " +
+      "DEFAULT_TENANT=<子域名 | id | 域名>，然后重启 npm run dev。",
+  );
+}
+
+/**
  * 解析本次请求属于哪个租户的装修配置。
  *
  * 返回 `null` 的含义很明确：**这个站点不存在**，调用方必须 404，
@@ -265,6 +301,11 @@ export const resolveStorefront = cache(
       }
 
       // 6) 站点不存在（由 requireStorefront 抛 404）
+      //
+      // 开发环境先把「为什么 404」写进 debug 日志，否则本地看到 404 很容易
+      // 误判成「主页被删了 / 被路由守卫拦了」——见 warnUnresolvedStorefront 的注释。
+      warnUnresolvedStorefront(host);
+
       return null;
     } catch (error) {
       // 数据库临时不可用 ≠ 站点不存在：仍然渲染默认金色主题，

@@ -8,6 +8,7 @@ import { useLanguage } from "@/components/LanguageProvider";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ADMIN_ROLE_LABEL_KEYS } from "@/lib/i18n-keys";
 import type { TranslationKey } from "@/lib/i18n-types";
+import { formatInteger } from "@/lib/format";
 import { can, type Permission } from "@/lib/rbac";
 
 import { RbacDeniedNotice } from "@/components/rbac-denied-notice";
@@ -22,6 +23,7 @@ type NavIconName =
   | "tenants"
   | "storefront"
   | "gateways"
+  | "withdrawal"
   | "finance"
   | "players"
   | "kyc"
@@ -114,13 +116,22 @@ const PLATFORM_NAV: NavItem[] = [
 ];
 
 /**
- * 商户后台菜单：概览 / 玩家 / KYC / 支付网关 / 财务 / 客服记录 / 站点设置。
+ * 商户后台菜单：概览 / 玩家 / 提现审批 / KYC / 支付网关 / 财务 / 客服记录 / 站点设置。
  *
  * 平台侧的任何全局配置（租户管理、游戏库、AI 中控台、员工管理）
  * 都不会出现在这里。支付网关（/tenant/payments）已按去中心化支付架构
  * 下放给商户：商户自己填 API Endpoint、收款钱包地址与 API Secret，
  * 平台只读监控对接状态，不再提供统一收款网关。
  */
+
+/**
+ * 提现审批页路径。
+ *
+ * 导航栏的「待审批」角标只挂在这一项上，所以路径单独抽成常量，
+ * 菜单项与角标判断共用同一份，改路径时不会漏掉其中一个。
+ */
+const TENANT_WITHDRAWALS_HREF = "/tenant/withdrawals";
+
 const TENANT_ADMIN_NAV: NavItem[] = [
   {
     labelKey: "nav.tenantOverview",
@@ -128,6 +139,12 @@ const TENANT_ADMIN_NAV: NavItem[] = [
     icon: "dashboard",
   },
   { labelKey: "nav.tenantPlayers", href: "/tenant/players", icon: "players" },
+  // 提现审批：商户就是出款方，审批必须在一级菜单一眼可见（入口太深 = 出款积压）
+  {
+    labelKey: "nav.tenantWithdrawals",
+    href: TENANT_WITHDRAWALS_HREF,
+    icon: "withdrawal",
+  },
   // KYC 审核：只处理本站玩家提交的实名资料
   { labelKey: "nav.tenantKyc", href: "/tenant/kyc", icon: "kyc" },
   // 活动管理：玩家前台 /promotions 的分类与 Banner（活动图上传 + 跳转链接）
@@ -232,6 +249,14 @@ function NavIcon({ name }: { name: NavIconName }) {
           <path d="M15 15h2" />
         </svg>
       );
+    case "withdrawal":
+      return (
+        <svg {...common}>
+          <rect x="2.5" y="6" width="19" height="12" rx="2" />
+          <path d="M12 15V9" />
+          <path d="M9.4 11.6 12 9l2.6 2.6" />
+        </svg>
+      );
     case "finance":
       return (
         <svg {...common}>
@@ -332,10 +357,13 @@ function isItemActive(pathname: string, item: NavItem, basePath: string) {
 }
 
 function navClass(active: boolean) {
+  // 对比度：未选中用 text-neutral-300（原 neutral-500 在纯黑底上几乎看不清），
+  // 悬停变白、选中变金 + 加粗 + 内描边，三种状态一眼能分出来。
+  // 图标用 currentColor，跟着文字一起提亮，不需要单独改色。
   return `flex shrink-0 items-center gap-2.5 rounded-lg border px-3 py-2.5 text-xs transition-colors ${
     active
-      ? "border-[#d4af37]/25 bg-[#d4af37]/10 text-[#f0d27c]"
-      : "border-transparent text-neutral-500 hover:border-[#d4af37]/10 hover:bg-white/[0.03] hover:text-neutral-200"
+      ? "border-[#d4af37]/45 bg-[#d4af37]/[0.14] font-semibold text-[#f7e0a1] shadow-[inset_0_0_0_1px_rgba(212,175,55,0.18)]"
+      : "border-transparent text-neutral-300 hover:border-[#d4af37]/25 hover:bg-white/[0.06] hover:text-white"
   }`;
 }
 export function ConsoleShell({
@@ -344,6 +372,7 @@ export function ConsoleShell({
   tenantName,
   previewTenantKey,
   impersonation,
+  pendingWithdrawalCount = 0,
   children,
 }: {
   role: AdminRole;
@@ -358,6 +387,11 @@ export function ConsoleShell({
   previewTenantKey?: string | null;
   /** 超管代登录时传 { adminId, username }，用于渲染顶部安全横幅。 */
   impersonation?: { adminId: string; username: string } | null;
+  /**
+   * 「提现审批」菜单上的待审批角标（0 = 不显示）。
+   * 只由 `tenant/(console)/layout.tsx` 下发的真实计数决定，前端不自己算。
+   */
+  pendingWithdrawalCount?: number;
   children: ReactNode;
 }) {
   const pathname = usePathname();
@@ -407,14 +441,14 @@ export function ConsoleShell({
             <p className="text-sm font-semibold tracking-[0.18em] text-[#f0d27c]">
               DBAIRS
             </p>
-            <p className="mt-0.5 truncate text-[9px] uppercase tracking-[0.2em] text-neutral-600">
+            <p className="mt-0.5 truncate text-[9px] uppercase tracking-[0.2em] text-neutral-400">
               {roleLabel}
             </p>
           </div>
         </div>
 
         <div className="px-4 py-4">
-          <p className="px-1 text-[9px] uppercase tracking-[0.22em] text-neutral-700">
+          <p className="px-1 text-[9px] uppercase tracking-[0.22em] text-neutral-400">
             {t("nav.section")}
           </p>
           <nav className="mt-3 space-y-1" aria-label={t("nav.mainAria")}>
@@ -429,7 +463,20 @@ export function ConsoleShell({
                   className={navClass(active)}
                 >
                   <NavIcon name={item.icon} />
-                  <span>{t(item.labelKey)}</span>
+                  <span className="truncate">{t(item.labelKey)}</span>
+                  {item.href === TENANT_WITHDRAWALS_HREF &&
+                  pendingWithdrawalCount > 0 ? (
+                    <span
+                      aria-label={t("nav.tenantWithdrawalsPending", {
+                        count: formatInteger(pendingWithdrawalCount),
+                      })}
+                      className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#d4af37] px-1.5 text-[10px] font-bold text-black"
+                    >
+                      {pendingWithdrawalCount > 99
+                        ? "99+"
+                        : formatInteger(pendingWithdrawalCount)}
+                    </span>
+                  ) : null}
                 </Link>
               );
             })}
@@ -438,7 +485,7 @@ export function ConsoleShell({
 
         <div className="mt-auto border-t border-[#d4af37]/10 px-4 py-4">
           <div className="rounded-xl border border-[#d4af37]/10 bg-[#d4af37]/[0.03] p-3">
-            <p className="truncate text-[9px] uppercase tracking-[0.18em] text-neutral-700">
+            <p className="truncate text-[9px] uppercase tracking-[0.18em] text-neutral-400">
               {t(isTenantScope ? "shell.scope.tenant" : "shell.scope.platform")}
             </p>
             <p className="mt-1 truncate text-xs text-[#f0d27c]">{scopeLabel}</p>
@@ -469,7 +516,7 @@ export function ConsoleShell({
                 <p className="truncate text-xs font-semibold tracking-[0.16em] text-[#f0d27c]">
                   {scopeLabel}
                 </p>
-                <p className="mt-0.5 text-[9px] uppercase tracking-[0.18em] text-neutral-600">
+                <p className="mt-0.5 text-[9px] uppercase tracking-[0.18em] text-neutral-400">
                   {roleLabel}
                 </p>
               </div>
@@ -522,7 +569,17 @@ export function ConsoleShell({
                   className={navClass(active)}
                 >
                   <NavIcon name={item.icon} />
-                  <span className="whitespace-nowrap">{t(item.labelKey)}</span>
+                  <span className="whitespace-nowrap">
+                    {t(item.labelKey)}
+                  </span>
+                  {item.href === TENANT_WITHDRAWALS_HREF &&
+                  pendingWithdrawalCount > 0 ? (
+                    <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#d4af37] px-1.5 text-[10px] font-bold text-black">
+                      {pendingWithdrawalCount > 99
+                        ? "99+"
+                        : formatInteger(pendingWithdrawalCount)}
+                    </span>
+                  ) : null}
                 </Link>
               );
             })}

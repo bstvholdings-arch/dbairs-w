@@ -1,6 +1,7 @@
 import { normalizeCurrency } from "@/lib/currency";
 import { availableBalanceToString } from "@/lib/player-balance";
 import { prisma } from "@/lib/prisma";
+import { inFlightWithdrawalStatusList } from "@/lib/withdrawal-status";
 
 import type { AiAgentTypeValue } from "./constants";
 import { toolsForAgent } from "./prompts";
@@ -392,8 +393,13 @@ async function getPlayerBalance(
   const player = found.player;
 
   // 处理中的提现不冻结余额，必须自己扣，口径与 src/lib/player-balance.ts 一致。
+  // in-flight = pending（人工待审）+ processing（自动出款中）。
   const pending = await prisma.withdrawal.aggregate({
-    where: { tenantId: scope.tenantId, playerId: player.id, status: "pending" },
+    where: {
+      tenantId: scope.tenantId,
+      playerId: player.id,
+      status: { in: inFlightWithdrawalStatusList() },
+    },
     _sum: { amount: true },
   });
 

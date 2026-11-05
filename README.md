@@ -16,6 +16,17 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+> **本地 404 / 白屏排障（先看这一条）**：`npm run dev` 与 `npm run build` **共用同一个 `.next` 目录**。
+> 如果 dev server 正在跑的时候执行了 `npm run build`（或反过来），`.next` 里会混进
+> `BUILD_ID` 等生产产物，浏览器随后就会大量 404（chunk 文件名对不上，页面白屏或报错）。
+> 修复方式：停掉 dev → 删掉 `.next` → 重新 `npm run dev`（重新编译约 1 秒，别怕删）。
+> 要验证生产构建，请用 `npm run build && npm run start`，并在另一个端口跑，别和 dev 抢。
+>
+> 裸 `http://localhost:3000/` 显示「站点不存在」是**另一回事**：那是 `requireStorefront()`
+> 找不到租户（没有 `?tenant=`、域名不是任何租户的域名/子域名、没有会话），
+> 在 `.env` 里配 `DEFAULT_TENANT=<子域名 | id | 域名>` 并重启 dev 即可，详见
+> `src/lib/storefront-data.ts` 的 `warnUnresolvedStorefront`（dev 环境会把真实原因打在终端里）。
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
@@ -294,15 +305,66 @@ curl -X POST "https://<host>/api/deposit/callback/usdt_trc20" \
 | 接口 | 说明 |
 | --- | --- |
 | `GET /api/player/withdrawal-gateways` | 玩家提现弹窗的通道列表（**纯法币 MYR → MYR**）：只返回 `isActive` + `APPROVED` + （平台公用或本租户）+ **非加密（`usdt_*` 等一律排除）+ 币种等于 `Tenant.currency`** 的网关，附 `payoutCurrency`、`feeRate`（`payoutSellRate`）与 `amountLimits` |
-| `POST /api/withdrawal/create` | 玩家提单：玩家 Cookie 身份 → KYC 闸门 → 金额区间 → 收款账号解析 → 纯法币通道 + 出款币种核对 → 可用余额校验 → 落库 `Withdrawal(status=pending, currency=本站记账币种)` |
-| `POST /api/withdrawal/callback` | 代付商回调：`pending → success` 条件更新成功者才扣 `Player.balance` 并写 `Transaction(type=withdraw)`；`failed` 只改状态 |
+| `POST /api/withdrawal/create` | 玩家提单：玩家 Cookie 身份 → KYC 闸门 → 金额区间 → 收款账号解析 → 纯法币通道 + 出款币种核对 → 可用余额校验 → **智能路由**（见下）→ 自动出款落 `processing` / 转人工落 `pending` |
+| `POST /api/withdrawal/callback` | 代付商回调：`pending \| processing → success` 条件更新成功者才扣 `Player.balance` 并写 `Transaction(type=withdraw)`；`failed` 只改状态（实现见 `src/lib/withdrawal-settlement.ts`） |
+| `PATCH /api/tenant/withdrawals/[id]` | 商户审批提现：`{ action: "approve" \| "reject" }`。`approve` 与代付回调**同一套 CAS 事务**（`pending → success` + 扣余额 + 写流水）；`reject` 只置 `failed`，不动余额；`processing`（自动出款在途）返回 409 拒绝人工介入。`tenantId` 只来自会话，别家单号一律 404 |
+| `GET /api/tenant/payout-engine` | 自动出款引擎快照：开关/限额、今日已自动出款、剩余额度、是否熔断、各通道是否配了代付 API |
+| `PATCH /api/tenant/payout-engine` | 保存自动出款配置：`{ isEnabled?, maxAutoAmount?, dailyAutoLimit?, payoutEndpoints?: [{ gatewayId, endpoint }] }`；代付地址只能写**商户自有通道**（`ownerId` 必须是本站、`isPlatformGateway=false`），非法地址 400、别家通道 404 |
+
+#### 提现审批：商户后台一级菜单（`/tenant/withdrawals`）
+
+- **入口就是一级菜单**：左侧导航「提现审批」（`nav.tenantWithdrawals`，图标 `withdrawal`），
+  右侧带真实待审批笔数角标（`tenant/(console)/layout.tsx` → `countTenantPendingWithdrawals()` 下发，
+  一次走 `(tenantId, status)` 索引的 count，失败回落 0，不拖垮控制台）。
+  别把审批再塞进「财务」二级页签 —— 入口太深就是出款积压的直接原因。
+- **页面 `src/app/tenant/(console)/withdrawals/`**：待审批单**全量不翻页**（上限 200 条保护），
+  老单在前；每行两个显眼按钮「通过出款 / 驳回」；下方「最近已处理」10 条用于对账。
+  收款账号走 `maskWithdrawalDestination()`（`src/lib/withdrawal-accounts.ts`，银行账号只留后 4 位）。
+- **审批口径 `reviewTenantWithdrawal()`（`src/lib/tenant-console.ts`）**：
+  `approve` = 已出款，与 `/api/withdrawal/callback` 完全同口径 —— 同一事务里
+  `updateMany({ where: { status: "pending" } })` 抢状态迁移 → 条件扣 `Player.balance` → 写
+  `Transaction(type=withdraw)`；抢不到迁移的请求（重复点击 / 代付回调同时到达）返回 409，
+  **绝不重复扣款**。`reject` = `pending → failed`，不动余额、不写流水，玩家可重新提单。
+  金额币种直接取单据上的 `Withdrawal.currency`（本站记账币种），不做任何换算。
+- **财务页（`/tenant/finance`）只做账本**：金额改走 `formatDisplayAmount(value, currency)`（币种来自
+  `Tenant.currency`，不再写死 `$`）；有待审批时顶部出现金色 CTA 直接跳到审批页。
+
+#### 自动出款引擎（Auto Payout）+ 人工兜底：能自动就自动，不能自动就一定能人工
+
+一句话口径：**有代付 API 且风控全过 → 自动打款；任意一项不满足 → 立刻进人工队列，人工按钮永远在。**
+
+- **数据**：`Tenant.autoPayoutConfig`（`{ isEnabled, maxAutoAmount, dailyAutoLimit }`）、
+  `PaymentGateway.payoutEndpoint`（商户自己的代付 API 地址，与收款 `endpoint` 是两条链路）、
+  `Withdrawal.riskStatus`（路由原因快照）+ `Withdrawal.isAuto`。增量 SQL：`prisma/auto-payout.sql`（幂等）。
+- **判定只写一次**：`src/lib/auto-payout.ts` 的 `evaluateAutoPayoutRoute()`（纯函数）+`evaluateWithdrawalRouting()`（查库版）。
+  顺序是「先看有没有代付能力，再看商户策略，最后看风控」：
+  `没有 payoutEndpoint → 开关关 → KYC 未通过 → 红利流水未打满 → 超单笔上限 → 当日额度熔断`，
+  每条不满足都写一个 `manual_*` 原因，商户在审批台一眼看到「为什么这单没自动出」。
+- **路由 A（自动）**：`status=processing + isAuto=true + riskStatus=auto_queued` → 立刻
+  `POST {payoutEndpoint}`（`x-gateway-signature: sha256=HMAC-SHA256(rawBody, apiKey)`、`x-idempotency-key=提现单号`、
+  15s 超时）→ 成功即 `settleWithdrawalSuccess()`（`processing → success` + 扣余额 + 写流水），
+  失败则 `returnWithdrawalToManualReview()` 退回 `pending + riskStatus=auto_payout_failed`（**钱不动，商户一键 Approve 兜底**）。
+- **路由 B（人工）**：`status=pending + isAuto=false`，进 `/tenant/withdrawals` 审批队列。
+  `Approve（通过出款）` / `Reject（驳回）` 两个按钮对**每一条 pending 单无条件渲染** ——
+  没有代付 API / 自动打款失败时，这两个按钮就是唯一出口，任何改动都不得把它们做成条件渲染。
+- **熔断（防击穿）**：当日 `isAuto=true` 且 `status in (processing, success)` 的金额合计 ≥ `dailyAutoLimit` 时，
+  本单直接转人工（判定用「已出 + 本单」比较，所以永远不会超发）；额度按**自然日**（服务器本地 00:00）重置，
+  不需要定时任务去关开关。刻意偏保守：自动失败后被人工点掉的单也计入。
+- **结算只写一次**：`src/lib/withdrawal-settlement.ts` 的 `settleWithdrawalSuccess()` / `markWithdrawalFailed()` /
+  `returnWithdrawalToManualReview()` 是**代付回调、商户人工审批、自动出款引擎共用的唯一记账实现**，
+  靠 `updateMany({ where: { status: { in: [...] } } })` 做数据库层 CAS，三条路径并发到达也只扣一次钱。
+- **配置权限**：只有商户自己在 `/tenant/withdrawals` 的【自动出款引擎】面板能写（`PATCH /api/tenant/payout-engine`，
+  `tenantId` 来自 `guardTenantApi` 会话）。代付地址只能挂在 `ownerId=本站 + isPlatformGateway=false` 的通道上 ——
+  平台通道永远 `manual_no_payout_api`，钱不经过平台（与「去中心化支付」红线一致）。
+- **在途可视**：`processing` 单单独一张「自动出款中」表，看得见但**不给审批按钮**
+  （结果没回来就人工再点一次 = 重复出款），`reviewTenantWithdrawal()` 也会对 `processing` 返回 409。
 
 - **按钮与权限**（`src/components/player/withdraw-button.tsx`）：玩家中心顶部余额右侧与 Deposit 并排；未实名 → 点击弹「Please complete identity verification first.」+ 去认证入口；可用余额 < 最低额 → 点击说明最低提现金额；两者都满足 → 金色高亮并打开提现弹窗。鼠标悬停 `title` 直接显示被拦原因。
 - **黑金提现弹窗**（`src/components/player/withdraw-modal.tsx`）：提现通道下拉（通道名 + 后台维护的费率）→ 提现账号下拉（只列玩家已绑定、`accountType=bank` 且币种等于本站记账币种的账号，文案 `Maybank (1234) · 姓名`）→ 提现金额（最多两位小数）+「全部」→ 实时显示**预估手续费**与**预计到账**。没有可用银行账号时不出表单，只给「去绑定提现账号」。
 - **纯法币、不做汇率换算**：金额 / 手续费 / 到账金额单位全部是 `Tenant.currency`（默认 MYR）。`src/lib/withdrawal-channels.ts` 是唯一口径：`calculateWithdrawalFee(amount, feeRate) = round2(amount × feeRate)`、`calculateWithdrawalReceive = amount − fee`，服务端与弹窗共用；通道列表与费率都由后台下发，前端不写死任何数字。
 - **收款账号不由前端回传**：弹窗只提交 `{ gatewayId, accountId, amount }`；`accountId` 由服务端回查（校验 `playerId` + `tenantId`），法币拼成「银行 · 账号 · 持有人」写入 `Withdrawal.walletAddress`。列表接口里的银行账号是掩码，前端拿不到真实账号也改不了。
 - **金额区间**：默认单笔 `10 ~ 1,000,000`，可用 `WITHDRAWAL_MIN_AMOUNT` / `WITHDRAWAL_MAX_AMOUNT` 覆盖；`parseWithdrawalAmount`（`src/lib/payment-gateway.ts`）是唯一口径，前端只做同口径提示。
-- **可用余额 = 余额 − 处理中的提现单**：`pending` 阶段不扣款（扣款发生在代付成功回调），所以提单时必须用 `prisma.withdrawal.aggregate({ status: "pending" })` 扣掉在途金额，否则同一笔余额可以被连开多张 pending 单重复提走；超额返回 `409 insufficient_available_balance`。玩家中心同步展示 `summary.pendingWithdrawalAmount`。
+- **可用余额 = 余额 − 在途提现单**：`pending`（人工待审）与 `processing`（自动出款中）都还没扣款，所以提单时必须用 `prisma.withdrawal.aggregate({ status: { in: inFlightWithdrawalStatusList() } })` 扣掉在途金额（集合定义只有一份：`src/lib/withdrawal-status.ts`），否则同一笔余额可以被连开多张在途单重复提走；超额返回 `409 insufficient_available_balance`。玩家中心同步展示 `summary.pendingWithdrawalAmount`。
 - **币种一致性**：通道必须通过 `isFiatPayoutChannel()`（非加密 + 币种等于本站记账币种），否则 `400 channel_not_fiat`；`account.currency` 归一化后必须等于出款币种（`normalizePayoutCurrency`，脏数据 `RM` 视同 `MYR`），否则 `400 account_currency_mismatch`，避免 MYR 通道把钱打到 USDT 钱包。
 - **前端遗留调用兼容**：`walletAddress` 仍然可用（商户代提 / 脚本），与 `accountId` 二选一。
 
@@ -330,7 +392,7 @@ curl -X POST "https://<host>/api/deposit/callback/usdt_trc20" \
 - **币种来自租户 `Tenant.currency`（默认 `MYR`）**：`src/lib/currency.ts` 是唯一符号表（MYR→`RM `、USD→`$`、USDT→`USDT `、THB→`฿`、IDR→`Rp `、VND 后缀 `₫`…），`formatCurrency(value, currency)` 输出形如 `RM 50.50`。**禁止**再写 `` `${formatAmount(x)}` `` 式的硬编码 `$`。
   - 玩家侧取值链：`PlayerSessionInfo.tenant.currency`（玩家中心）与 `StorefrontSettings.currency`（大厅，来自 `loadStorefront`）。
   - 已统一的位置：大厅顶栏 / Hero 奖池、玩家中心（顶部余额、可用余额卡、今日输赢、流水、充值/提现记录、注单、推广奖励、每日奖励）、提现按钮与弹窗、充值弹窗与支付页、`DepositDialog`。
-  - 后台控制台（`/admin`、`/tenant` 的财务汇总）仍是平台视角的 `$` 展示，如需按租户币种请复用 `formatCurrency` 逐步替换。
+  - 商户后台的财务流水（`/tenant/finance`）与提现审批（`/tenant/withdrawals`）已改走 `formatDisplayAmount`（币种取自 `Tenant.currency`）；平台视角的 `/admin` 汇总仍是 `$`，如需按租户币种请复用 `formatCurrency` 逐步替换。
 - **表结构增量**：`prisma/tenant-currency.sql`（幂等，`ALTER TABLE "Tenant" ADD COLUMN IF NOT EXISTS "currency"`，默认 `MYR`）；正常 `npx prisma db push` 会自动建列，只跑 SQL 的环境可用 `npm run db:sql prisma/tenant-currency.sql`，随后 `npx prisma generate`（Supabase 连接池上 `db push` 有时会卡在 shadow database，这条路径更稳）。
 
 ### 前台排版模板（一套组件 + 5 组 layout token）

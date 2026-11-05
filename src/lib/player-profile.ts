@@ -5,6 +5,7 @@ import { availableBalanceToString } from "./player-balance";
 import { listPlayerWithdrawalAccounts } from "./player-withdrawal-accounts";
 import { prisma } from "./prisma";
 import type { PlayerWithdrawalAccountView } from "./withdrawal-accounts";
+import { inFlightWithdrawalStatusList } from "./withdrawal-status";
 
 const REFERRAL_REWARD_RATE = Number(process.env.REFERRAL_REWARD_RATE ?? "0.05");
 const DAILY_BONUS_AMOUNT = Number(process.env.DAILY_BONUS_AMOUNT ?? "0.5");
@@ -217,11 +218,11 @@ export async function getPlayerProfileData(
       where: { playerId: session.id, status: "pending" },
     }),
     prisma.withdrawal.count({
-      where: { playerId: session.id, status: "pending" },
+      where: { playerId: session.id, status: { in: inFlightWithdrawalStatusList() } },
     }),
     // 处理中提现单的金额合计：可用余额 = balance - 这笔钱（见提现弹窗）
     prisma.withdrawal.aggregate({
-      where: { playerId: session.id, status: "pending" },
+      where: { playerId: session.id, status: { in: inFlightWithdrawalStatusList() } },
       _sum: { amount: true },
     }),
     prisma.transaction.findMany({

@@ -65,6 +65,13 @@ type CreateWithdrawalResponse = {
     createdAt: string;
   };
   balanceDeducted?: boolean;
+  /** 智能路由结果（自动出款 / 转人工） */
+  routing?: {
+    route?: "auto" | "manual";
+    riskStatus?: string | null;
+    autoPayoutStatus?: string | null;
+    autoPayoutError?: string | null;
+  };
   availableBalance?: string;
   error?: string;
   code?: string;
@@ -155,6 +162,8 @@ export function PlayerWithdrawModal({
     currency: string;
     /** 服务端回写的收款账号描述（银行名 · 掩码账号 · 持有人） */
     account: string;
+    /** 智能路由结果：自动已打款 / 自动处理中 / 转人工审核 */
+    note: string;
   } | null>(null);
 
   const pendingValue = Number(pendingWithdrawalAmount);
@@ -354,6 +363,14 @@ export function PlayerWithdrawModal({
         amount: data.withdrawal.amount,
         currency: payoutCurrency,
         account: data.withdrawal.walletAddress,
+        // 智能路由提示：自动出款成功 / 自动处理中 / 转人工审核
+        note: t(
+          data.routing?.autoPayoutStatus === "paid"
+            ? "player.withdraw.autoPaid"
+            : data.routing?.route === "auto"
+              ? "player.withdraw.autoQueued"
+              : "player.withdraw.manualReview",
+        ),
       });
       // 广播钱包变更：带上服务端算好的可用余额，大厅顶栏等展示余额的组件
       // 立刻重绘（再自行重新拉 /api/player/me 校准）。
@@ -468,6 +485,9 @@ export function PlayerWithdrawModal({
                 {t("player.withdraw.successHint", {
                   id: submitted.id.slice(0, 8).toUpperCase(),
                 })}
+              </p>
+              <p className="mt-1 text-[11px] leading-5 text-[#f0d27c]">
+                {submitted.note}
               </p>
               <button
                 type="button"

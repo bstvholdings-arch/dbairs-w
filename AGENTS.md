@@ -119,6 +119,19 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 币种归一化只走 `normalizePayoutCurrency()`（脏数据 `RM` 视同 `MYR`）；`Withdrawal.currency` 落库时写入归一化后的记账币种，**禁止**把网关上的原始字符串直接写进流水。
 - 提现金额输入最多两位小数（法币只到「分」）；`parseWithdrawalAmount` 仍兼容 6 位是为了历史数据，不要因此放宽前端校验。
 
+### 10. 自动出款（Auto Payout）：能自动就自动，不能自动就一定能人工
+
+- **判定只写一次**：`src/lib/auto-payout.ts` 的 `evaluateAutoPayoutRoute()`（纯函数）+ `evaluateWithdrawalRouting()`（查库版）。顺序固定为「有没有代付 API → 开关 → KYC → 红利流水 → 单笔上限 → 当日额度熔断」，任何一项不满足就产出一个 `manual_*` 原因并落 `pending`。**禁止**在路由文件、页面或组件里另写一套判断。
+- **没有代付 API 时，人工审批按钮必须绝对存在**：`/tenant/withdrawals` 的 `Approve` / `Reject` 对每一条 `pending` 单**无条件渲染**，不得改成「有代付 API 才显示」或任何条件渲染。自动打款失败的单会退回 `pending`（`riskStatus=auto_payout_failed`），靠的就是这两个按钮。
+- **记账只有一份实现**：`src/lib/withdrawal-settlement.ts`（`settleWithdrawalSuccess` / `markWithdrawalFailed` / `returnWithdrawalToManualReview`）。代付回调 `/api/withdrawal/callback`、商户人工审批 `reviewTenantWithdrawal`、自动出款 `runAutoPayout` 三条路径必须共用；靠 `updateMany({ where: { status: { in: [...] } } })` 做数据库层 CAS，**禁止**再复制一份「扣余额 + 写流水」。
+- **状态机固定四态**：`pending`（人工待审）/ `processing`（自动出款在途）/ `success`（已出款）/ `failed`（驳回或出款失败）。`processing` 单**不接受**人工审批（`reviewTenantWithdrawal` 返回 409），页面也不出按钮 —— 否则就是「自动打一次 + 人工再打一次」。
+- **在途金额口径唯一**：可用余额 / 玩家中心 / AI 工具 / 平台大盘一律用 `src/lib/withdrawal-status.ts` 的 `IN_FLIGHT_WITHDRAWAL_STATUSES`（`pending` + `processing`）。只算 `pending` 会让自动出款在途的钱被再提一次。
+- **熔断不靠定时任务**：当日 `isAuto=true` 且 `status in (processing, success)` 的合计 ≥ `Tenant.autoPayoutConfig.dailyAutoLimit` 时，本单当场转人工（用「已出 + 本单」比较，永不超发）；按自然日（服务器本地 00:00）重置。
+- **代付地址只能挂在商户自有通道**：唯一写入口是 `PATCH /api/tenant/payout-engine`，`where` 必须带 `ownerId=本站 + isPlatformGateway=false`。平台通道（`ownerId=null`）**永远**判成「没有代付 API」→ 人工，与第 1 条「平台绝不碰资金」一致，不得开任何后门。
+- **出站请求契约**（`requestGatewayPayout`）：`POST {PaymentGateway.payoutEndpoint}`，头带 `x-gateway-signature: sha256=HMAC-SHA256(rawBody, gateway.apiKey)` 与 `x-idempotency-key: 提现单号`，15s 超时；返回非 2xx / `success!==true` 一律转人工。签名复用回调那套 `createCallbackSignature`，不许另造算法。
+- **配置读侧 fail-closed**：`normalizeAutoPayoutConfig()` 遇到 `null` / 脏数据 / 非数字一律回落「关闭 + 默认限额」；商户提交非法值（负数、超上限、开关打开但限额 0）直接 400 拒绝，不猜。老租户升级后 = 全部人工，行为不变。
+- 增量 SQL：`prisma/auto-payout.sql`（幂等，`npm run db:sql prisma/auto-payout.sql`），改完记得 `npx prisma generate`。
+
 
 
 

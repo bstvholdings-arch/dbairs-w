@@ -32,6 +32,7 @@ export const gatewaySelect = {
   qrCodeImageUrl: true,
   bankDetails: true,
   endpoint: true,
+  payoutEndpoint: true,
   apiKey: true,
   payinCostRate: true,
   payinSellRate: true,
@@ -65,6 +66,8 @@ export type SerializedGateway = {
   qrCodeImageUrl: string | null;
   bankDetails: GatewayBankDetails | null;
   endpoint: string;
+  /** 代付 API 地址（出金用，空 = 没有代付能力 → 提现只能人工审核） */
+  payoutEndpoint: string | null;
   apiKeyPreview: string;
   payinCostRate: string;
   payinSellRate: string;
@@ -102,6 +105,7 @@ export function serializeGateway(gateway: GatewayRecord): SerializedGateway {
     qrCodeImageUrl: gateway.qrCodeImageUrl,
     bankDetails: serializeGatewayBankDetails(gateway.bankDetails),
     endpoint: gateway.endpoint,
+    payoutEndpoint: gateway.payoutEndpoint,
     apiKeyPreview: gateway.apiKey
       ? `••••${gateway.apiKey.slice(-4)}`
       : "未配置",

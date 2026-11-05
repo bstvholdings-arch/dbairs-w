@@ -1,15 +1,28 @@
 import type { NextRequest } from "next/server";
-import { Prisma } from "@prisma/client";
 
 import {
   callbackSignatureRequired,
   verifyCallbackSignature,
 } from "@/lib/payment-gateway";
 import { prisma } from "@/lib/prisma";
+import {
+  markWithdrawalFailed,
+  settleWithdrawalSuccess,
+} from "@/lib/withdrawal-settlement";
+import {
+  WITHDRAWAL_STATUS_FAILED,
+  WITHDRAWAL_STATUS_PENDING,
+  WITHDRAWAL_STATUS_PROCESSING,
+  WITHDRAWAL_STATUS_SUCCESS,
+} from "@/lib/withdrawal-status";
 
 type CallbackStatus = "success" | "failed";
 
-class InsufficientBalanceError extends Error {}
+/** 回调可以结算的状态：人工待审（pending）与自动出款在途（processing） */
+const CALLBACK_SETTLE_STATUSES = [
+  WITHDRAWAL_STATUS_PENDING,
+  WITHDRAWAL_STATUS_PROCESSING,
+] as const;
 
 function jsonError(message: string, status: number) {
   return Response.json({ error: message }, { status });
@@ -39,14 +52,17 @@ function readTxHash(value: unknown) {
  *
  * Body: { withdrawalId, status: "success" | "failed", txHash? }
  *
- * 纯电子记账：
- * - success：条件更新 pending -> success，扣减 Player.balance，写一条
- *   Transaction(type=withdraw)；三步在同一事务内，不会只扣钱不记账。
+ * 纯电子记账（结算实现见 src/lib/withdrawal-settlement.ts，与商户人工审批、
+ * 自动出款引擎共用同一份代码，三条路径记账口径完全一致）：
+ * - success：条件更新 `pending|processing -> success`，扣减 Player.balance，
+ *   写一条 Transaction(type=withdraw)；三步同一事务，不会只扣钱不记账。
+ *   `processing` 也必须能结算 —— 自动出款把单子置成 processing 后才去代付，
+ *   异步回调回来时状态已经不是 pending 了。
  * - failed：只改提现单状态，不动余额、不写流水。
  * - 不扣减/不增加任何平台内部资金账户。
  *
- * 防重复扣款：`updateMany({ where: { id, status: "pending" } })` 是数据库层
- * compare-and-swap，只有抢到状态迁移的请求才会扣余额。
+ * 防重复扣款：settleWithdrawalSuccess 里的 `updateMany({ where: { status: { in } } })`
+ * 是数据库层 compare-and-swap，只有抢到状态迁移的请求才会扣余额。
  */
 export async function POST(request: NextRequest) {
   let rawBody: string;
@@ -132,29 +148,22 @@ export async function POST(request: NextRequest) {
     }
 
     if (status === "failed") {
-      const result = await prisma.$transaction(async (tx) => {
-        const claimed = await tx.withdrawal.updateMany({
-          where: { id: withdrawal.id, status: "pending" },
-          data: {
-            status: "failed",
-            txHash,
-            processedAt: new Date(),
-          },
-        });
-
-        if (claimed.count === 0) {
-          const current = await tx.withdrawal.findUnique({
-            where: { id: withdrawal.id },
-            select: { status: true },
-          });
-
-          return { currentStatus: current?.status ?? "unknown" };
-        }
-
-        return { currentStatus: "failed" };
+      const failed = await markWithdrawalFailed({
+        withdrawalId: withdrawal.id,
+        fromStatuses: CALLBACK_SETTLE_STATUSES,
+        txHash,
       });
 
-      if (result.currentStatus === "failed") {
+      if (failed.changed) {
+        return Response.json({
+          success: true,
+          replayed: false,
+          withdrawalId: withdrawal.id,
+          status: "failed",
+        });
+      }
+
+      if (failed.currentStatus === WITHDRAWAL_STATUS_FAILED) {
         return Response.json({
           success: true,
           replayed: true,
@@ -163,77 +172,29 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      if (result.currentStatus === "success") {
+      if (failed.currentStatus === WITHDRAWAL_STATUS_SUCCESS) {
         return jsonError("提现单已成功出款，不能回退为失败", 409);
       }
 
       return jsonError("提现单状态异常，无法处理失败回调", 409);
     }
 
-    const result = await prisma.$transaction(async (tx) => {
-      const claimed = await tx.withdrawal.updateMany({
-        where: { id: withdrawal.id, status: "pending" },
-        data: {
-          status: "success",
-          txHash,
-          processedAt: new Date(),
-        },
-      });
-
-      if (claimed.count === 0) {
-        const current = await tx.withdrawal.findUnique({
-          where: { id: withdrawal.id },
-          select: { status: true },
-        });
-
-        return {
-          credited: false,
-          currentStatus: current?.status ?? "unknown",
-          transactionId: null as string | null,
-          balance: null as string | null,
-        };
-      }
-
-      // 条件扣减：余额不足时更新 0 行，整个事务回滚，提现单仍是 pending。
-      const player = await tx.player.updateMany({
-        where: {
-          id: withdrawal.playerId!,
-          balance: { gte: withdrawal.amount },
-        },
-        data: { balance: { decrement: withdrawal.amount } },
-      });
-
-      if (player.count === 0) {
-        throw new InsufficientBalanceError();
-      }
-
-      const transaction = await tx.transaction.create({
-        data: {
-          tenantId: withdrawal.tenantId,
-          playerId: withdrawal.playerId,
-          type: "withdraw",
-          amount: withdrawal.amount,
-          currency: withdrawal.currency,
-          status: "success",
-          txHash,
-        },
-        select: { id: true },
-      });
-
-      const updatedPlayer = await tx.player.findUnique({
-        where: { id: withdrawal.playerId! },
-        select: { balance: true },
-      });
-
-      return {
-        credited: true,
-        currentStatus: "success",
-        transactionId: transaction.id,
-        balance: updatedPlayer?.balance.toFixed(6) ?? null,
-      };
+    const result = await settleWithdrawalSuccess({
+      withdrawalId: withdrawal.id,
+      fromStatuses: CALLBACK_SETTLE_STATUSES,
+      txHash,
     });
 
-    if (result.credited) {
+    if (result.settled) {
+      if (result.replay) {
+        return Response.json({
+          success: true,
+          replayed: true,
+          withdrawalId: withdrawal.id,
+          status: "success",
+        });
+      }
+
       return Response.json({
         success: true,
         replayed: false,
@@ -245,32 +206,24 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    if (result.currentStatus === "success") {
-      return Response.json({
-        success: true,
-        replayed: true,
-        withdrawalId: withdrawal.id,
-        status: "success",
-      });
+    if (result.reason === "insufficient_balance") {
+      return jsonError("玩家余额不足，提现单保持待处理", 409);
     }
 
-    if (result.currentStatus === "failed") {
+    if (result.reason === "duplicate_reference") {
+      return jsonError("该交易哈希已被其他提现单使用，已拒绝重复扣款", 409);
+    }
+
+    if (result.reason === "not_found") {
+      return jsonError("提现单不存在", 404);
+    }
+
+    if (result.currentStatus === WITHDRAWAL_STATUS_FAILED) {
       return jsonError("提现单已标记失败，不能重新扣款", 409);
     }
 
     return jsonError("提现单状态异常，无法处理成功回调", 409);
   } catch (error) {
-    if (error instanceof InsufficientBalanceError) {
-      return jsonError("玩家余额不足，提现单保持待处理", 409);
-    }
-
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2002"
-    ) {
-      return jsonError("该交易哈希已被其他提现单使用，已拒绝重复扣款", 409);
-    }
-
     console.error("处理代付回调失败:", error);
     return jsonError("服务器内部错误，请稍后重试", 500);
   }

@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useEffect } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
-import { formatAmount, formatDate, formatInteger } from "@/lib/format";
+import { formatDisplayAmount } from "@/lib/currency";
+import { formatDate, formatInteger } from "@/lib/format";
 import type { TranslationKey } from "@/lib/i18n-types";
 import type { TenantFinancePage } from "@/lib/tenant-console";
 
@@ -33,9 +34,12 @@ function statusTone(status: string) {
 export function TenantFinanceView({
   tenantName,
   data,
+  pendingWithdrawalCount,
 }: {
   tenantName: string;
   data: TenantFinancePage;
+  /** 待审批提现笔数（本页只提示 + 跳转，审批在 /tenant/withdrawals） */
+  pendingWithdrawalCount: number;
 }) {
   const { language, t } = useLanguage();
   const locale = language === "zh" ? "zh-CN" : "en-US";
@@ -53,19 +57,19 @@ export function TenantFinanceView({
     {
       key: "success",
       label: t("tenantFinance.cards.success"),
-      value: `$${formatAmount(data.summary.successTotal)}`,
+      value: formatDisplayAmount(data.summary.successTotal, data.currency),
       tone: "text-emerald-300",
     },
     {
       key: "pending",
       label: t("tenantFinance.cards.pending"),
-      value: `$${formatAmount(data.summary.pendingTotal)}`,
+      value: formatDisplayAmount(data.summary.pendingTotal, data.currency),
       tone: "text-amber-200",
     },
     {
       key: "failed",
       label: t("tenantFinance.cards.failed"),
-      value: `$${formatAmount(data.summary.failedTotal)}`,
+      value: formatDisplayAmount(data.summary.failedTotal, data.currency),
       tone: "text-red-300",
     },
   ];
@@ -100,6 +104,25 @@ export function TenantFinanceView({
           </Link>
         ))}
       </div>
+
+      {pendingWithdrawalCount > 0 ? (
+        <Link
+          href="/tenant/withdrawals"
+          className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#d4af37]/35 bg-[#d4af37]/[0.08] px-5 py-4 transition-colors hover:border-[#d4af37]/60 hover:bg-[#d4af37]/[0.14]"
+        >
+          <span className="flex items-center gap-2.5 text-sm font-semibold text-[#f7e0a1]">
+            <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-[#d4af37] px-1.5 text-[11px] font-bold text-black">
+              {formatInteger(pendingWithdrawalCount)}
+            </span>
+            {t("tenantFinance.approvalPending", {
+              count: formatInteger(pendingWithdrawalCount),
+            })}
+          </span>
+          <span className="text-[11px] font-medium text-neutral-300">
+            {t("tenantFinance.approvalCtaAction")}
+          </span>
+        </Link>
+      ) : null}
 
       <section className="mt-4 grid gap-3 sm:grid-cols-3">
         {cards.map((card) => (
@@ -166,10 +189,7 @@ export function TenantFinanceView({
                       {item.gatewayName ?? "—"}
                     </td>
                     <td className="px-4 py-3 font-mono text-xs text-[#f0d27c]">
-                      ${formatAmount(item.amount)}{" "}
-                      <span className="text-[9px] text-neutral-600">
-                        {item.currency}
-                      </span>
+                      {formatDisplayAmount(item.amount, item.currency)}
                     </td>
                     <td className="px-4 py-3">
                       <span

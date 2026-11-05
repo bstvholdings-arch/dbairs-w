@@ -6,6 +6,7 @@ import { normalizeTenantLogoUrl } from "./storefront";
 import { PLAYER_TOKEN_COOKIE, verifyPlayerToken } from "./player-auth";
 import { availableBalanceToString } from "./player-balance";
 import { prisma } from "./prisma";
+import { inFlightWithdrawalStatusList } from "./withdrawal-status";
 
 export type PlayerSessionInfo = {
   id: string;
@@ -87,7 +88,11 @@ async function resolvePlayerSession(
       },
     }),
     prisma.withdrawal.aggregate({
-      where: { playerId: payload.userId, status: "pending" },
+      // 在途提现：pending + processing 都还没扣余额（口径见 src/lib/withdrawal-status.ts）
+      where: {
+        playerId: payload.userId,
+        status: { in: inFlightWithdrawalStatusList() },
+      },
       _sum: { amount: true },
     }),
   ]);

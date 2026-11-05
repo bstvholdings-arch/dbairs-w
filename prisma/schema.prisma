@@ -55,6 +55,17 @@ model Tenant {
   //   null / 脏数据 / 缺品类 → 全部品类视为「关闭 + 0 费率」（宁可少发，不可误发）。
   rebateConfig Json?
 
+  // 自动出款引擎（Auto Payout）：**唯一事实来源**，商户后台 /tenant/withdrawals 自行维护。
+  // 形如 { "isEnabled": true, "maxAutoAmount": 100, "dailyAutoLimit": 1000 }
+  // - isEnabled：总开关，false 时所有提现一律进人工审核队列（fail-closed）；
+  // - maxAutoAmount：单笔自动出款上限，超过就转人工（防大额误打）；
+  // - dailyAutoLimit：每日自动出款总额上限，达线即熔断，当天剩余订单全部转人工。
+  // 读侧一律过 src/lib/auto-payout.ts 的 normalizeAutoPayoutConfig()：
+  // null / 脏数据 / 非数字 → isEnabled=false（宁可全人工，不可自动乱打钱）。
+  // ⚠️ 自动出款成立还有一个硬前提：该笔提现用的支付网关必须配了 payoutEndpoint
+  //    （商户自己的代付 API 地址），没配就一律人工，配置面板在提现审批页。
+  autoPayoutConfig Json?
+
   // API 集成中心（/admin/integrations）：商户对接资料
   // contactEmail：对接联系邮箱，发送 / 重置密钥时的默认收件人
   // apiCallbackUrl：商户专属回调地址，留空表示使用平台默认回调
@@ -259,7 +270,24 @@ model Withdrawal {
   player            Player?         @relation(fields: [playerId], references: [id], onDelete: SetNull)
   amount            Decimal         @db.Decimal(18, 6)
   currency          String          @default("USDT")
-  status            String          @default("pending") // pending, success, failed
+  status            String          @default("pending") // pending 人工待审 / processing 自动出款中 / success 已出款 / failed 已驳回或出款失败
+  /**
+   * 风险 / 路由原因快照（智能路由判定结果，便于商户一眼看出「为什么这单没自动出」）：
+   * auto_queued          自动出款已受理，正在等代付商结果
+   * auto_paid            自动出款成功（与 success 同时出现）
+   * auto_payout_failed   代付 API 调用失败，已退回人工审核队列
+   * auto_payout_unsettled 代付成功但扣款失败（余额被并发花掉），需人工对账
+   * manual_disabled      商户关着自动出款开关
+   * manual_no_payout_api 该通道没配代付 API
+   * manual_over_single_limit 超过单笔自动上限
+   * manual_daily_limit  当日自动出款额度已熔断
+   * manual_kyc_pending  实名未通过
+   * manual_bonus_turnover 红利流水未打满
+   * null = 历史数据（改造前就没有这个字段）
+   */
+  riskStatus        String?
+  /** 这单是否走了自动出款通道（true 的金额才计入当日额度与熔断阈值） */
+  isAuto            Boolean         @default(false)
   walletAddress     String // 提现钱包地址
   gatewayId         String? // 代付通道，用于回调验签
   gateway           PaymentGateway? @relation(fields: [gatewayId], references: [id], onDelete: SetNull)
@@ -272,6 +300,8 @@ model Withdrawal {
   @@index([tenantId, status])
   @@index([playerId, createdAt])
   @@index([gatewayId])
+  // 熔断判定按「当日 + isAuto」聚合总额，走这条索引
+  @@index([tenantId, isAuto, createdAt])
 }
 
 // 6.1 玩家提现账号 (PlayerWithdrawalAccount - 全球法币 / 加密货币收款账号)
@@ -486,8 +516,15 @@ model PaymentGateway {
   walletAddress  String? // USDT 收款钱包地址（TRC20 / ERC20）；非 USDT 网关可为空
   qrCodeImageUrl String? // STATIC_QR 的收款图片（http/https URL 或 data:image base64）
   bankDetails    Json? // BANK_TRANSFER 的银行信息（户名、账号、SWIFT/BIC、IBAN、PayID 等）
-  endpoint       String // REDIRECT_URL / DYNAMIC_QR 的支付接口地址
-  apiKey         String // 回调验签密钥，接口只返回掩码
+  endpoint       String // REDIRECT_URL / DYNAMIC_QR 的**收款**接口地址（入金用）
+  apiKey         String // 回调验签密钥 / 代付请求签名密钥，接口只返回掩码
+
+  // 代付 API 地址（出金用，与上面的收款 endpoint 是两条独立链路）。
+  // - 由商户在自己的后台「提现审批 → 自动出款引擎」里填写，保存即生效；
+  // - 空值 = 该通道没有代付能力 → 用这条通道的提现单一律进人工审核队列，
+  //   这是「智能路由」的判定条件之一（见 src/lib/auto-payout.ts）；
+  // - 平台通道（ownerId=null）不允许配置代付地址：资金不经过平台，合法底线。
+  payoutEndpoint String?
 
   // 平台通道成本 / 对租户售价。代收、代付、结算三条业务线独立定价。
   payinCostRate      Decimal @default(0) @db.Decimal(8, 6)

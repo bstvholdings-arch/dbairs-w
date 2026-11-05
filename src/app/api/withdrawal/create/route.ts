@@ -2,6 +2,12 @@ import type { NextRequest } from "next/server";
 import { Prisma } from "@prisma/client";
 
 import { loadBonusTurnoverLock } from "@/lib/bonus-campaigns";
+import {
+  AUTO_PAYOUT_RISK,
+  evaluateWithdrawalRouting,
+  runAutoPayout,
+  type AutoPayoutExecutionResult,
+} from "@/lib/auto-payout";
 import { parseWithdrawalAmount } from "@/lib/payment-gateway";
 import { resolvePaymentPlayerIdentity } from "@/lib/payment-player";
 import { KYC_REQUIRED_CODE, KYC_REQUIRED_MESSAGE } from "@/lib/kyc";
@@ -10,6 +16,11 @@ import {
   isFiatPayoutChannel,
   normalizePayoutCurrency,
 } from "@/lib/withdrawal-channels";
+import {
+  WITHDRAWAL_STATUS_PENDING,
+  WITHDRAWAL_STATUS_PROCESSING,
+  inFlightWithdrawalStatusList,
+} from "@/lib/withdrawal-status";
 
 function jsonError(message: string, status: number, code?: string) {
   return Response.json(
@@ -213,6 +224,9 @@ export async function POST(request: NextRequest) {
         name: true,
         providerType: true,
         currency: true,
+        // 智能路由要看「这条通道是不是商户自己的」+「有没有配代付 API」
+        ownerId: true,
+        payoutEndpoint: true,
       },
     });
 
@@ -244,12 +258,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 可用余额 = 余额 - 处理中的提现单。pending 阶段不扣钱，所以必须在这里挡住超额提单。
+    // 可用余额 = 余额 - 在途提现单（pending 人工待审 + processing 自动出款中）。
+    // 两种状态都还没扣 Player.balance，所以必须一起算进来挡住超额提单；
+    // 只算 pending 的话，自动出款在途的那笔钱可以被玩家再提一次。
     const pendingAggregate = await prisma.withdrawal.aggregate({
       where: {
         playerId: player.id,
         tenantId: player.tenantId,
-        status: "pending",
+        status: { in: inFlightWithdrawalStatusList() },
       },
       _sum: { amount: true },
     });
@@ -266,6 +282,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // 智能路由：有代付 API + 开关开着 + 金额/额度/KYC/红利流水全过 → 自动出款；
+    // 任意一项不满足就落 pending 进人工审批队列（人工按钮永远在，见 /tenant/withdrawals）。
+    const routing = await evaluateWithdrawalRouting({
+      tenantId: player.tenantId,
+      gateway,
+      amount,
+      kycApproved: true, // 上面已经用 403 挡住了未实名的账号
+      bonusTurnoverOutstanding: Number(bonusLock.outstanding),
+    });
+
+    const isAuto = routing.route === "auto";
+
     const withdrawal = await prisma.withdrawal.create({
       data: {
         tenantId: player.tenantId,
@@ -276,7 +304,11 @@ export async function POST(request: NextRequest) {
         // 否则回调扣款与对账会出现同一笔钱两种币种代码。
         currency: payoutCurrency,
         walletAddress,
-        status: "pending",
+        // 自动出款先进 processing（已提交给代付 API），结算后才会变 success；
+        // 人工审核路径直接 pending，等商户 Approve / Reject。
+        status: isAuto ? WITHDRAWAL_STATUS_PROCESSING : WITHDRAWAL_STATUS_PENDING,
+        riskStatus: routing.riskStatus,
+        isAuto,
         approvals: 0,
         requiredApprovals: player.tenant.withdrawalRequiredApprovals,
       },
@@ -288,11 +320,30 @@ export async function POST(request: NextRequest) {
         amount: true,
         currency: true,
         status: true,
+        riskStatus: true,
+        isAuto: true,
         walletAddress: true,
         requiredApprovals: true,
         createdAt: true,
       },
     });
+
+    // 路由 A：立刻打款。任何失败都会把单子退回 pending（riskStatus=auto_payout_failed），
+    // 所以对玩家来说「钱一定有着落」，对商户来说「异常一定有红色提示」。
+    let autoPayout: AutoPayoutExecutionResult | null = null;
+
+    if (isAuto) {
+      autoPayout = await runAutoPayout({
+        withdrawalId: withdrawal.id,
+        tenantId: player.tenantId,
+      });
+    }
+
+    const finalStatus = autoPayout?.status === "paid" ? "success" : withdrawal.status;
+    const finalRiskStatus =
+      autoPayout?.status === "manual_review"
+        ? AUTO_PAYOUT_RISK.autoPayoutFailed
+        : withdrawal.riskStatus;
 
     return Response.json(
       {
@@ -305,14 +356,24 @@ export async function POST(request: NextRequest) {
           gatewayName: gateway.name,
           amount: withdrawal.amount.toFixed(6),
           currency: withdrawal.currency,
-          status: withdrawal.status,
+          status: finalStatus,
+          riskStatus: finalRiskStatus,
+          isAuto,
           walletAddress: withdrawal.walletAddress,
           requiredApprovals: withdrawal.requiredApprovals,
           createdAt: withdrawal.createdAt.toISOString(),
         },
-        // pending 阶段还没有扣余额，扣款发生在代付成功回调里。
-        balanceDeducted: false,
-        // 提交后还能提多少（已扣除处理中的申请），前端用来刷新「可用余额」。
+        // 智能路由结果：前端据此提示「已自动打款 / 已转人工审核」
+        routing: {
+          route: routing.route,
+          riskStatus: finalRiskStatus,
+          autoPayoutStatus: autoPayout?.status ?? null,
+          autoPayoutError:
+            autoPayout?.status === "manual_review" ? autoPayout.error : null,
+        },
+        // 自动出款成功时钱已经扣了；pending / processing 都还没扣。
+        balanceDeducted: autoPayout?.status === "paid",
+        // 提交后还能提多少（已扣除在途的申请），前端用来刷新「可用余额」。
         availableBalance: availableBalance.minus(amount).toFixed(6),
       },
       { status: 201, headers: { "Cache-Control": "no-store" } },

@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { connection } from "next/server";
 
 import {
+  countTenantPendingWithdrawals,
   getTenantScopeFromCookies,
   isTenantFinanceKind,
   loadTenantFinance,
@@ -45,11 +46,16 @@ export default async function TenantFinancePage({
     kind,
     page,
   });
+  // 待审批笔数：本页只做提示 + 跳转，真正的审批在 /tenant/withdrawals
+  const pendingWithdrawalCount = await countTenantPendingWithdrawals(
+    scope.tenantId,
+  );
 
   return (
     <TenantFinanceView
       tenantName={scope.tenant.name}
       data={data}
+      pendingWithdrawalCount={pendingWithdrawalCount}
     />
   );
 }

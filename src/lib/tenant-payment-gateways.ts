@@ -21,6 +21,7 @@ export const tenantGatewaySelect = {
   qrCodeImageUrl: true,
   bankDetails: true,
   endpoint: true,
+  payoutEndpoint: true,
   apiKey: true,
   payinSellRate: true,
   payoutSellRate: true,
@@ -61,6 +62,8 @@ export type TenantOwnGateway = {
   configurationSummaryData: TenantGatewayConfigurationSummary;
   apiKeyPreview: string;
   hasApiKey: boolean;
+  /** 是否配了代付 API（出金用）。false → 用这条通道的提现只能人工审核 */
+  payoutApiConfigured: boolean;
   isActive: boolean;
   reviewStatus: GatewayReviewStatusValue;
   reviewNote: string | null;
@@ -208,6 +211,7 @@ export function serializeTenantOwnGateway(
     configurationSummaryData: gatewayConfigurationSummaryData(gateway),
     apiKeyPreview: gateway.apiKey ? `••••${gateway.apiKey.slice(-4)}` : "",
     hasApiKey: Boolean(gateway.apiKey),
+    payoutApiConfigured: Boolean(gateway.payoutEndpoint),
     isActive: gateway.isActive,
     reviewStatus: gateway.reviewStatus,
     reviewNote: gateway.reviewNote,
