@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import type { NextRequest } from "next/server";
 
 import { normalizeCurrency } from "./currency";
+import { resolveDepositFeeBreakdown } from "./deposit-fee";
 import { failDepositOrder, settleDepositOrder } from "./deposit-settlement";
 import { toNumber } from "./format";
 import {
@@ -714,6 +715,13 @@ export type TenantFinanceRow = {
   reference: string | null;
   gatewayName: string | null;
   createdAt: string;
+  /**
+   * 通道手续费（只有入金行有值）= 金额 × 通道费率 ÷ 100。
+   * 只用于商户对账展示，**不参与**玩家上分金额（玩家一分钱都不扣）。
+   */
+  feeAmount?: number;
+  /** 商户实际到账 = 金额 − 通道手续费（只有入金行有值） */
+  actualReceived?: number;
 };
 
 export type TenantFinancePage = {
@@ -795,6 +803,8 @@ export async function loadTenantFinance(input: {
           status: true,
           txHash: true,
           createdAt: true,
+          feeAmount: true,
+          actualReceived: true,
           player: { select: { username: true } },
           gateway: { select: { name: true } },
         },
@@ -810,17 +820,29 @@ export async function loadTenantFinance(input: {
     return {
       currency,
       kind,
-      items: items.map((item) => ({
-        id: item.id,
-        kind,
-        playerName: item.player.username,
-        amount: decimal(item.amount),
-        currency: item.currency,
-        status: item.status,
-        reference: item.txHash,
-        gatewayName: item.gateway.name,
-        createdAt: item.createdAt.toISOString(),
-      })),
+      items: items.map((item) => {
+        const amount = decimal(item.amount);
+        // 通道费账本：历史单两列都是 0，按「全额入账」回落展示。
+        const fee = resolveDepositFeeBreakdown({
+          amount,
+          feeAmount: decimal(item.feeAmount),
+          actualReceived: decimal(item.actualReceived),
+        });
+
+        return {
+          id: item.id,
+          kind,
+          playerName: item.player.username,
+          amount,
+          currency: item.currency,
+          status: item.status,
+          reference: item.txHash,
+          gatewayName: item.gateway.name,
+          createdAt: item.createdAt.toISOString(),
+          feeAmount: fee.feeAmount,
+          actualReceived: fee.actualReceived,
+        };
+      }),
       total,
       page,
       pageSize,
@@ -1059,6 +1081,9 @@ const DEPOSIT_REVIEW_SELECT = {
   callbackTxHash: true,
   callbackReceivedAt: true,
   createdAt: true,
+  // 通道手续费账本（商户确认到账时对着它算实际入账）
+  feeAmount: true,
+  actualReceived: true,
   player: { select: { username: true } },
   gateway: { select: { name: true, gatewayType: true } },
 } satisfies Prisma.DepositOrderSelect;
@@ -1081,6 +1106,10 @@ export type TenantDepositReviewRow = {
   callbackTxHash: string | null;
   callbackReceivedAt: string | null;
   createdAt: string;
+  /** 通道手续费 = 金额 × 通道费率 ÷ 100（只记账，不从玩家身上扣） */
+  feeAmount: number;
+  /** 商户实际到账 = 金额 − 通道手续费 */
+  actualReceived: number;
   /** pending（等商户确认）/ approved（已到账）/ rejected（已驳回） */
   manualReviewStatus: string;
   /**
@@ -1104,11 +1133,19 @@ export type TenantDepositReviewBoard = {
 function mapDepositReviewRow(
   item: DepositReviewRecord,
 ): TenantDepositReviewRow {
+  const amount = decimal(item.amount);
+  // 通道费账本：历史单两列都是 0 → 按「全额入账」回落展示。
+  const fee = resolveDepositFeeBreakdown({
+    amount,
+    feeAmount: decimal(item.feeAmount),
+    actualReceived: decimal(item.actualReceived),
+  });
+
   return {
     id: item.id,
     orderNo: item.orderNo,
     playerName: item.player.username,
-    amount: decimal(item.amount),
+    amount,
     currency: normalizeCurrency(item.currency),
     gatewayName: item.gateway.name,
     gatewayType: item.gateway.gatewayType,
@@ -1117,6 +1154,8 @@ function mapDepositReviewRow(
     callbackTxHash: item.callbackTxHash,
     callbackReceivedAt: item.callbackReceivedAt?.toISOString() ?? null,
     createdAt: item.createdAt.toISOString(),
+    feeAmount: fee.feeAmount,
+    actualReceived: fee.actualReceived,
     manualReviewStatus: item.manualReviewStatus ?? "",
     signalReceived: item.manualReviewStatus === DEPOSIT_MANUAL_REVIEW_PENDING,
   };

@@ -173,3 +173,14 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 商户后台（`PATCH /api/tenant/settings` / `saveTenantSiteSettings`）与装修页（`PUT /api/admin/storefront`）都不认 `country` / `currency`，构造请求也改不动（与 `themeBackground` / `logoUrl` 同一权限口径）。
 - 增量 SQL：`prisma/tenant-country.sql`（幂等）。执行顺序：`npx prisma db push`（新增 `country` 列，`NOT NULL DEFAULT 'MY'`，纯加成）→ `npm run db:sql prisma/tenant-country.sql`（按已有币种回填老租户的国家）→ `npx prisma generate`。**DB 没迁移就发布 = 所有查租户的页面 500**（`tenantSelect` 里有 `country`），务必先迁移再上线。
 
+### 14. 通道费率与对账账本：只记账，绝不从玩家身上扣
+
+- **平台绝不碰资金，只做精准账本**（与第 1 条同一法律底线）。`PaymentGateway.feeRate`（Decimal(6,4)，**百分比**：`2` = 2%）是商户自己的收单手续费率，唯一写入口是 `/tenant/payments` 的通道弹窗（`parseTenantGatewayInput` 校验 0~100，非法 400，留空 = 0）。
+- **玩家余额永远只加订单全额**：`settleDepositOrder` 的 `balance increment` 只认 `DepositOrder.amount`，通道费一分钱都不从玩家身上扣，"充 100 → 上分 100"。任何人想把 `feeAmount` 塞进上分金额里 = 违反红线，直接否掉。
+- **账本两列只写不扣**：`DepositOrder.feeAmount = amount × feeRate ÷ 100`（四舍五入到分）、`actualReceived = amount − feeAmount`。口径唯一实现是 `src/lib/deposit-fee.ts`（`calculateDepositFee` / `resolveDepositFeeBreakdown` / `parseGatewayFeeRatePercent` / `formatGatewayFeeRatePercent`），**禁止**在路由、页面、组件里另写一份乘除。
+- **下单时快照，入账时兜底**：`POST /api/deposit/create` 按当时的 `gateway.feeRate` 算账并写库（pending 单在审核台就能看到通道费 / 实际入账）；`settleDepositOrder` 只在订单两列都还是 0（本功能上线前的历史 pending 单）时补记一次，**已有账本数据的订单永不被改写** —— 商户事后调费率不得倒改历史账。
+- **读侧回落**：历史单（两列都是 0 且 `amount > 0`）展示为「通道费 0、实际入账 = 全额」，否则商户会以为系统吞钱。归一化只走 `resolveDepositFeeBreakdown`。
+- **展示位置**：`/tenant/finance`（入金行）与 `/tenant/deposits`（人工审核台）在金额下方用小灰字显示 `通道费: 2.00 | 实际入账: 98.00`（`tenantFinance.feeBreakdown` / `tenantDeposits.feeBreakdown`）；通道列表行显示 `tenantPayments.own.feeRate`。玩家侧**永不展示**这两个字段。
+- **整对象覆盖的坑**：`tenantGatewayWriteData` 覆盖式写入，`PUT /api/tenant/gateways/[id]` 与超管 `PATCH /api/admin/integrations/gateways/[id]` 在 body 缺省 `feeRate` 时**必须沿用库里的旧值**（与 `supportedBanks` / `apiKey` 同一兜底口径），否则一次排障就等于把商户的对账费率清零。
+- 增量 SQL：`prisma/gateway-fee-rate.sql`（幂等）。执行顺序：`npx prisma db push`（三个 `NOT NULL DEFAULT 0` 新列，纯加成）→ `npm run db:sql prisma/gateway-fee-rate.sql`（回填历史单的 `actualReceived`）→ `npx prisma generate` → **重启 dev server**（旧的内存客户端看不到新字段）。
+

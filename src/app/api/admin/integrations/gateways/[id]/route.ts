@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 
+import { formatGatewayFeeRatePercent } from "@/lib/deposit-fee";
 import { maskApiKey } from "@/lib/integrations";
 import { normalizeGatewayBankDetails } from "@/lib/payment-gateway-bank";
 import { prisma } from "@/lib/prisma";
@@ -25,6 +26,7 @@ const gatewayEditSelect = {
   endpoint: true,
   apiKey: true,
   supportedBanks: true,
+  feeRate: true,
   isActive: true,
   isPlatformGateway: true,
   reviewStatus: true,
@@ -107,6 +109,12 @@ export async function PATCH(request: NextRequest, context: GatewayRouteContext) 
       endpoint: hasOwn(input, "endpoint") ? input.endpoint : existing.endpoint,
       // 空串 / 缺省 = 不修改密钥，但仍用旧密钥参与校验。
       apiKey: typeof input.apiKey === "string" ? input.apiKey : "",
+      // 通道费率同理（tenantGatewayWriteData 整对象覆盖）：
+      // 超管只想改 Endpoint 时，必须把商户配好的费率原样带回去，
+      // 否则一次排障就等于把对方的对账费率清零。
+      feeRate: hasOwn(input, "feeRate")
+        ? input.feeRate
+        : existing.feeRate.toFixed(4),
     };
 
     const parsed = parseTenantGatewayInput(merged, existing.apiKey);
@@ -158,6 +166,7 @@ export async function PATCH(request: NextRequest, context: GatewayRouteContext) 
           isPlatformGateway: gateway.isPlatformGateway,
           ownerName: gateway.owner?.name ?? "",
           reviewStatus: gateway.reviewStatus,
+          feeRate: formatGatewayFeeRatePercent(gateway.feeRate),
         },
       },
       { headers: { "Cache-Control": "no-store" } },

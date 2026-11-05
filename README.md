@@ -299,7 +299,14 @@ DEFAULT_TENANT=winvora
   - `DYNAMIC_QR` → USDT 钱包地址 + 现场生成二维码，非 USDT 支付商则用接口下发的二维码内容。
   - 只有 1 条通道时**不渲染下拉框**（直接显示通道卡片 + 形态标签），多条通道才出下拉框。
 - **银行白名单（REDIRECT_URL）**：`PaymentGateway.supportedBanks String[]`，唯一写入口是 `/tenant/payments` 的通道表单（内置银行勾选 + 「其他银行」手工补充，上限 20 家），归一化 / 校验 / 展示统一走 `src/lib/payment-gateway-banks.ts`。下单时 `POST /api/deposit/create` 用 `resolveDepositBankSelection()` 强制校验：列表非空却没选银行 / 选了不在列表里的银行一律 400，通过后把 `bank=<code>` 拼到支付商跳转地址上。列表为空 = 不做银行选择，交给支付商收银台。
-- **表结构增量**：`prisma/deposit-order-no.sql`（幂等，补 `DepositOrder.orderNo` + 唯一索引）、`prisma/gateway-supported-banks.sql`（幂等，补 `PaymentGateway.supportedBanks`）、`prisma/deposit-manual-review.sql`（幂等，补 `DepositOrder.manualReviewStatus` / `callbackAmount` / `callbackTxHash` / `callbackReceivedAt` + 索引）；`npx prisma db push` 正常时也可直接用 schema。
+- **通道费率与对账账本（只记账，绝不碰资金）**：商户在 `/tenant/payments` 的通道表单里填【通道费率 (Fee Rate %)】（`PaymentGateway.feeRate`，百分比，`2` = 2%，留空 = 0），下单时 `POST /api/deposit/create` 按**当时费率快照**把账算进订单：
+  - `DepositOrder.feeAmount` = `amount × feeRate ÷ 100`（四舍五入到分）；
+  - `DepositOrder.actualReceived` = `amount − feeAmount`（支付商结给商户的钱）；
+  - **玩家余额永远只加 `amount`**：充 100 依然上分 100，通道费一分钱都不从玩家身上扣（平台不碰资金，只做账本）；
+  - 口径唯一实现：`src/lib/deposit-fee.ts`（`calculateDepositFee` / `resolveDepositFeeBreakdown` / `parseGatewayFeeRatePercent`），服务端下单、历史单补账、弹窗实时预览、前端展示全部共用，**禁止**各写一份；
+  - `/tenant/finance`（入金行）与 `/tenant/deposits`（审核台）在金额下面用小灰字显示 `通道费: 2.00 | 实际入账: 98.00`；本功能上线前的历史单两列都是 0，展示层按「全额入账」回落；
+  - `tenantGatewayWriteData` 是「整对象覆盖」，`PUT /api/tenant/gateways/[id]` 与超管 `PATCH /api/admin/integrations/gateways/[id]` 漏传 `feeRate` 就等于把商户配好的费率清零，两处都已做「缺省沿用旧值」兜底。
+- **表结构增量**：`prisma/deposit-order-no.sql`（幂等，补 `DepositOrder.orderNo` + 唯一索引）、`prisma/gateway-supported-banks.sql`（幂等，补 `PaymentGateway.supportedBanks`）、`prisma/deposit-manual-review.sql`（幂等，补 `DepositOrder.manualReviewStatus` / `callbackAmount` / `callbackTxHash` / `callbackReceivedAt` + 索引）、`prisma/gateway-fee-rate.sql`（幂等，补 `PaymentGateway.feeRate` + `DepositOrder.feeAmount` / `actualReceived` 并回填历史单）；`npx prisma db push` 正常时也可直接用 schema。
 
 回调示例（`gatewayCode` 支持网关 `id`、`providerType` 或网关名称）：
 

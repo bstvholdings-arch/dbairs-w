@@ -287,6 +287,22 @@ export function TenantDepositsView({
                     </td>
                     <td className="px-4 py-3 font-mono text-sm font-semibold text-[#f0d27c]">
                       {formatDisplayAmount(row.amount, row.currency)}
+                      {/*
+                       * 通道费 / 实际入账：商户对账就靠这两列。
+                       * 玩家上分金额永远是 row.amount（通道费不从玩家身上扣）。
+                       */}
+                      <span className="mt-1 block text-[9px] font-normal text-neutral-500">
+                        {t("tenantDeposits.feeBreakdown", {
+                          fee: formatDisplayAmount(
+                            row.feeAmount,
+                            row.currency,
+                          ),
+                          net: formatDisplayAmount(
+                            row.actualReceived,
+                            row.currency,
+                          ),
+                        })}
+                      </span>
                     </td>
                     <td className="px-4 py-3 font-mono text-[11px] text-neutral-300">
                       {row.callbackAmount === null
@@ -388,6 +404,18 @@ export function TenantDepositsView({
                     </td>
                     <td className="px-4 py-3 font-mono text-xs text-[#f0d27c]">
                       {formatDisplayAmount(row.amount, row.currency)}
+                      <span className="mt-1 block text-[9px] font-normal text-neutral-500">
+                        {t("tenantDeposits.feeBreakdown", {
+                          fee: formatDisplayAmount(
+                            row.feeAmount,
+                            row.currency,
+                          ),
+                          net: formatDisplayAmount(
+                            row.actualReceived,
+                            row.currency,
+                          ),
+                        })}
+                      </span>
                     </td>
                     <td className="px-4 py-3">
                       <span

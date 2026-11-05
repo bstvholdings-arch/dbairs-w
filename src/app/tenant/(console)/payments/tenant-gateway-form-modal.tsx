@@ -9,6 +9,13 @@ import {
 } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
+import { formatDisplayAmount } from "@/lib/currency";
+import {
+  calculateDepositFee,
+  formatGatewayFeeRatePercent,
+  MAX_GATEWAY_FEE_RATE_PERCENT,
+  parseGatewayFeeRatePercent,
+} from "@/lib/deposit-fee";
 import {
   GATEWAY_BANK_FIELD_LABEL_KEYS,
   GATEWAY_BANK_FIELD_PLACEHOLDER_KEYS,
@@ -59,6 +66,11 @@ type TenantGatewayFormValues = {
   supportedBanks: string[];
   /** REDIRECT_URL：目录外银行（原样文本，提交前统一归一化成编码） */
   customBanksText: string;
+  /**
+   * 通道费率（百分比，文案输入框）："2" = 2%，留空 = 0（不收手续费）。
+   * 只用于财务对账（算 feeAmount / actualReceived），绝不从玩家余额里扣。
+   */
+  feeRate: string;
 };
 
 type TenantGatewaySaveResponse = {
@@ -178,6 +190,16 @@ function validateForm(form: TenantGatewayFormValues, t: TFunction) {
     }
   }
 
+  /**
+   * 通道费率：留空 = 0，填了必须是 0~100 的数字（与后端
+   * parseGatewayFeeRatePercent 同一口径，避免「前端能过、保存 400」）。
+   */
+  if (form.feeRate.trim() && parseGatewayFeeRatePercent(form.feeRate) === null) {
+    return t("tenantGateway.form.feeRateInvalid", {
+      max: String(MAX_GATEWAY_FEE_RATE_PERCENT),
+    });
+  }
+
   return "";
 }
 
@@ -215,9 +237,22 @@ export function TenantGatewayFormModal({
     customBanksText: (gateway?.supportedBanks ?? [])
       .filter((code) => !GATEWAY_BANK_CATALOG.some((bank) => bank.code === code))
       .join(", "),
+    // 费率回填成百分比文本（"2" / "2.5"），未配置 = 空串（提交时按 0 处理）。
+    feeRate: gateway ? formatGatewayFeeRatePercent(gateway.feeRate) : "",
   });
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  /**
+   * 费率实时预览：以「玩家充值 100」为例算一遍账本，
+   * 让商户在保存前就看到通道费 / 实际到账，而不是上线后才发现填错。
+   * 口径与服务端完全一致（同一份 calculateDepositFee），前端不另算一套。
+   */
+  const feeRateValue = parseGatewayFeeRatePercent(form.feeRate);
+  const feePreview =
+    feeRateValue !== null && feeRateValue > 0
+      ? calculateDepositFee(100, feeRateValue)
+      : null;
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
@@ -336,6 +371,8 @@ export function TenantGatewayFormModal({
                     ...normalizeSupportedBanks(form.customBanksText),
                   ])
                 : null,
+            // 通道费率（百分比）：留空 = 0，服务端会再校验一次 0~100。
+            feeRate: form.feeRate.trim(),
           }),
         },
       );
@@ -527,12 +564,55 @@ export function TenantGatewayFormModal({
                   maxLength={10}
                   spellCheck={false}
                   autoComplete="off"
-                  placeholder="MYR / EUR / AUD / USD / USDT"
+                  placeholder="MYR / EUR / AUD / USD"
                   className={`${inputClass} font-mono uppercase`}
                 />
                 <span className="mt-1.5 block text-[10px] leading-5 text-neutral-600">
                   {t("tenantGateway.form.currencyHint")}
                 </span>
+              </label>
+            </div>
+
+            {/*
+             * 通道费率（财务对账用）。
+             * 这里是**唯一**的填写入口：只记录「支付商抽了多少、商户实收多少」，
+             * 玩家充 100 依然上分 100，一分钱都不扣（AGENTS.md §14）。
+             */}
+            <div className="rounded-xl border border-[#d4af37]/15 bg-[#d4af37]/[0.03] p-3.5">
+              <label className="block">
+                <span className="text-[10px] uppercase tracking-[0.16em] text-neutral-600">
+                  {t("tenantGateway.form.feeRate")}
+                </span>
+                <input
+                  value={form.feeRate}
+                  onChange={(event) =>
+                    updateField("feeRate", event.target.value)
+                  }
+                  inputMode="decimal"
+                  maxLength={8}
+                  spellCheck={false}
+                  autoComplete="off"
+                  placeholder="2"
+                  className={`${inputClass} font-mono`}
+                />
+                <span className="mt-1.5 block text-[10px] leading-5 text-neutral-600">
+                  {t("tenantGateway.form.feeRateHint")}
+                </span>
+                {feePreview ? (
+                  <span className="mt-1 block text-[10px] leading-5 text-[#e8cf8a]">
+                    {t("tenantGateway.form.feeRatePreview", {
+                      gross: formatDisplayAmount(100, form.currency),
+                      fee: formatDisplayAmount(
+                        feePreview.feeAmount,
+                        form.currency,
+                      ),
+                      net: formatDisplayAmount(
+                        feePreview.actualReceived,
+                        form.currency,
+                      ),
+                    })}
+                  </span>
+                ) : null}
               </label>
             </div>
 

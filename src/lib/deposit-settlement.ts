@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 
+import { calculateDepositFee } from "./deposit-fee";
 import {
   DEPOSIT_MANUAL_REVIEW_APPROVED,
   DEPOSIT_MANUAL_REVIEW_PENDING,
@@ -43,6 +44,10 @@ const orderSelect = {
   status: true,
   txHash: true,
   manualReviewStatus: true,
+  // 通道手续费账本（历史单两列都是 0，入账时按费率补记一次）
+  feeAmount: true,
+  actualReceived: true,
+  gateway: { select: { feeRate: true } },
   player: {
     select: {
       referredById: true,
@@ -181,6 +186,34 @@ async function findDepositTransactionId(
 }
 
 /**
+ * 入账这一刻给「历史订单」补记手续费账本。
+ *
+ * 本功能上线前创建的 pending 单，feeAmount / actualReceived 两列都是 0（没有费率概念）。
+ * 真正入账时按通道当前费率补记一次，之后这两个字段就固定了：
+ * 已经有账本数据的订单一律不动 —— 费率只认「下单 / 入账」那一次快照，
+ * 商户事后调整费率不得倒改历史账（否则对账永远对不上）。
+ *
+ * 注意：这里只写两列数字，**不参与**余额 increment，
+ * 玩家上分金额永远是 order.amount（AGENTS.md §14）。
+ */
+function feeLedgerWriteData(order: DepositOrderSnapshot) {
+  const gross = order.amount.toNumber();
+  const recordedFee = order.feeAmount.toNumber();
+  const recordedActual = order.actualReceived.toNumber();
+
+  if (!(recordedFee === 0 && recordedActual === 0 && gross > 0)) {
+    return {};
+  }
+
+  const breakdown = calculateDepositFee(gross, order.gateway.feeRate);
+
+  return {
+    feeAmount: breakdown.feeAmount.toFixed(2),
+    actualReceived: breakdown.actualReceived.toFixed(2),
+  };
+}
+
+/**
  * 成功回调上分。
  * `txHash` 是第三方交易号 / 链上哈希，必须由调用方校验过格式。
  *
@@ -253,6 +286,8 @@ export async function settleDepositOrder(input: {
       data: {
         status: "success",
         txHash: input.txHash,
+        // 通道手续费账本（只影响商户对账，不影响下面的余额 increment）。
+        ...feeLedgerWriteData(order),
         ...(manualReviewCas
           ? { manualReviewStatus: DEPOSIT_MANUAL_REVIEW_APPROVED }
           : {}),

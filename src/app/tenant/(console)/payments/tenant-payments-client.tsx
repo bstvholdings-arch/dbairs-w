@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { useLanguage } from "@/components/LanguageProvider";
+import { formatGatewayFeeRatePercent } from "@/lib/deposit-fee";
 import { formatDate } from "@/lib/format";
 import {
   GATEWAY_PAYMENT_TYPE_LABEL_KEYS,
@@ -405,6 +406,11 @@ export function TenantPaymentsClient({
                       {providerLabel(gateway.providerType, t)} ·{" "}
                       {gatewayTypeLabel(gateway.gatewayType, t)} ·{" "}
                       {gateway.currency} · {gatewaySummary(gateway, t)}
+                    </p>
+                    <p className="mt-1 text-[10px] text-neutral-500">
+                      {t("tenantPayments.own.feeRate", {
+                        rate: formatGatewayFeeRatePercent(gateway.feeRate),
+                      })}
                     </p>
                     <p className="mt-1 break-all font-mono text-[9px] text-neutral-700">
                       {t("tenantPayments.own.apiKey", {

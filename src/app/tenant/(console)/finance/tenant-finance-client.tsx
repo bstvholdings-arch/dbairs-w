@@ -190,6 +190,25 @@ export function TenantFinanceView({
                     </td>
                     <td className="px-4 py-3 font-mono text-xs text-[#f0d27c]">
                       {formatDisplayAmount(item.amount, item.currency)}
+                      {/*
+                       * 通道费 / 实际入账（只记账，玩家上分金额永远等于 amount）。
+                       * 口径由服务端 resolveDepositFeeBreakdown 统一算出，
+                       * 历史单（没走过费率链路）展示为「通道费 0、实际入账 = 全额」。
+                       */}
+                      {item.kind === "deposit" ? (
+                        <span className="mt-1 block text-[9px] font-normal text-neutral-500">
+                          {t("tenantFinance.feeBreakdown", {
+                            fee: formatDisplayAmount(
+                              item.feeAmount ?? 0,
+                              item.currency,
+                            ),
+                            net: formatDisplayAmount(
+                              item.actualReceived ?? item.amount,
+                              item.currency,
+                            ),
+                          })}
+                        </span>
+                      ) : null}
                     </td>
                     <td className="px-4 py-3">
                       <span

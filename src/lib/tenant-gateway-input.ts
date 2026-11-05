@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 
+import { parseGatewayFeeRatePercent } from "./deposit-fee";
 import {
   isGatewayProviderType,
   isUsdtProviderType,
@@ -54,6 +55,14 @@ export type TenantGatewayInput = {
    * 空数组 = 不做银行选择，玩家直接跳支付商收银台。
    */
   supportedBanks: string[];
+  /**
+   * 通道费率（**百分比**，2 = 2%，0 = 不收手续费）。
+   *
+   * 只用于财务对账记账：下单时算 amount × feeRate ÷ 100 写进
+   * DepositOrder.feeAmount / actualReceived，**绝不从玩家余额里扣**。
+   * 校验走 parseGatewayFeeRatePercent（0~100，保留 4 位小数）。
+   */
+  feeRate: number;
 };
 
 export type TenantGatewayInputResult =
@@ -156,6 +165,29 @@ export function parseTenantGatewayInput(
     gatewayType === "BANK_TRANSFER"
       ? normalizeGatewayBankDetails(input.bankDetails)
       : normalizeGatewayBankDetails(null);
+
+  /**
+   * 通道费率（百分比）：留空 = 0（不收手续费），填了必须是 0~100 的数字。
+   *
+   * 为什么不在这里「猜一个能用的值」：费率直接进财务账本
+   * （DepositOrder.feeAmount / actualReceived），猜错了商户对账会永远差钱，
+   * 所以非法值一律 400 让商户自己改。
+   */
+  const rawFeeRate = input.feeRate;
+  const feeRate =
+    rawFeeRate === undefined ||
+    rawFeeRate === null ||
+    (typeof rawFeeRate === "string" && !rawFeeRate.trim())
+      ? 0
+      : parseGatewayFeeRatePercent(rawFeeRate);
+
+  if (feeRate === null) {
+    return reject(
+      400,
+      "通道费率必须是 0 - 100 之间的数字（如填 2 代表 2%），不收费请留空",
+    );
+  }
+
   const configurationError = validateGatewayConfiguration({
     providerType,
     gatewayType,
@@ -184,6 +216,7 @@ export function parseTenantGatewayInput(
       apiKey,
       bankDetails,
       supportedBanks,
+      feeRate,
     },
   };
 }
@@ -215,5 +248,9 @@ export function tenantGatewayWriteData(value: TenantGatewayInput) {
     // 一个「选了也没用」的选择框。
     supportedBanks:
       value.gatewayType === "REDIRECT_URL" ? value.supportedBanks : [],
+    // 通道费率（百分比）→ Decimal(6,4)。同样是「整对象覆盖」：
+    // 任何调用方（商户 POST/PUT、超管兜底 PATCH）都必须把 feeRate 带上，
+    // 否则等于把商户配好的费率清零。
+    feeRate: new Prisma.Decimal(value.feeRate.toFixed(4)),
   };
 }

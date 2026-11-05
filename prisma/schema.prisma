@@ -543,6 +543,13 @@ model PaymentGateway {
   // - 平台通道（ownerId=null）不允许配置代付地址：资金不经过平台，合法底线。
   payoutEndpoint String?
 
+  // 通道费率（**商户自己的收单手续费百分比**，2 = 2%）。
+  // - 只用于财务对账记账：充值成功时按 amount × feeRate ÷ 100 算出通道费与商户实际入账，
+  //   写进 DepositOrder.feeAmount / actualReceived，平台只做账本、绝不碰资金；
+  // - **绝不从玩家余额里扣**：玩家充 100 依然上分 100（AGENTS.md §14 红线）；
+  // - Decimal(6,4) 支撑 "2" / "2.5" / "0.05" 这类配置，上限 100（= 100%）。
+  feeRate Decimal @default(0) @db.Decimal(6, 4)
+
   // 平台通道成本 / 对租户售价。代收、代付、结算三条业务线独立定价。
   payinCostRate      Decimal @default(0) @db.Decimal(8, 6)
   payinSellRate      Decimal @default(0) @db.Decimal(8, 6)
@@ -587,6 +594,15 @@ model DepositOrder {
   currency  String         @default("USDT")
   status    String         @default("pending") // pending, success, failed
   txHash    String? // 支付商交易号 / 区块链哈希
+
+  // 通道手续费账本（商户对账用，**与玩家上分金额完全无关**）。
+  // - feeAmount     = amount × PaymentGateway.feeRate ÷ 100（下单时按当时费率快照，四舍五入到分）；
+  // - actualReceived = amount − feeAmount（支付商结给商户的钱）；
+  // - 玩家余额永远只加 amount：平台不碰资金，只记录「通道抽了多少、商户实收多少」；
+  // - 两者都为 0 且 amount > 0 = 本功能上线前的历史订单，展示层按「全额入账」回落
+  //   （见 src/lib/deposit-fee.ts 的 resolveDepositFeeBreakdown）。
+  feeAmount      Decimal @default(0) @db.Decimal(18, 6)
+  actualReceived Decimal @default(0) @db.Decimal(18, 6)
 
   // 人工审核（STATIC_QR / BANK_TRANSFER：钱直接进商户自己的银行账户，系统拿不到机器凭证）
   // - null      = 不涉及人工审核（自动上分通道，走回调链路）；

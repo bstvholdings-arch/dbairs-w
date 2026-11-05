@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 
+import { formatGatewayFeeRatePercent } from "./deposit-fee";
 import { isUsdtProviderType } from "./payment-gateway";
 import {
   normalizeGatewayBankDetails,
@@ -25,6 +26,8 @@ export const tenantGatewaySelect = {
   payoutEndpoint: true,
   apiKey: true,
   supportedBanks: true,
+  /** 通道费率（百分比，2 = 2%）：商户对账用，玩家侧不展示 */
+  feeRate: true,
   payinSellRate: true,
   payoutSellRate: true,
   settlementSellRate: true,
@@ -62,6 +65,11 @@ export type TenantOwnGateway = {
   bankDetails: GatewayBankDetails;
   /** REDIRECT_URL 通道下玩家可选的银行（归一化编码）；空数组 = 不做银行选择 */
   supportedBanks: string[];
+  /**
+   * 通道费率（**百分比文本**，如 "2" = 2%，"0" = 不收手续费）。
+   * 只用于商户财务对账（算 feeAmount / actualReceived），不影响玩家上分金额。
+   */
+  feeRate: string;
   configurationSummary: string;
   configurationSummaryData: TenantGatewayConfigurationSummary;
   apiKeyPreview: string;
@@ -222,6 +230,8 @@ export function serializeTenantOwnGateway(
       gateway.gatewayType === "REDIRECT_URL"
         ? normalizeSupportedBanks(gateway.supportedBanks)
         : [],
+    // 百分比文本（"2" / "2.5" / "0"）：编辑弹窗直接回填，列表直接渲染。
+    feeRate: formatGatewayFeeRatePercent(gateway.feeRate),
     configurationSummary: gatewayConfigurationSummary(gateway),
     configurationSummaryData: gatewayConfigurationSummaryData(gateway),
     apiKeyPreview: gateway.apiKey ? `••••${gateway.apiKey.slice(-4)}` : "",

@@ -6,6 +6,7 @@ import {
   generateDepositOrderNo,
   resolveGatewayKind,
 } from "@/lib/deposit-order";
+import { calculateDepositFee } from "@/lib/deposit-fee";
 import { normalizeGatewayBankDetails } from "@/lib/payment-gateway-bank";
 import {
   gatewayBankLabel,
@@ -149,6 +150,8 @@ export async function POST(request: NextRequest) {
         isPlatformGateway: true,
         ownerId: true,
         supportedBanks: true,
+        // 通道费率（百分比）：只用来给商户算对账账本，绝不参与玩家上分金额。
+        feeRate: true,
       },
     });
 
@@ -264,6 +267,21 @@ export async function POST(request: NextRequest) {
      * 玩家转账备注都依赖它。撞上唯一索引（P2002）时换一个号重试，
      * 而不是把数据库错误抛给玩家。
      */
+    /**
+     * 通道手续费账本（**只记账，绝不扣减玩家上分**）。
+     *
+     * 口径唯一实现：src/lib/deposit-fee.ts 的 calculateDepositFee()
+     *   feeAmount      = amount × gateway.feeRate ÷ 100（四舍五入到分）
+     *   actualReceived = amount − feeAmount（支付商结给商户的钱）
+     * 下单时按「当时」的费率快照写死，之后商户改费率也不会倒改历史单；
+     * 玩家余额永远只加 amount（见 settleDepositOrder），一分钱都不扣。
+     * 静态码 / 银行转账这类人工审核通道同样在确认到账时用这两列对账。
+     */
+    const feeBreakdown = calculateDepositFee(
+      amount.toNumber(),
+      gateway.feeRate,
+    );
+
     let order: CreatedDepositOrder | null = null;
 
     for (let attempt = 0; attempt < 3 && !order; attempt += 1) {
@@ -277,6 +295,8 @@ export async function POST(request: NextRequest) {
             currency,
             gatewayId: gateway.id,
             status: "pending",
+            feeAmount: feeBreakdown.feeAmount.toFixed(2),
+            actualReceived: feeBreakdown.actualReceived.toFixed(2),
           },
           select: depositOrderSelect,
         });

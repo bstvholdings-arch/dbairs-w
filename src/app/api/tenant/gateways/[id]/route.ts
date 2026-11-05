@@ -73,7 +73,16 @@ export async function PUT(request: NextRequest, context: RouteContext) {
 
     // 商户不回传密钥时沿用旧密钥：既保证「不修改」语义，
     // 也让跳转支付 / 动态二维码的完整性校验仍然通过。
-    const parsed = parseTenantGatewayInput(parsedBody.body, existing.apiKey);
+    //
+    // 通道费率同理：tenantGatewayWriteData 是「整对象覆盖」，漏传 feeRate
+    // 就等于把商户配好的对账费率清零（老缓存前端 / 运维脚本只改 Endpoint 时最危险），
+    // 所以缺省该字段时一律沿用库里的旧值。
+    const body = (parsedBody.body ?? {}) as Record<string, unknown>;
+    const gatewayInput =
+      body && typeof body === "object" && "feeRate" in body
+        ? body
+        : { ...body, feeRate: existing.feeRate.toFixed(4) };
+    const parsed = parseTenantGatewayInput(gatewayInput, existing.apiKey);
 
     if (!parsed.ok) {
       return jsonError(parsed.error, parsed.status);
