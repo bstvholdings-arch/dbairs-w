@@ -268,7 +268,7 @@ export function HeroCarousel({
       role="region"
       aria-roledescription="carousel"
       aria-label={t("lobby.hero.carousel")}
-      className="group relative overflow-hidden rounded-2xl border border-brand/15 bg-[#070707] shadow-[0_28px_70px_-40px_rgba(0,0,0,0.95)] sm:rounded-3xl"
+      className="group relative overflow-hidden rounded-[var(--sf-panel-radius,1rem)] border border-brand/15 bg-[#070707] shadow-[0_28px_70px_-40px_rgba(0,0,0,0.95)]"
       {...handlers}
     >
       <div

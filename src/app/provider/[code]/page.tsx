@@ -133,6 +133,7 @@ export default async function ProviderHallPage({
       themeColor={storefront.themeColor}
       themeBrightness={storefront.themeBrightness}
       themeBackground={storefront.themeBackground}
+      preset={storefront.preset}
       languageStyle={storefront.languageStyle}
       brandName={resolveBrandName(storefront.tenantName)}
     />

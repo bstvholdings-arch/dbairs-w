@@ -86,7 +86,7 @@ export function PromoHeroCarousel({
       aria-roledescription="carousel"
       aria-label={t("lobby.hero.carousel")}
       data-hero-promo="true"
-      className="group relative overflow-hidden rounded-2xl border border-brand/15 bg-[#070707] shadow-[0_28px_70px_-40px_rgba(0,0,0,0.95)] sm:rounded-3xl"
+      className="group relative overflow-hidden rounded-[var(--sf-panel-radius,1rem)] border border-brand/15 bg-[#070707] shadow-[0_28px_70px_-40px_rgba(0,0,0,0.95)]"
       {...handlers}
     >
       {/* 高度由 globals.css 的 [data-hero-stage] 统一给（clamp 夹在 200–220 / 240–320 / 350–450），

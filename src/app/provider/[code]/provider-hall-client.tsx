@@ -32,6 +32,10 @@ import {
 } from "@/lib/lobby-games";
 import { providerBrand } from "@/lib/lobby-providers";
 import { buildStorefrontTheme } from "@/lib/storefront";
+import {
+  buildStorefrontPresetStyle,
+  type StorefrontPresetId,
+} from "@/lib/storefront-presets";
 import { buildThemeBackgroundStyle } from "@/lib/theme-backgrounds";
 
 const CONNECTING_AUTO_CLOSE_MS = 3400;
@@ -65,6 +69,7 @@ export function ProviderHallClient({
   themeColor,
   themeBrightness,
   themeBackground,
+  preset,
   languageStyle,
   brandName,
 }: {
@@ -79,6 +84,14 @@ export function ProviderHallClient({
   themeBrightness: number;
   /** 后台装修的主题背景色（与大厅同源，见 lib/theme-backgrounds.ts） */
   themeBackground: ThemeBackgroundId;
+  /**
+   * 后台装修的排版模板（与大厅同源，见 lib/storefront-presets.ts）。
+   *
+   * 展馆必须吃同一份 --sf-* token：否则玩家从大厅（classic 1600px）点进品牌馆
+   * 会突然变成另一套宽度 / 圆角 / 卡片密度，等于「换个页面换个版式」。
+   * 组件树依旧只有一份，差别全部来自 token（AGENTS.md §4）。
+   */
+  preset: StorefrontPresetId;
   /** 后台装修的语言按钮文案，形如 CH/EN */
   languageStyle: string;
   /** 当前商户品牌名（Tenant.name），页脚版权行用它，白标站不能露出平台名 */
@@ -95,6 +108,11 @@ export function ProviderHallClient({
   const backgroundStyle = useMemo(
     () => buildThemeBackgroundStyle(themeBackground),
     [themeBackground],
+  );
+  // 版式 token（--sf-*）：同样与大厅同源（内容区宽度 / 面板圆角 / 卡片间距）
+  const presetStyle = useMemo(
+    () => buildStorefrontPresetStyle(preset),
+    [preset],
   );
 
   const [connectingGame, setConnectingGame] = useState<LobbyGameCard | null>(
@@ -177,7 +195,8 @@ export function ProviderHallClient({
   return (
     <div
       className="tb-lobby-bg relative min-h-screen font-sans text-neutral-200"
-      style={{ ...(theme.style as CSSProperties), ...backgroundStyle }}
+      style={{ ...(theme.style as CSSProperties), ...presetStyle, ...backgroundStyle }}
+      data-storefront-preset={preset}
       data-theme-background={themeBackground}
       data-theme-color={theme.brand}
       data-theme-brightness={theme.brightness}
@@ -212,7 +231,7 @@ export function ProviderHallClient({
           className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-brand-soft/70 to-transparent"
         />
 
-        <div className="relative mx-auto w-full max-w-[1600px] px-3 pb-8 pt-3 sm:px-5 sm:pb-11 lg:px-8">
+        <div className="relative mx-auto w-full max-w-[var(--sf-shell-max,1600px)] px-3 pb-8 pt-3 sm:px-5 sm:pb-11 lg:px-8">
           {/* 顶栏：返回大厅 + 功能占位 */}
           <div className="flex flex-wrap items-center justify-between gap-2">
             <Link
@@ -351,7 +370,7 @@ export function ProviderHallClient({
         </div>
       </header>
 
-      <main className="relative mx-auto w-full max-w-[1600px] px-3 pb-14 pt-6 sm:px-5 lg:px-8">
+      <main className="relative mx-auto w-full max-w-[var(--sf-shell-max,1600px)] px-3 pb-14 pt-6 sm:px-5 lg:px-8">
         {/* 该厂商全部游戏 */}
         <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
           <div className="flex items-center gap-2">
@@ -373,9 +392,9 @@ export function ProviderHallClient({
         </div>
 
         {cards.length > 0 ? (
-          <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4 sm:gap-3 lg:grid-cols-5 xl:grid-cols-6">
+          <ul className="grid grid-cols-3 gap-[var(--sf-game-gap,0.75rem)] sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
             {cards.map((card) => (
-              <li key={card.id}>
+              <li key={card.id} className="min-w-0">
                 <GameCard
                   card={card}
                   onPlay={() => setConnectingGame(card)}

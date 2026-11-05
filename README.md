@@ -426,7 +426,7 @@ curl -X POST "https://<host>/api/deposit/callback/usdt_trc20" \
 `/admin/storefront` 支持 5 种前台排版：`classic`（经典大厅）/ `cinema`（巨幕影院）/ `compact`（紧凑信息流）/ `bento`（卡片拼贴）/ `editorial`（双栏画报）。
 
 - **一套组件，5 组 token**：模板定义在 `src/lib/storefront-presets.ts`（内容区宽度 / 模块间距 / 主视觉高度 / 面板圆角 / 卡片间距 / `mode`）；大厅组件树、数据流只有一份，**不存在 5 套独立布局**。
-- **消费方式**：大厅根节点挂 `data-storefront-preset` + `--sf-shell-max` / `--sf-module-gap` / `--sf-hero-h(-sm/-lg)` / `--sf-panel-radius` / `--sf-game-gap`；组件用 `var(--sf-xxx, 默认值)` 取值。`bento` / `editorial` 的分栏规则在 `src/app/globals.css` 末尾（仅 `≥1024px` 生效，用 `:has()` 判断 Hero 是否存在，关掉 Hero 自动退回堆叠）。
+- **消费方式**：大厅根节点挂 `data-storefront-preset` + `--sf-shell-max` / `--sf-module-gap` / `--sf-hero-h(-sm/-lg)` / `--sf-panel-radius` / `--sf-game-gap`；组件用 `var(--sf-xxx, 默认值)` 取值。`bento` / `editorial` 的分栏规则在 `src/app/globals.css` 末尾（仅 `≥1024px` 生效，用 `:has()` 判断 Hero 是否存在，关掉 Hero 自动退回堆叠）。顶栏壳宽、Hero / 功能岛 / 品牌墙圆角、游戏网格间距**全部**只吃这几个 `var()`（禁止写死像素值），所以 2K / 4K 超宽屏不会错位、iPhone SE（320px）也不会撑破；品牌展馆 `/provider/[code]` 挂同一份 token，点进品牌馆不会「换个版式」。
 - **存储**：`Tenant.layoutConfig.preset`（JSON 内字段，无需迁移）；老数据缺 `preset` 自动回落 `classic`，外观不变。保存仍走 `PUT /api/admin/storefront`（服务端逐字段归一化，脏值回落 `classic`）。
 - **解耦红线**：模板只管排版；配色仍只由 `Tenant.themeColor` 决定，模块开关与顺序仍只由 `Tenant.layoutConfig.modules` 决定。
 

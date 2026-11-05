@@ -952,8 +952,8 @@ export function LobbyClient({
         <div
           className={
             brandCentered
-              ? "mx-auto grid w-full max-w-[1600px] grid-cols-[auto_1fr_auto] items-center gap-x-2.5 gap-y-2.5 px-3 py-3 sm:px-5 lg:grid-cols-[1fr_auto_1fr] lg:gap-x-4 lg:px-8"
-              : "mx-auto flex w-full max-w-[1600px] flex-wrap items-center gap-x-4 gap-y-2.5 px-3 py-3 sm:px-5 lg:px-8"
+              ? "mx-auto grid w-full max-w-[var(--sf-shell-max,1600px)] grid-cols-[auto_1fr_auto] items-center gap-x-2.5 gap-y-2.5 px-3 py-3 sm:px-5 lg:grid-cols-[1fr_auto_1fr] lg:gap-x-4 lg:px-8"
+              : "mx-auto flex w-full max-w-[var(--sf-shell-max,1600px)] flex-wrap items-center gap-x-4 gap-y-2.5 px-3 py-3 sm:px-5 lg:px-8"
           }
         >
           {/*
