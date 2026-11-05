@@ -855,6 +855,14 @@ export function PlayerDepositModal({
                   </p>
                 </div>
               ) : created.instructions.kind === "CRYPTO" ? (
+                /*
+                 * 历史分支：钱包地址 + 链上二维码。
+                 *
+                 * 法币专精后**不可达** —— 加密通道在 /api/deposit/gateways 就不会下发，
+                 * /api/deposit/create 也会 409 拦下伪造的 gatewayId。这里保留只为
+                 * 兼容「升级前就停在收银台的历史订单」，**不要**因为有人问「怎么充 USDT」
+                 * 就把入口恢复（见 AGENTS.md §13）。
+                 */
                 <div className="mt-3 rounded-xl border border-[#d4af37]/20 bg-black/40 px-4 py-3">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[10px] uppercase tracking-[0.16em] text-neutral-600">
