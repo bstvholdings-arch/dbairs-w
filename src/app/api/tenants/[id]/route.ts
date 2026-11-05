@@ -22,6 +22,12 @@ import {
 } from "@/lib/storefront";
 import { getSuperAdminFromRequest } from "@/lib/super-admin";
 import {
+  TENANT_COUNTRY_CODES,
+  currencyForTenantCountry,
+  isTenantCountry,
+  normalizeTenantCountry,
+} from "@/lib/tenant-country";
+import {
   listTenantAdmins,
   provisionTenantAdminAccount,
   readTenantAdminEmail,
@@ -319,6 +325,33 @@ async function updateTenant(
       }
 
       data.logoPosition = input.logoPosition;
+    }
+
+    /**
+     * 开户国家 → 结算币种（联动锁定，与新建口径完全一致）。
+     *
+     * 规则：
+     * - 只接受 TENANT_COUNTRIES 里的国家代码，脏值直接 400（不猜）；
+     * - 国家变了才写币种（`currencyForTenantCountry`），保证两者永不脱节；
+     * - **国家没变就一个字都不动**：老租户升级后 `country` 列是缺省值 MY，
+     *   而记账币种可能是历史值（THB / USD…）。如果提交了同样的 MY 就把币种
+     *   改成 MYR，等于悄悄把所有老站的账目换了单位 —— 这是不可接受的。
+     * - 币种不接受前端直接传（字段名 `currency` 一律忽略），只有一个来源。
+     */
+    if (hasOwn(input, "country")) {
+      if (!isTenantCountry(input.country)) {
+        return jsonError(
+          `开户国家只能是以下之一：${TENANT_COUNTRY_CODES.join("、")}`,
+          400,
+        );
+      }
+
+      const country = normalizeTenantCountry(input.country);
+
+      if (country !== normalizeTenantCountry(existing.country)) {
+        data.country = country;
+        data.currency = currencyForTenantCountry(country);
+      }
     }
 
     /**

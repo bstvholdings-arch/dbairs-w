@@ -18,9 +18,20 @@ model Tenant {
   // 出金审批人数设置（最少1人，最多3人，后台可调）
   withdrawalRequiredApprovals Int @default(1)
 
+  // 商户所属国家（ISO 3166-1 alpha-2 大写：MY / TH / ID / VN / SG / IN / AU / HK / US）。
+  // 开站时由超管在【租户管理 → 新建 / 编辑】弹窗选定，玩家端不感知该字段。
+  // ⚠️ 它与下面的 currency **绑定**：选 MY 就锁 MYR、TH→THB、ID→IDR、VN→VND…
+  //    唯一映射表是 src/lib/tenant-country.ts 的 TENANT_COUNTRIES，
+  //    接口（POST /api/tenants、PUT /api/tenants/[id]）按国家自动写币种，
+  //    商户后台与装修页都改不动这两个字段。
+  // 增量 SQL（幂等，老租户按币种回填国家）：prisma/tenant-country.sql
+  country String @default("MY")
+
   // 租户记账货币（玩家钱包余额、提现、统计金额的统一币种）
   // 前端一律用 src/lib/currency.ts 的 formatCurrency() 渲染符号（RM / $ / ฿ / Rp…），
   // 不允许在组件里写死 `$`。可选值见 SUPPORTED_CURRENCIES。
+  // **由 country 自动锁定**（见 src/lib/tenant-country.ts 的 currencyForTenantCountry），
+  // 后台只做只读展示，不允许单独编辑，避免出现「国家 MY / 币种 USDT」的脏组合。
   currency String @default("MYR")
 
   // 前台装修（Storefront Settings，超管在 /admin/storefront 可视化配置）
@@ -576,6 +587,19 @@ model DepositOrder {
   currency  String         @default("USDT")
   status    String         @default("pending") // pending, success, failed
   txHash    String? // 支付商交易号 / 区块链哈希
+
+  // 人工审核（STATIC_QR / BANK_TRANSFER：钱直接进商户自己的银行账户，系统拿不到机器凭证）
+  // - null      = 不涉及人工审核（自动上分通道，走回调链路）；
+  // - pending   = 已收到「已付款」信号（支付商回调 / 玩家点「我已完成支付」），等商户后台确认；
+  // - approved  = 商户确认到账（同一事务内 status → success 并加余额）；
+  // - rejected  = 商户驳回（status → failed，不加钱）。
+  // 判定入口只有一个：src/lib/payment-gateway-constants.ts 的 gatewayRequiresManualReview()。
+  manualReviewStatus String?
+  /** 回调凭证：支付商带回的金额 / 交易号 / 收到时间，供人工核对与事后对账 */
+  callbackAmount     Decimal?  @db.Decimal(18, 6)
+  callbackTxHash     String?
+  callbackReceivedAt DateTime?
+
   gatewayId String
   gateway   PaymentGateway @relation(fields: [gatewayId], references: [id])
 
@@ -589,6 +613,7 @@ model DepositOrder {
   @@index([gatewayId, createdAt])
   @@index([status])
   @@index([txHash])
+  @@index([tenantId, manualReviewStatus])
 }
 
 // 14. AI 对话日志 (AiChatLog)

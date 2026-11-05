@@ -3,6 +3,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { Prisma } from "@prisma/client";
 
 import {
+  CRYPTO_GATEWAY_PROVIDER_TYPES,
   GATEWAY_PROVIDER_TYPES,
   isGatewayType,
   type GatewayProviderType,
@@ -367,7 +368,16 @@ export function validateGatewayConfiguration(config: GatewayConfiguration) {
   return "";
 }
 
-export const USDT_PROVIDER_TYPES = ["usdt_trc20", "usdt_erc20"] as const;
+/**
+ * USDT（加密货币）支付商类型 —— 列表只存在一份，见
+ * `payment-gateway-constants.ts` 的 CRYPTO_GATEWAY_PROVIDER_TYPES
+ * （本文件依赖 node:crypto，客户端无法 import，所以常量放那边）。
+ *
+ * 平台只做法币：这些类型不会再出现在商户后台的可选项里，也不会下发给玩家，
+ * 这里保留判定只是为了兼容历史数据（老通道停用 / 迁移时能识别出来）。
+ */
+export const USDT_PROVIDER_TYPES = CRYPTO_GATEWAY_PROVIDER_TYPES;
+
 const TRC20_ADDRESS_PATTERN = /^T[1-9A-HJ-NP-Za-km-z]{33}$/;
 const ERC20_ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
 

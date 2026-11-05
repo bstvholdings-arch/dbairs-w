@@ -14,11 +14,18 @@ import { createPortal } from "react-dom";
 
 import { useLanguage } from "@/components/LanguageProvider";
 import { brandInitial } from "@/lib/brand";
+import { currencySymbol } from "@/lib/currency";
 import {
   TENANT_LOGO_URL_MAX_LENGTH,
   normalizeTenantLogoPosition,
   normalizeTenantLogoUrl,
 } from "@/lib/storefront";
+import {
+  TENANT_COUNTRIES,
+  currencyForTenantCountry,
+  normalizeTenantCountry,
+  tenantCountryLabelKey,
+} from "@/lib/tenant-country";
 import {
   buildThemeBackgroundStyle,
   DEFAULT_THEME_BACKGROUND,
@@ -91,6 +98,12 @@ export function TenantFormModal({
     status: tenant?.status ?? "active",
     withdrawalRequiredApprovals:
       tenant?.withdrawalRequiredApprovals ?? 1,
+    /**
+     * 开户国家：决定结算币种（MY→MYR / TH→THB / ID→IDR / VN→VND…）。
+     * 老租户缺字段 / 脏数据统一回落 MY（= 改造前的缺省站），
+     * 已有外币种的老租户在该列是缺省值 MY，服务端只在国家真的变了才改币种。
+     */
+    country: normalizeTenantCountry(tenant?.country),
     // 老租户 / 脏数据统一回落到经典暗黑（= 改造前的大厅观感）
     themeBackground: tenant?.themeBackground ?? DEFAULT_THEME_BACKGROUND,
     adminEmail: "",
@@ -313,6 +326,8 @@ export function TenantFormModal({
             backupDomains: backupDomainsInput.domains,
             adminEmail,
             withdrawalRequiredApprovals: form.withdrawalRequiredApprovals,
+            // 开户国家：服务端据此锁定结算币种（前端不传 currency，避免两边不一致）
+            country: form.country,
             // 主题背景色：只有这里能写（商户后台与装修页均无入口）
             themeBackground: normalizeThemeBackground(form.themeBackground),
             // 品牌 Logo：只有这里能写；空字符串 = 清空（前台回退商户名首字母）
@@ -383,6 +398,12 @@ export function TenantFormModal({
       setSubmitting(false);
     }
   }
+
+  /**
+   * 结算币种由开户国家自动锁定（国家 → 币种唯一映射见 src/lib/tenant-country.ts）。
+   * 弹窗里只读展示：一个站只有一种记账币种，玩家端所有金额符号都来源于它。
+   */
+  const formCurrency = currencyForTenantCountry(form.country);
 
   // 弹窗通过 portal 挂到 document.body。
   // 后台布局里有 sticky 头部与滚动容器，只要有一个祖先元素带 transform / filter /
@@ -525,6 +546,65 @@ export function TenantFormModal({
                   className="mt-1.5 h-10 w-full rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-neutral-200 outline-none transition-colors placeholder:text-neutral-700 focus:border-[#d4af37]/50 focus:ring-1 focus:ring-[#d4af37]/30"
                 />
               </label>
+
+              {/* 开户国家 → 结算币种（联动锁定，唯一映射表见 src/lib/tenant-country.ts） */}
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="block">
+                  <span className="text-[10px] uppercase tracking-[0.16em] text-neutral-600">
+                    {t("tenants.form.country")}
+                  </span>
+                  <select
+                    value={form.country}
+                    onChange={(event) =>
+                      updateField(
+                        "country",
+                        normalizeTenantCountry(event.target.value),
+                      )
+                    }
+                    className="mt-1.5 h-10 w-full rounded-lg border border-white/10 bg-black/40 px-3 text-sm text-neutral-200 outline-none transition-colors focus:border-[#d4af37]/50 focus:ring-1 focus:ring-[#d4af37]/30"
+                  >
+                    {TENANT_COUNTRIES.map((country) => (
+                      <option
+                        key={country.code}
+                        value={country.code}
+                        className="bg-[#0a0a0a]"
+                      >
+                        {t(tenantCountryLabelKey(country.code))} ·{" "}
+                        {country.code}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1.5 text-[10px] leading-4 text-neutral-600">
+                    {t("tenants.form.countryHint")}
+                  </p>
+                </label>
+
+                <div className="block">
+                  <span className="text-[10px] uppercase tracking-[0.16em] text-neutral-600">
+                    {t("tenants.form.currencyLocked")}
+                  </span>
+                  {/*
+                    币种是**只读**的：它由上面选的国家自动决定
+                    （MY→MYR、TH→THB、ID→IDR、VN→VND…），
+                    玩家端所有金额都用这个币种的符号渲染（RM / ฿ / Rp / ₫）。
+                    故意不给可编辑输入框：一个站只能有一种记账币种。
+                  */}
+                  <div className="mt-1.5 flex h-10 items-center gap-2 rounded-lg border border-[#d4af37]/25 bg-[#d4af37]/[0.06] px-3">
+                    <span className="font-mono text-sm text-[#f0d27c]">
+                      {formCurrency}
+                    </span>
+                    <span className="text-sm text-[#f0d27c]/80">
+                      {currencySymbol(formCurrency)}
+                    </span>
+                    <span className="ml-auto text-[9px] uppercase tracking-[0.16em] text-neutral-500">
+                      {t("tenants.form.currencyLockedTag")}
+                    </span>
+                  </div>
+                  <p className="mt-1.5 text-[10px] leading-4 text-neutral-600">
+                    {t("tenants.form.currencyLockedHint")}
+                  </p>
+                </div>
+              </div>
 
               {/*
                 Tenant Logo（商户品牌 Logo）—— **全系统唯一的上传入口**。

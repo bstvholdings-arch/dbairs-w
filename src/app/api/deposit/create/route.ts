@@ -12,6 +12,10 @@ import {
   resolveDepositBankSelection,
 } from "@/lib/payment-gateway-banks";
 import {
+  gatewayRequiresManualReview,
+  isFiatGatewayChannel,
+} from "@/lib/payment-gateway-constants";
+import {
   buildUsdtQrPayload,
   depositAmountLimitLabels,
   depositTestCallbackAllowed,
@@ -163,6 +167,20 @@ export async function POST(request: NextRequest) {
      */
     if (gateway.isPlatformGateway || gateway.ownerId !== player.tenantId) {
       return jsonError("该支付网关不属于当前商户，请选择本商户配置的通道", 403);
+    }
+
+    /**
+     * 法币专精（硬闸门）：加密货币通道一律拒绝下单。
+     *
+     * 前端列表已经过滤掉 USDT 通道，但玩家伪造 gatewayId 直接打接口时，
+     * 这里必须再拦一次 —— 否则会出现「钱包是 MYR、订单币种是 USDT」的脏单，
+     * 后面既没法对账也没法出款。判定唯一来源：isFiatGatewayChannel。
+     */
+    if (!isFiatGatewayChannel(gateway)) {
+      return jsonError(
+        "该通道为加密货币通道，本平台仅支持法币充值，请选择其他通道",
+        409,
+      );
     }
 
     const isUsdtGateway = isUsdtProviderType(gateway.providerType);
@@ -345,6 +363,9 @@ export async function POST(request: NextRequest) {
         // 前端根据 gatewayType 决定跳转、动态二维码、静态图或银行转账信息。
         gatewayType,
         gatewayKind,
+        // 静态码 / 银行转账：钱进商户自己的账户，永不自动上分，
+        // 玩家端必须显示「待商户人工确认到账」而不是「1-3 分钟自动到账」。
+        requiresManualReview: gatewayRequiresManualReview(gatewayType),
         currency: order.currency,
         amount: amountText,
         // 玩家选中的银行（REDIRECT_URL 才有值）：前端据此提示「正在跳转到 XX 支付」。

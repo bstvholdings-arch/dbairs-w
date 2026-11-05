@@ -3,12 +3,14 @@ import { Prisma } from "@prisma/client";
 
 import {
   failDepositOrder,
+  recordManualDepositCallback,
   settleDepositOrder,
 } from "@/lib/deposit-settlement";
 import {
   gatewayCallbackSignatureRequired,
   verifyCallbackSignature,
 } from "@/lib/payment-gateway";
+import { gatewayRequiresManualReview } from "@/lib/payment-gateway-constants";
 import { prisma } from "@/lib/prisma";
 
 type GatewayCallbackContext = {
@@ -24,6 +26,7 @@ const gatewaySelect = {
   id: true,
   name: true,
   providerType: true,
+  gatewayType: true,
   apiKey: true,
   isActive: true,
 } satisfies Prisma.PaymentGatewaySelect;
@@ -469,27 +472,78 @@ export async function POST(
     // ⑦ 安全防线三：金额核对。金额一律以数据库订单为准，回调金额只用来比对。
     const callbackAmount = parseCallbackAmount(input);
 
-    if (!callbackAmount) {
-      return jsonError(
-        "回调缺少有效金额 amount",
-        400,
-        "missing_amount",
-      );
-    }
-
-    if (!callbackAmount.equals(order.amount)) {
+    // 金额只要对不上（哪怕差 0.01）就一律拒绝 + 打告警，与通道形态无关。
+    if (callbackAmount && !callbackAmount.equals(order.amount)) {
       console.error("[ALARM][deposit-callback] 回调金额与订单金额不一致", {
         orderNo: order.orderNo ?? order.id,
         orderAmount: order.amount.toFixed(6),
         callbackAmount: callbackAmount.toFixed(6),
         currency: order.currency,
         gateway: gateway.name,
+        gatewayType: gateway.gatewayType,
       });
 
       return jsonError(
         "回调金额与订单金额不一致，已拒绝入账",
         400,
         "amount_mismatch",
+      );
+    }
+
+    /**
+     * ⑧ 安全防线四（资金安全红线）：静态码 / 银行转账**永不自动上分**。
+     *
+     * 这两种形态的钱是直接进商户自己的银行账户的，系统拿不到「支付商已收款」的
+     * 机器凭证。即使签名合法、订单金额也对得上，也只把订单挂进商户后台的
+     * 人工审核队列（status 仍是 pending），必须由商户核对银行流水后点【确认到账】。
+     *
+     * - 幂等：recordManualDepositCallback 用 CAS（pending + manualReviewStatus=null），
+     *   同一个订单回调 10 次也只产生 1 条待审记录，且**一次都不动余额**；
+     * - 静态码常常拿不到 amount / txHash，这里不做强制（人工审核不看这两个字段）。
+     */
+    if (gatewayRequiresManualReview(gateway.gatewayType)) {
+      const recorded = await recordManualDepositCallback({
+        orderId: order.id,
+        amount: callbackAmount,
+        txHash: txHash || null,
+      });
+
+      switch (recorded.kind) {
+        case "awaiting-review":
+        case "already-awaiting":
+          return Response.json({
+            success: true,
+            // 明确告知支付商：已收到，不要再重试；但钱还没上分（等人工核对）。
+            manualReview: true,
+            replayed: recorded.kind === "already-awaiting",
+            orderNo: order.orderNo ?? order.id,
+            status: "pending",
+          });
+        case "already-success":
+          return Response.json({
+            success: true,
+            manualReview: false,
+            replayed: true,
+            orderNo: order.orderNo ?? order.id,
+            status: "success",
+          });
+        case "already-failed":
+          return jsonError(
+            "订单已标记失败，不能重新入账",
+            409,
+            "already_failed",
+          );
+        default:
+          return jsonError("充值订单不存在", 404, "order_not_found");
+      }
+    }
+
+    // 以下只对「自动上分」通道生效：金额与交易号都是上分的必要条件。
+    if (!callbackAmount) {
+      return jsonError(
+        "回调缺少有效金额 amount",
+        400,
+        "missing_amount",
       );
     }
 

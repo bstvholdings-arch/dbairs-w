@@ -12,6 +12,7 @@ import type { PlayerWithdrawalAccountView } from "@/lib/withdrawal-accounts";
 import {
   calculateWithdrawalFee,
   calculateWithdrawalReceive,
+  isCryptoPayoutProvider,
   isFiatPayoutAccount,
   normalizePayoutCurrency,
   roundPayoutAmount,
@@ -204,7 +205,14 @@ export function PlayerWithdrawModal({
           return;
         }
 
-        const available = data.gateways ?? [];
+        /**
+         * 法币专精（双保险）：提现接口已按「非加密 + 同币种」过滤过一次，
+         * 这里再兜底去掉加密货币通道（usdt_* / crypto_* / coin_*），
+         * 保证弹窗里永远不会出现 USDT 选项。
+         */
+        const available = (data.gateways ?? []).filter(
+          (gateway) => !isCryptoPayoutProvider(gateway.providerType),
+        );
 
         if (available.length === 0) {
           setStatus("error");

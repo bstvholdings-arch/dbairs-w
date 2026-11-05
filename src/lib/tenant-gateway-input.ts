@@ -19,6 +19,7 @@ import {
 import {
   defaultGatewayCurrencyForProvider,
   defaultGatewayTypeForProvider,
+  isCryptoGatewayProviderType,
   isGatewayType,
 } from "./payment-gateway-constants";
 import type {
@@ -87,6 +88,20 @@ export function parseTenantGatewayInput(
 
   if (!isGatewayProviderType(input.providerType)) {
     return reject(400, "请选择有效的网关类型");
+  }
+
+  /**
+   * 法币专精（不可回退）：商户端**不允许**新增 / 修改成加密货币（USDT）通道。
+   *
+   * 为什么放在这里：新增（POST /api/tenant/gateways）与编辑（PUT …/:id）
+   * 共用本函数，一处收口就能同时掐断两条路；商户端下拉也已经不提供这些选项，
+   * 这里拦的是「绕过界面直接构造请求」。历史 USDT 通道需要改成法币支付商才能保存。
+   */
+  if (isCryptoGatewayProviderType(input.providerType)) {
+    return reject(
+      400,
+      "本平台只支持法币通道，已停用加密货币（USDT）网关，请选择银行转账 / 静态码 / 网银跳转等法币支付商",
+    );
   }
 
   const providerType = input.providerType;

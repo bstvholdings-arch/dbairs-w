@@ -45,6 +45,9 @@ export default async function AdminTenantsPage() {
       logoPosition: payload.logoPosition,
       status: payload.status,
       withdrawalRequiredApprovals: payload.withdrawalRequiredApprovals,
+      // 开户国家 / 结算币种：编辑弹窗要回填国家下拉，并只读展示锁定后的币种
+      country: payload.country,
+      currency: payload.currency,
       // 开站 / 编辑弹窗要回填当前主题背景色
       themeBackground: payload.themeBackground,
       createdAt: payload.createdAt.toISOString(),

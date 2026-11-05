@@ -27,8 +27,9 @@ import {
 import {
   defaultGatewayCurrencyForProvider,
   defaultGatewayTypeForProvider,
-  GATEWAY_PROVIDER_TYPES,
+  FIAT_GATEWAY_PROVIDER_TYPES,
   GATEWAY_TYPES,
+  isCryptoGatewayProviderType,
   type GatewayProviderType,
   type GatewayTypeValue,
 } from "@/lib/payment-gateway-constants";
@@ -369,6 +370,13 @@ export function TenantGatewayFormModal({
     ...normalizeSupportedBanks(form.customBanksText),
   ]);
 
+  /**
+   * 编辑一条历史加密货币（USDT）通道时：下拉里已经没有这类选项了，
+   * 需要额外渲染一个 disabled 占位项 + 红字提示，商户改成法币支付商才能保存
+   * （服务端 parseTenantGatewayInput 会直接 400 拦下 crypto providerType）。
+   */
+  const isLegacyCryptoGateway = isCryptoGatewayProviderType(form.providerType);
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-end justify-center bg-black/80 p-0 backdrop-blur-sm sm:items-center sm:p-6"
@@ -443,7 +451,21 @@ export function TenantGatewayFormModal({
                   }
                   className={inputClass}
                 >
-                  {GATEWAY_PROVIDER_TYPES.map((providerType) => (
+                  {/*
+                   * 法币专精：下拉只给 FIAT_GATEWAY_PROVIDER_TYPES（已剔除 USDT）。
+                   * 历史通道若是加密货币，额外渲染一个 disabled 占位项，
+                   * 否则 <select> 的值不在列表里会显示成空白，商户以为表单坏了。
+                   */}
+                  {isLegacyCryptoGateway ? (
+                    <option
+                      value={form.providerType}
+                      disabled
+                      className="bg-[#0a0a0a]"
+                    >
+                      {t("tenantGateway.form.legacyCryptoOption")}
+                    </option>
+                  ) : null}
+                  {FIAT_GATEWAY_PROVIDER_TYPES.map((providerType) => (
                     <option
                       key={providerType}
                       value={providerType}
@@ -453,6 +475,11 @@ export function TenantGatewayFormModal({
                     </option>
                   ))}
                 </select>
+                {isLegacyCryptoGateway ? (
+                  <p className="mt-1.5 text-[10px] leading-4 text-red-300/90">
+                    {t("tenantGateway.form.legacyCryptoHint")}
+                  </p>
+                ) : null}
               </label>
 
               <label className="block">

@@ -20,6 +20,13 @@ import {
 } from "@/lib/storefront";
 import { getSuperAdminFromRequest } from "@/lib/super-admin";
 import {
+  DEFAULT_TENANT_COUNTRY,
+  TENANT_COUNTRY_CODES,
+  currencyForTenantCountry,
+  isTenantCountry,
+  normalizeTenantCountry,
+} from "@/lib/tenant-country";
+import {
   provisionTenantAdminAccount,
   readTenantAdminEmail,
   type TenantAdminProvisionResult,
@@ -107,6 +114,10 @@ async function createTenantWithAdmin(input: {
   logoUrl: string | null;
   /** Logo 在大厅顶栏的位置（left / center），开站时由超管选定 */
   logoPosition: TenantLogoPosition;
+  /** 开户国家（MY / TH / ID…），由超管在开站弹窗选定 */
+  country: string;
+  /** 结算币种：**由 country 推导**（currencyForTenantCountry），不接受前端单独指定 */
+  currency: string;
 }): Promise<CreateTenantWithAdminResult> {
   try {
     const created = await prisma.$transaction(async (tx) => {
@@ -121,6 +132,8 @@ async function createTenantWithAdmin(input: {
           layoutConfig: input.layoutConfig,
           logoUrl: input.logoUrl,
           logoPosition: input.logoPosition,
+          country: input.country,
+          currency: input.currency,
         },
         select: tenantSelectWithLayout,
       });
@@ -306,6 +319,30 @@ export async function POST(request: NextRequest) {
       logoPosition = rawLogoPosition;
     }
 
+    /**
+     * 开户国家 → 结算币种（联动锁定）。
+     *
+     * 产品口径：超管只需要选国家（马来西亚 / 泰国 / 印尼 / 越南…），
+     * 币种由 `currencyForTenantCountry()` 自动推导，**前端不传 currency**：
+     * 传了也不认，避免出现「国家 MY、币种 USDT」这种既不能对账也不能出款的脏站。
+     * 不传国家 → 回落 MY / MYR（= 改造前的缺省站）。
+     */
+    const rawCountry = input.country;
+    let country: string = DEFAULT_TENANT_COUNTRY;
+
+    if (rawCountry !== undefined && rawCountry !== null) {
+      if (!isTenantCountry(rawCountry)) {
+        return jsonError(
+          `开户国家只能是以下之一：${TENANT_COUNTRY_CODES.join("、")}`,
+          400,
+        );
+      }
+
+      country = normalizeTenantCountry(rawCountry);
+    }
+
+    const currency = currencyForTenantCountry(country);
+
     const [domainExists, subdomainExists, emailOwner] = await Promise.all([
       prisma.tenant.findFirst({
         where: { domain: { equals: domain, mode: "insensitive" } },
@@ -374,6 +411,9 @@ export async function POST(request: NextRequest) {
       adminEmail,
       logoUrl,
       logoPosition,
+      // 国家与币种成对写入：币种只能来自 currencyForTenantCountry(country)
+      country,
+      currency,
       // 只写这一项，其余装修字段由 normalizeStorefrontLayout 补默认值，
       // 与「老租户缺字段」走同一套容错逻辑。
       layoutConfig: serializeLayoutConfig(

@@ -279,15 +279,19 @@ DEFAULT_TENANT=winvora
 | `POST /api/deposit/callback/[gatewayCode]` | **真实支付商回调主入口**：`x-signature` 验签 → 按 `orderNo` 回查 → 状态幂等 → 金额核对 → 事务上分 |
 | `POST /api/deposit/callback` | 旧版回调（按本系统订单主键 `orderId`，供历史联调脚本使用），与新接口共用同一份上分实现 |
 | `POST /api/deposit/test-callback` | 前端「我已完成支付（测试）」，仅非生产环境 / `DEPOSIT_ALLOW_TEST_CALLBACK=true` 开放，复用正式状态机 |
+| `POST /api/deposit/claim-paid` | 玩家点「我已付款，通知商家核对」：**只把订单挂进人工审核队列，不加钱**，仅对静态码 / 银行转账生效（这两类通道没有支付商回调，玩家不标记商户就看不到） |
+| `PATCH /api/tenant/deposits/[id]` | 商户确认 / 驳回待人工审核的充值（`approve` = 上分 + 记账，`reject` = 置 failed 不动余额） |
 
 - **订单号**：`DEP_<毫秒时间戳>_<6 位十六进制随机>`（`src/lib/deposit-order.ts`，`crypto.randomInt` 生成）。服务端生成、唯一索引兜底、撞号自动重试；第三方回调带回 `orderNo` 即可定位订单，历史订单仍可用主键 `id` 回查。
 - **金额区间**：默认单笔 `10 ~ 50,000`，可用 `DEPOSIT_MIN_AMOUNT` / `DEPOSIT_MAX_AMOUNT` 覆盖；服务端 `parseDepositAmount` 为唯一口径，前端只做同口径提示。
 - **收款指令**：`gatewayKind=CRYPTO`（`usdt_trc20` / `usdt_erc20` 或币种为 USDT）返回钱包地址 + 链网络 + 二维码内容；`gatewayKind=FIAT` 返回银行账号明细 / 静态收款图 / 跳转收银台地址。
-- **回调三条防线**（`src/app/api/deposit/callback/[gatewayCode]/route.ts`）：
+- **回调四条防线**（`src/app/api/deposit/callback/[gatewayCode]/route.ts`）：
   1. 验签：`x-signature`（兼容 `x-pay-signature` / `x-gateway-signature`）= `hex(HMAC-SHA256(rawBody, gateway.apiKey))`，`apiKey` 即支付商后台的 `API_SECRET`；默认所有环境强制校验，可用 `PAYMENT_CALLBACK_REQUIRE_SIGNATURE=false` 仅在本机关闭；
-  2. 防重放：订单已 `success` 直接 `replayed:true` 返回，绝不重复加钱；`failed` 拒绝再入账；`DepositOrder @@unique([gatewayId, txHash])` 挡住「同一交易号刷多单」；
-  3. 金额核对：回调 `amount` 必须与数据库订单金额一致（Decimal 比较），不一致打印 `[ALARM][deposit-callback]` 结构化日志并拒绝入账。
-- **上分事务**（`src/lib/deposit-settlement.ts`）：`updateMany({ where: { id, status: "pending" } })` 条件更新抢状态 → `Player.balance` 原子 increment → 写 `Transaction(type=deposit)` → 首充返佣，任一步失败整体回滚。
+  2. 防重放：订单已 `success` 直接 `replayed:true` 返回，绝不重复加钱；`failed` 拒绝再入账；`DepositOrder @@unique([gatewayId, txHash])` 挡住「同一交易号刷多单」；上分用 `updateMany({ where: { id, status: "pending" } })` 做数据库层 CAS，同一个订单回调 10 次只有抢到状态迁移的那一次会加钱；
+  3. 金额核对：回调 `amount` 必须与数据库订单金额一致（Decimal 比较），**差 0.01 也拒绝**，不一致打印 `[ALARM][deposit-callback]` 结构化日志并拒绝入账；
+  4. 静态码 / 银行转账**永不自动上分**：`gatewayRequiresManualReview()`（`src/lib/payment-gateway-constants.ts`）命中时，回调（含「我已完成支付」按钮走的旧入口）只调 `recordManualDepositCallback()` 把订单挂进人工审核队列（`status` 仍是 `pending` + `manualReviewStatus=pending`），回 `200 { manualReview: true }`，**一分钱都不加**；商户在 `/tenant/deposits` 核对银行流水后点【确认到账】才真正上分。原因：这两类通道的钱直接进商户自己的银行账户，系统拿不到「支付商已收款」的机器凭证，签名合法也证明不了到账。
+- **上分事务**（`src/lib/deposit-settlement.ts`）：`updateMany({ where: { id, status: "pending" } })` 条件更新抢状态 → `Player.balance` 原子 increment → 写 `Transaction(type=deposit)` → 首充返佣，任一步失败整体回滚。人工确认走同一个 `settleDepositOrder`（额外带 `tenantId` + `requireManualReview`，CAS 里再加 `manualReviewStatus=pending`），所以「商户连点两次」「商户点了 + 支付商又回调一次」都不会加两次钱。
+- **充值人工审核台**（`/tenant/deposits`，`PATCH /api/tenant/deposits/[id]`）：列出**静态码 / 银行转账的全部 `pending` 单**（含玩家付完就关页面、没点「我已付款」的「无信号」单，否则商户会漏单），每行标付款信号，侧边栏有金色待办角标。`approve` = 加余额 + 写充值流水（同一事务，CAS 保证只加一次）；`reject` = 置 `failed`，不动余额不写流水。`tenantId` 只来自会话，别家商户的单号一律 404；自动上分通道（REDIRECT_URL / DYNAMIC_QR）的单不允许从这里人工改单。上分用的 `txHash` 优先取回调带回的交易号，冲突时由 `@@unique([gatewayId, txHash])` 拦下（同一张银行流水不能登记到第二笔订单）。
 - **前端弹窗**：`src/components/player/deposit-modal.tsx`（大厅黑金风格）。**界面按 `gatewayType` 分形态渲染**，不是「一律二维码 + 银行信息堆一起」：
   - `STATIC_QR` → 直接大图收款码 + 「请使用手机银行扫码支付」（商户配了远程图时**下单前**就展示，省掉一次点击）；
   - `REDIRECT_URL` → 先渲染银行卡片（Maybank / CIMB / Public Bank…，来自 `gateway.supportedBanks`）→ 输入金额 → 下单 → `window.location.assign(paymentUrl)` 整页跳转到支付商，**任何情况下都不渲染二维码**；
@@ -295,7 +299,7 @@ DEFAULT_TENANT=winvora
   - `DYNAMIC_QR` → USDT 钱包地址 + 现场生成二维码，非 USDT 支付商则用接口下发的二维码内容。
   - 只有 1 条通道时**不渲染下拉框**（直接显示通道卡片 + 形态标签），多条通道才出下拉框。
 - **银行白名单（REDIRECT_URL）**：`PaymentGateway.supportedBanks String[]`，唯一写入口是 `/tenant/payments` 的通道表单（内置银行勾选 + 「其他银行」手工补充，上限 20 家），归一化 / 校验 / 展示统一走 `src/lib/payment-gateway-banks.ts`。下单时 `POST /api/deposit/create` 用 `resolveDepositBankSelection()` 强制校验：列表非空却没选银行 / 选了不在列表里的银行一律 400，通过后把 `bank=<code>` 拼到支付商跳转地址上。列表为空 = 不做银行选择，交给支付商收银台。
-- **表结构增量**：`prisma/deposit-order-no.sql`（幂等，补 `DepositOrder.orderNo` + 唯一索引）、`prisma/gateway-supported-banks.sql`（幂等，补 `PaymentGateway.supportedBanks`）；`npx prisma db push` 正常时也可直接用 schema。
+- **表结构增量**：`prisma/deposit-order-no.sql`（幂等，补 `DepositOrder.orderNo` + 唯一索引）、`prisma/gateway-supported-banks.sql`（幂等，补 `PaymentGateway.supportedBanks`）、`prisma/deposit-manual-review.sql`（幂等，补 `DepositOrder.manualReviewStatus` / `callbackAmount` / `callbackTxHash` / `callbackReceivedAt` + 索引）；`npx prisma db push` 正常时也可直接用 schema。
 
 回调示例（`gatewayCode` 支持网关 `id`、`providerType` 或网关名称）：
 
@@ -400,6 +404,15 @@ curl -X POST "https://<host>/api/deposit/callback/usdt_trc20" \
   - 已统一的位置：大厅顶栏 / Hero 奖池、玩家中心（顶部余额、可用余额卡、今日输赢、流水、充值/提现记录、注单、推广奖励、每日奖励）、提现按钮与弹窗、充值弹窗与支付页、`DepositDialog`。
   - 商户后台的财务流水（`/tenant/finance`）与提现审批（`/tenant/withdrawals`）已改走 `formatDisplayAmount`（币种取自 `Tenant.currency`）；平台视角的 `/admin` 汇总仍是 `$`，如需按租户币种请复用 `formatCurrency` 逐步替换。
 - **表结构增量**：`prisma/tenant-currency.sql`（幂等，`ALTER TABLE "Tenant" ADD COLUMN IF NOT EXISTS "currency"`，默认 `MYR`）；正常 `npx prisma db push` 会自动建列，只跑 SQL 的环境可用 `npm run db:sql prisma/tenant-currency.sql`，随后 `npx prisma generate`（Supabase 连接池上 `db push` 有时会卡在 shadow database，这条路径更稳）。
+
+### 法币专精：加密通道从源头断绝 + 开户国家锁定结算币种
+
+老板点名的最后一条产品口径，四条硬规则（改代码前先读 AGENTS.md §13）：
+
+- **只做法币**：加密货币（USDT / TRC20 / ERC20…）**永久禁用**。判定只有一份 `isFiatGatewayChannel()`（`src/lib/payment-gateway-constants.ts`），四个落点共用：`GET /api/deposit/gateways` 不下发、`POST /api/deposit/create` 造不出单（409）、`parseTenantGatewayInput()` 拦住商户后台新增 / 编辑（400）、玩家端充值 / 提现弹窗再兜底过滤一次。商户后台的「支付商」下拉只剩 `FIAT_GATEWAY_PROVIDER_TYPES`；编辑历史 USDT 通道会看到 `disabled` 占位项 + 红字提示，改成法币支付商才能保存。
+- **开户国家 `Tenant.country` 联动锁定结算币种**：超管在【租户管理 → 新建 / 编辑】只选国家（马来西亚 / 泰国 / 印尼 / 越南 / 新加坡 / 印度 / 澳洲 / 香港 / 美国），币种由 `src/lib/tenant-country.ts` 的 `TENANT_COUNTRIES` 自动决定（MY→MYR、TH→THB、ID→IDR、VN→VND…），弹窗里只读展示（`RM · MYR`）。前端不传 `currency`，编辑时**只有国家真的变了才写币种** —— 老租户 `country` 是缺省 MY、币种可能是历史值，同值提交绝不能把 MYR 写进去。
+- **玩家端符号永远来自 `Tenant.currency`**：`formatCurrency` / `formatDisplayAmount` 是唯一出口；充值弹窗在「还没有通道」时的兜底单位也回落到本站币种（历史上写死的 `?? "USDT"` 已删除）。
+- **迁移顺序（缺一步就报错）**：`npx prisma db push`（新增 `country`，纯加成）→ `npm run db:sql prisma/tenant-country.sql`（按已有币种回填老租户国家）→ `npx prisma generate` → 重启 dev server。
 
 ### 前台排版模板（一套组件 + 5 组 layout token）
 

@@ -147,3 +147,29 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 
 
+
+### 12. 充值回调与自动上分：四条安全底线（不可回退），静态码必转人工
+
+- **幂等**：同一个订单号回调 10 次只能加钱 1 次。实现只有一份：`src/lib/deposit-settlement.ts` 的 `updateMany({ where: { id, status: "pending" } })` 数据库层 CAS；抢到状态迁移的那个请求才 `balance increment` + 写 `Transaction`，其余返回 `already-success`。**禁止**「先查再改」或在前端 / 路由里再写一套判断。
+- **验签**：`/api/deposit/callback/[gatewayCode]` 默认所有环境强制 `x-signature = hex(HMAC-SHA256(rawBody, gateway.apiKey))`，必须用**原始字符串**验签（先 parse 再 stringify 会丢字段顺序与空白），签名不对直接 401 且不写任何数据。只有本机联调才允许 `PAYMENT_CALLBACK_REQUIRE_SIGNATURE=false`，不得把它当默认值。
+- **金额**：回调 `amount` 必须与 `DepositOrder.amount` **完全一致**，差 0.01 也要 `[ALARM]` 告警 + 400 `amount_mismatch` + 拒绝入账。金额永远以数据库订单为准，回调金额只用于比对。
+- **静态码 / 银行转账永不自动上分**（老板点名的第四条）：`STATIC_QR` 与 `BANK_TRANSFER` 的钱直接进商户自己的银行账户，系统拿不到「支付商已收款」的机器凭证。判定只走 `src/lib/payment-gateway-constants.ts` 的 `gatewayRequiresManualReview()`，两条回调入口（`/api/deposit/callback/[gatewayCode]`、旧 `/api/deposit/callback`，后者也是玩家点「我已完成支付」/test-callback 的实际落点）命中后**只调 `recordManualDepositCallback()`**：`status` 保持 `pending` + `manualReviewStatus=pending` + 记 `callbackAmount/callbackTxHash/callbackReceivedAt`，返回 `200 { manualReview: true }`，**一分钱都不加**。重复回调靠 `manualReviewStatus=null` 的 CAS 去重，队列里永远只有一条。
+- **人工确认是这两类通道唯一的上分入口**：`/tenant/deposits`（`PATCH /api/tenant/deposits/[id]`，`reviewTenantDeposit()`）。`approve` = `settleDepositOrder({ ..., tenantId, expectManualReviewStatus })`（同一事务加余额 + 写流水，CAS 额外带 `manualReviewStatus`，连点两次也只加一次）；`reject` = `failDepositOrder({ ..., tenantId, expectManualReviewStatus })` → `failed`，不动余额不写流水。**禁止**给静态码 / 银行转账恢复「回调即上分」，也**禁止**把确认按钮做成「有支付商 API 才显示」——那是这条红线的唯一出口。
+- **队列口径 = 这两类通道的全部 `pending` 单**（不是「只收有信号的」）：玩家扫码付钱后把弹窗关掉（没点「我已付款」）也必须能被商户找到，否则等于「钱收了不给上分」。行上标 `signalReceived`（`manualReviewStatus === "pending"` = 收到信号），无信号单由商户对照银行流水自行判断。CAS 期望值因此是二态的（`"pending"` / `null`），两者都精确匹配才不会重复动钱。**自动上分通道（REDIRECT_URL / DYNAMIC_QR）的单一律不准走这里**（`not_manual_review_channel`），人工改单会绕开支付商对账。
+- **入队信号有两条腿，缺一不可**：① 支付商回调（`/api/deposit/callback[...]`）；② 玩家点「我已付款」→ `POST /api/deposit/claim-paid`（纯静态码没有支付商回调，玩家不标记，商户在后台就只剩「无信号」单）。两者都只调 `recordManualDepositCallback()`，**都不加钱**；该接口只接受订单归属玩家（`403` 拦别人的单）、只对 `gatewayRequiresManualReview()` 生效（自动上分通道 400，否则等于给玩家一个免费加钱按钮）。
+- 玩家端文案必须区分：这两类通道显示 `player.deposit.manualReviewNotice`（等商户人工确认到账），**禁止**继续显示「1-3 分钟自动到账」；`manualReview: true` 的响应**禁止**触发 `onDeposited` / `notifyPlayerWalletChanged`（会用过期余额刷玩家顶栏）。
+- 商户后台这条队列**必须带租户隔离**：`tenantId` 只来自 `guardTenantApi` 的会话，别家商户的单号一律 404；侧边栏角标计数走 `countTenantPendingDepositReviews()`（一条走索引的 count）。
+- 增量 SQL：`prisma/deposit-manual-review.sql`（幂等），改完 `npx prisma generate` + `npm run db:sql prisma/deposit-manual-review.sql`，并**重启 dev server**（旧的内存客户端看不到新字段）。
+
+
+### 13. 法币专精：加密通道从源头断绝，开户国家锁定结算币种
+
+- **本平台只做法币，加密货币永久禁用**（产品 / 合规决策，不可回退）。判定唯一来源是 `src/lib/payment-gateway-constants.ts` 的 `isFiatGatewayChannel({ providerType, currency })`（加密 providerType：`usdt_trc20` / `usdt_erc20`；加密币种：`USDT` / `USDC` / `BTC` …）。**禁止**在路由 / 组件里另写 `if (providerType === "usdt_trc20")`。
+- **四个落点必须共用这一份判定**：① `GET /api/deposit/gateways`（命中即不下发，`merchantConfigured` 也只看法币通道）；② `POST /api/deposit/create`（命中即 409，防止伪造 `gatewayId` 造出「钱包 MYR、订单 USDT」的脏单）；③ `parseTenantGatewayInput()`（商户后台新增 / 编辑一律 400，`POST|PUT /api/tenant/gateways` 两条路一次掐断）；④ 玩家端弹窗兜底过滤（`deposit-modal.tsx` 用 `isFiatGatewayChannel`、`withdraw-modal.tsx` 用 `isCryptoPayoutProvider`），双保险。
+- **商户后台「支付商」下拉只给 `FIAT_GATEWAY_PROVIDER_TYPES`**（已剔除加密）；编辑历史加密通道时额外渲染一个 `disabled` 占位项 + 红字提示（`tenantGateway.form.legacyCrypto*`），因为 `<select>` 的值不在列表里会显示空白。提现侧本来就走 `isFiatPayoutChannel()`（非加密 + 同币种），不需要再加判断。
+- **不再出现「USDT」兜底文案**：玩家充值弹窗的金额单位在「没有通道」时必须回落到本站记账币种（`Tenant.currency`），历史上那句 `selectedGateway?.currency ?? "USDT"` 已经删掉。
+- **开户国家 `Tenant.country`**（ISO 3166-1 alpha-2，默认 `MY`）与 **结算币种 `Tenant.currency` 绑定**：MY→MYR、TH→THB、ID→IDR、VN→VND、SG→SGD、IN→INR、AU→AUD、HK→HKD、US→USD。唯一映射表是 `src/lib/tenant-country.ts` 的 `TENANT_COUNTRIES`（加国家 = 加一行 + 两条文案，不碰页面）。
+- **写入口只有超管建站 / 编辑弹窗**（`POST /api/tenants`、`PUT /api/tenants/[id]` 的 `country`）。币种**不接受前端传**：新建一律 `currencyForTenantCountry(country)`；编辑时**只有国家真的变了才写币种**（老租户 `country` 列是缺省 MY、币种可能是历史值 THB，同值提交绝不能把币种改成 MYR —— 那等于偷偷换掉整站的记账单位）。弹窗里币种是只读展示（`tenants.form.currencyLocked*`），不提供独立输入框。
+- 商户后台（`PATCH /api/tenant/settings` / `saveTenantSiteSettings`）与装修页（`PUT /api/admin/storefront`）都不认 `country` / `currency`，构造请求也改不动（与 `themeBackground` / `logoUrl` 同一权限口径）。
+- 增量 SQL：`prisma/tenant-country.sql`（幂等）。执行顺序：`npx prisma db push`（新增 `country` 列，`NOT NULL DEFAULT 'MY'`，纯加成）→ `npm run db:sql prisma/tenant-country.sql`（按已有币种回填老租户的国家）→ `npx prisma generate`。**DB 没迁移就发布 = 所有查租户的页面 500**（`tenantSelect` 里有 `country`），务必先迁移再上线。
+

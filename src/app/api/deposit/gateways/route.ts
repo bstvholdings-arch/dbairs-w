@@ -2,6 +2,9 @@ import { connection, type NextRequest } from "next/server";
 
 import { normalizeGatewayBankDetails } from "@/lib/payment-gateway-bank";
 import { normalizeSupportedBanks } from "@/lib/payment-gateway-banks";
+import {
+  isFiatGatewayChannel,
+} from "@/lib/payment-gateway-constants";
 import { isInlineGatewayQrCodeImage } from "@/lib/payment-gateway-qr";
 import {
   depositAmountLimitLabels,
@@ -24,6 +27,8 @@ function jsonError(message: string, status: number) {
  * 所属 tenantId 的商户自有通道**，绝不再回落到平台公用网关（ownerId=null）。
  *
  * - USDT 网关：DYNAMIC_QR，必须已配置钱包地址；
+ *   ⚠️ 平台只做法币：加密货币通道**永远不会**出现在这个列表里（见 isFiatGatewayChannel），
+ *   历史上的 USDT 通道即使还在库里也不会下发；
  * - 静态收款图：STATIC_QR，必须已配置二维码图片；
  * - 跳转支付：REDIRECT_URL，必须已配置有效接口地址；
  * - 银行转账：BANK_TRANSFER，必须已配置银行账号信息。
@@ -89,6 +94,15 @@ export async function GET(request: NextRequest) {
         return [];
       }
 
+      /**
+       * 法币专精：加密货币（USDT / TRC20 / ERC20）通道一律不下发，
+       * 玩家端连选项都看不到（判定唯一来源：isFiatGatewayChannel）。
+       * 历史 USDT 通道即使还留在库里（isActive=true）也不会出现在这里。
+       */
+      if (!isFiatGatewayChannel(gateway)) {
+        return [];
+      }
+
       const walletAddress = gateway.walletAddress?.trim() ?? "";
       const qrCodeImageUrl = gateway.qrCodeImageUrl?.trim() ?? "";
       const endpoint = gateway.endpoint?.trim() ?? "";
@@ -148,9 +162,10 @@ export async function GET(request: NextRequest) {
     return Response.json(
       {
         gateways: available,
-        // 该商户是否配置过任何通道（含已停用 / 配置不完整的）：前端据此区分
+        // 该商户是否配置过任何**法币**通道（含已停用 / 配置不完整的）：前端据此区分
         // 「商户未开通充值」与「通道暂时不可用」两种空态。
-        merchantConfigured: gateways.length > 0,
+        // 只配了加密货币通道的商户同样算「未开通法币充值」（平台只做法币）。
+        merchantConfigured: gateways.some(isFiatGatewayChannel),
         amountLimits: depositAmountLimitLabels(),
       },
       { headers: { "Cache-Control": "no-store" } },

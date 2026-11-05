@@ -1,4 +1,5 @@
 import type { TenantLogoPosition } from "@/lib/storefront";
+import type { TenantCountryCode } from "@/lib/tenant-country";
 import type { ThemeBackgroundId } from "@/lib/theme-backgrounds";
 
 export const WITHDRAWAL_APPROVAL_OPTIONS = [1, 2, 3] as const;
@@ -61,6 +62,17 @@ export type TenantRow = {
   logoPosition: TenantLogoPosition;
   status: string;
   withdrawalRequiredApprovals: number;
+  /**
+   * 开户国家（Tenant.country，已归一化）：MY / TH / ID / VN…
+   * 与 currency 绑定（国家 → 币种见 src/lib/tenant-country.ts），
+   * 只有超管能在本目录的弹窗里改。
+   */
+  country: TenantCountryCode;
+  /**
+   * 结算币种（Tenant.currency，已归一化）：**由 country 自动锁定**，
+   * 弹窗里只读展示，玩家端所有金额符号的唯一来源。
+   */
+  currency: string;
   /** 主题背景色（存在 Tenant.layoutConfig 里，前台大厅与品牌展馆共用） */
   themeBackground: ThemeBackgroundId;
   createdAt: string;
@@ -117,6 +129,14 @@ export type TenantFormValues = {
   backupDomains: string;
   status: string;
   withdrawalRequiredApprovals: number;
+  /**
+   * 开户国家（Tenant.country）：下拉选 MY / TH / ID / VN / SG / IN / AU / HK / US。
+   *
+   * **联动锁定结算币种**：选马来西亚 → MYR、泰国 → THB、印尼 → IDR、越南 → VND…
+   * 映射表只有一份（src/lib/tenant-country.ts），前端只负责展示推导结果，
+   * 币种由服务端按国家写入，前端不单独提交 currency（两边不会打架）。
+   */
+  country: TenantCountryCode;
   /**
    * 主题背景色（Theme Background Color，15 选 1）。
    * 只有超管在开站 / 编辑租户时能配：商户后台不提供自助切换，

@@ -4,7 +4,11 @@ import type { ReactNode } from "react";
 
 import { ConsoleShell } from "@/components/console-shell";
 import { getSessionUserFromCookies } from "@/lib/session";
-import { getTenantScopeForUser, countTenantPendingWithdrawals } from "@/lib/tenant-console";
+import {
+  getTenantScopeForUser,
+  countTenantPendingDepositReviews,
+  countTenantPendingWithdrawals,
+} from "@/lib/tenant-console";
 
 export const instant = false;
 
@@ -40,6 +44,11 @@ export default async function TenantLayout({
     scope.tenantId,
   );
 
+  // 侧边栏「充值审核」角标：静态码 / 银行转账的待人工确认笔数。
+  const pendingDepositCount = await countTenantPendingDepositReviews(
+    scope.tenantId,
+  );
+
   return (
     <ConsoleShell
       role="tenant_admin"
@@ -50,6 +59,7 @@ export default async function TenantLayout({
       previewTenantKey={scope.tenant.subdomain || scope.tenant.id}
       impersonation={scope.impersonation}
       pendingWithdrawalCount={pendingWithdrawalCount}
+      pendingDepositCount={pendingDepositCount}
     >
       {children}
     </ConsoleShell>

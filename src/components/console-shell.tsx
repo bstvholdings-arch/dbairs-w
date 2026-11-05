@@ -132,6 +132,12 @@ const PLATFORM_NAV: NavItem[] = [
  */
 const TENANT_WITHDRAWALS_HREF = "/tenant/withdrawals";
 
+/**
+ * 充值人工审核页路径（静态码 / 银行转账专用）。
+ * 与提现审批同理：菜单项与角标判断共用同一份常量。
+ */
+const TENANT_DEPOSITS_HREF = "/tenant/deposits";
+
 const TENANT_ADMIN_NAV: NavItem[] = [
   {
     labelKey: "nav.tenantOverview",
@@ -139,6 +145,13 @@ const TENANT_ADMIN_NAV: NavItem[] = [
     icon: "dashboard",
   },
   { labelKey: "nav.tenantPlayers", href: "/tenant/players", icon: "players" },
+  // 充值审核：静态码 / 银行转账的钱进商户自己的银行账户，系统不会自动上分，
+  // 必须由商户在这里核对流水后点【确认到账】。入口必须在一级菜单（积压 = 玩家收不到钱）。
+  {
+    labelKey: "nav.tenantDeposits",
+    href: TENANT_DEPOSITS_HREF,
+    icon: "finance",
+  },
   // 提现审批：商户就是出款方，审批必须在一级菜单一眼可见（入口太深 = 出款积压）
   {
     labelKey: "nav.tenantWithdrawals",
@@ -373,6 +386,7 @@ export function ConsoleShell({
   previewTenantKey,
   impersonation,
   pendingWithdrawalCount = 0,
+  pendingDepositCount = 0,
   children,
 }: {
   role: AdminRole;
@@ -392,6 +406,11 @@ export function ConsoleShell({
    * 只由 `tenant/(console)/layout.tsx` 下发的真实计数决定，前端不自己算。
    */
   pendingWithdrawalCount?: number;
+  /**
+   * 「充值审核」菜单上的待人工确认角标（0 = 不显示）。
+   * 静态码 / 银行转账永不自动上分，积压就是玩家钱到账了却看不到余额。
+   */
+  pendingDepositCount?: number;
   children: ReactNode;
 }) {
   const pathname = usePathname();
@@ -416,6 +435,23 @@ export function ConsoleShell({
     isTenantScope && previewKey
       ? `/?tenant=${encodeURIComponent(previewKey)}`
       : null;
+
+  /**
+   * 导航角标数量：只认 layout 下发的真实计数，前端不自己算。
+   * 新增带角标的菜单时在这里加一行，桌面侧边栏与手机横向菜单自动同步
+   * —— 两处各写一份判断迟早会漏。
+   */
+  function navBadgeCount(item: NavItem) {
+    if (item.href === TENANT_DEPOSITS_HREF) {
+      return pendingDepositCount;
+    }
+
+    if (item.href === TENANT_WITHDRAWALS_HREF) {
+      return pendingWithdrawalCount;
+    }
+
+    return 0;
+  }
 
   return (
     <div className="relative min-h-screen bg-[#050505] font-sans text-neutral-200">
@@ -464,17 +500,16 @@ export function ConsoleShell({
                 >
                   <NavIcon name={item.icon} />
                   <span className="truncate">{t(item.labelKey)}</span>
-                  {item.href === TENANT_WITHDRAWALS_HREF &&
-                  pendingWithdrawalCount > 0 ? (
+                  {navBadgeCount(item) > 0 ? (
                     <span
-                      aria-label={t("nav.tenantWithdrawalsPending", {
-                        count: formatInteger(pendingWithdrawalCount),
+                      aria-label={t("nav.pendingBadgeAria", {
+                        count: formatInteger(navBadgeCount(item)),
                       })}
                       className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#d4af37] px-1.5 text-[10px] font-bold text-black"
                     >
-                      {pendingWithdrawalCount > 99
+                      {navBadgeCount(item) > 99
                         ? "99+"
-                        : formatInteger(pendingWithdrawalCount)}
+                        : formatInteger(navBadgeCount(item))}
                     </span>
                   ) : null}
                 </Link>
@@ -572,12 +607,11 @@ export function ConsoleShell({
                   <span className="whitespace-nowrap">
                     {t(item.labelKey)}
                   </span>
-                  {item.href === TENANT_WITHDRAWALS_HREF &&
-                  pendingWithdrawalCount > 0 ? (
+                  {navBadgeCount(item) > 0 ? (
                     <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#d4af37] px-1.5 text-[10px] font-bold text-black">
-                      {pendingWithdrawalCount > 99
+                      {navBadgeCount(item) > 99
                         ? "99+"
-                        : formatInteger(pendingWithdrawalCount)}
+                        : formatInteger(navBadgeCount(item))}
                     </span>
                   ) : null}
                 </Link>

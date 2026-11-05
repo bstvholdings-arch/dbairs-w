@@ -3,12 +3,14 @@ import { Prisma } from "@prisma/client";
 
 import {
   failDepositOrder,
+  recordManualDepositCallback,
   settleDepositOrder,
 } from "@/lib/deposit-settlement";
 import {
   callbackSignatureRequired,
   verifyCallbackSignature,
 } from "@/lib/payment-gateway";
+import { gatewayRequiresManualReview } from "@/lib/payment-gateway-constants";
 import { prisma } from "@/lib/prisma";
 
 type CallbackStatus = "success" | "failed";
@@ -98,7 +100,9 @@ export async function POST(request: NextRequest) {
       select: {
         id: true,
         orderNo: true,
-        gateway: { select: { name: true, apiKey: true } },
+        gateway: {
+          select: { name: true, apiKey: true, gatewayType: true },
+        },
       },
     });
 
@@ -145,12 +149,57 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const result = await settleDepositOrder({
+    /**
+     * 资金安全红线：静态码 / 银行转账**永不自动上分**。
+     *
+     * 这两类通道的钱直接进商户自己的银行账户，系统无法证明「真的到账」——
+     * 即使签名合法，也只能把订单挂进商户后台的人工审核队列（status 仍是 pending），
+     * 由商户核对银行流水后点【确认到账】。重复回调不会重复入队（CAS）。
+     *
+     * 注意：本入口「回调金额一律忽略」的口径不变，因此这里只记交易号、
+     * 不记金额（金额以数据库订单为准，人工核对时看的是银行流水）。
+     */
+    if (gatewayRequiresManualReview(order.gateway.gatewayType)) {
+      const recorded = await recordManualDepositCallback({
+        orderId: order.id,
+        amount: null,
+        txHash: txHash as string,
+      });
+
+      switch (recorded.kind) {
+        case "awaiting-review":
+        case "already-awaiting":
+          return Response.json({
+            success: true,
+            // 明确告诉调用方：已收到，但钱还没上分（等人工核对）。
+            manualReview: true,
+            replayed: recorded.kind === "already-awaiting",
+            orderId: order.id,
+            orderNo: order.orderNo ?? order.id,
+            status: "pending",
+          });
+        case "already-success":
+          return Response.json({
+            success: true,
+            manualReview: false,
+            replayed: true,
+            orderId: order.id,
+            orderNo: order.orderNo ?? order.id,
+            status: "success",
+          });
+        case "already-failed":
+          return jsonError("订单已标记失败，不能重新入账", 409);
+        default:
+          return jsonError("充值订单不存在", 404);
+      }
+    }
+
+    const settled = await settleDepositOrder({
       orderId: order.id,
       txHash: txHash as string,
     });
 
-    switch (result.kind) {
+    switch (settled.kind) {
       case "credited":
         return Response.json({
           success: true,
@@ -158,9 +207,9 @@ export async function POST(request: NextRequest) {
           orderId: order.id,
           orderNo: order.orderNo ?? order.id,
           status: "success",
-          transactionId: result.transactionId,
-          balance: result.balance,
-          referralRewarded: result.referralRewarded,
+          transactionId: settled.transactionId,
+          balance: settled.balance,
+          referralRewarded: settled.referralRewarded,
           gateway: order.gateway.name,
         });
       case "already-success":
@@ -171,7 +220,7 @@ export async function POST(request: NextRequest) {
           orderId: order.id,
           orderNo: order.orderNo ?? order.id,
           status: "success",
-          transactionId: result.transactionId,
+          transactionId: settled.transactionId,
         });
       case "already-failed":
         return jsonError("订单已标记失败，不能重新入账", 409);

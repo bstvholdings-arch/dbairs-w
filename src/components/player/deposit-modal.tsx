@@ -7,7 +7,12 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useLanguage } from "@/components/LanguageProvider";
 import { PaymentQrImage } from "@/components/payment-qr-image";
 import { resolveBrandName } from "@/lib/brand";
-import { formatCurrency, formatDisplayAmount } from "@/lib/currency";
+import {
+  DEFAULT_CURRENCY,
+  formatCurrency,
+  formatDisplayAmount,
+  normalizeCurrency,
+} from "@/lib/currency";
 import {
   GATEWAY_BANK_FIELD_LABEL_KEYS,
   GATEWAY_PAYMENT_TYPE_LABEL_KEYS,
@@ -23,7 +28,11 @@ import {
   buildGatewayBankOptions,
   gatewayBankInitial,
 } from "@/lib/payment-gateway-banks";
-import type { GatewayTypeValue } from "@/lib/payment-gateway-constants";
+import {
+  gatewayRequiresManualReview,
+  isFiatGatewayChannel,
+  type GatewayTypeValue,
+} from "@/lib/payment-gateway-constants";
 import { notifyPlayerWalletChanged } from "@/lib/player-wallet-events";
 
 export type PlayerDepositGateway = {
@@ -86,6 +95,11 @@ type CreatedDeposit = {
   /** REDIRECT_URL：玩家选的银行编码 / 展示名（其他形态为空串） */
   selectedBank: string;
   selectedBankLabel: string;
+  /**
+   * 静态码 / 银行转账：钱进商户自己的银行账户，**永不自动上分**。
+   * true 时文案必须说「等商户人工确认」，不能承诺「1-3 分钟自动到账」。
+   */
+  requiresManualReview: boolean;
   instructions: PaymentInstructions;
   canSimulateCallback: boolean;
 };
@@ -106,6 +120,8 @@ type CreateDepositResponse = {
   };
   paymentInstructions?: PaymentInstructions;
   canSimulateCallback?: boolean;
+  /** 静态码 / 银行转账为 true：下单后等商户人工确认，不会自动上分 */
+  requiresManualReview?: boolean;
   amountLimits?: AmountLimits;
   error?: string;
 };
@@ -113,6 +129,8 @@ type CreateDepositResponse = {
 type TestCallbackResponse = {
   success?: boolean;
   replayed?: boolean;
+  /** 静态码 / 银行转账：回调只入队，不加钱 → 这里是 true，balance 为空 */
+  manualReview?: boolean;
   balance?: string | null;
   error?: string;
 };
@@ -201,9 +219,13 @@ export function PlayerDepositModal({
   const [amount, setAmount] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [simulating, setSimulating] = useState(false);
+  /** 「我已付款」提交中（静态码 / 银行转账：只入队转人工审核） */
+  const [claiming, setClaiming] = useState(false);
   const [error, setError] = useState("");
   const [created, setCreated] = useState<CreatedDeposit | null>(null);
   const [creditedBalance, setCreditedBalance] = useState<string | null>(null);
+  /** 静态码 / 银行转账「我已完成支付」后：订单已提交人工审核（没加钱） */
+  const [manualReviewSubmitted, setManualReviewSubmitted] = useState(false);
   const [copiedKey, setCopiedKey] = useState("");
 
   useEffect(() => {
@@ -241,7 +263,11 @@ export function PlayerDepositModal({
           return;
         }
 
-        const available = data.gateways ?? [];
+        /**
+         * 法币专精（双保险）：接口已经过滤掉加密货币通道，前端再兜底拦一次。
+         * 这样即使服务端某天漏了 / 缓存了旧响应，玩家也不可能看到 USDT 选项。
+         */
+        const available = (data.gateways ?? []).filter(isFiatGatewayChannel);
 
         if (available.length === 0) {
           // 去中心化支付：充值通道完全由商户自己配置。
@@ -304,7 +330,16 @@ export function PlayerDepositModal({
 
   const selectedGateway =
     gateways.find((gateway) => gateway.id === gatewayId) ?? null;
-  const currency = selectedGateway?.currency ?? "USDT";
+  /**
+   * 金额单位：优先用通道币种（= 玩家实际要付的法币），
+   * 没有通道时**回落到本站记账币种**（Tenant.currency）。
+   *
+   * 历史写法是 `?? "USDT"`，法币专精后这句就是错的：
+   * 一个 THB 站弹窗里冒出「USDT 10.00」既违法币口径也会吓跑玩家。
+   */
+  const currency = selectedGateway
+    ? normalizeCurrency(selectedGateway.currency)
+    : normalizeCurrency(walletCurrency ?? DEFAULT_CURRENCY);
 
   /**
    * 表单形态只看「当前选中通道的 gatewayType」：
@@ -411,6 +446,11 @@ export function PlayerDepositModal({
 
       const instructions = data.paymentInstructions;
       const orderNo = data.order.orderNo ?? data.orderNo ?? data.order.id;
+      const orderGatewayType: GatewayTypeValue =
+        data.gatewayType ??
+        data.order.gatewayType ??
+        selectedGateway?.gatewayType ??
+        "STATIC_QR";
 
       const createdOrder: CreatedDeposit = {
         orderId: data.order.id,
@@ -419,13 +459,14 @@ export function PlayerDepositModal({
         currency: data.order.currency,
         gatewayName: data.order.gatewayName,
         // 接口回传优先；老接口没这个字段时用当前选中的通道（下单用的就是它）
-        gatewayType:
-          data.gatewayType ??
-          data.order.gatewayType ??
-          selectedGateway?.gatewayType ??
-          "STATIC_QR",
+        gatewayType: orderGatewayType,
         selectedBank: data.selectedBank ?? "",
         selectedBankLabel: data.selectedBankLabel ?? "",
+        // 静态码 / 银行转账永不自动上分：服务端判定优先，缺失时按形态自己兜一层，
+        // 宁可多提示「等人工确认」，也不能骗玩家「1-3 分钟到账」。
+        requiresManualReview:
+          data.requiresManualReview ??
+          gatewayRequiresManualReview(orderGatewayType),
         canSimulateCallback: Boolean(data.canSimulateCallback),
         instructions: instructions ?? {
           kind: "FIAT",
@@ -443,6 +484,7 @@ export function PlayerDepositModal({
 
       setCreated(createdOrder);
       setCreditedBalance(null);
+      setManualReviewSubmitted(false);
 
       /**
        * 跳转网银（REDIRECT_URL）：订单已落库，拿到支付商收银台地址就整页跳过去。
@@ -490,6 +532,17 @@ export function PlayerDepositModal({
         return;
       }
 
+      /**
+       * 静态码 / 银行转账：回调只把订单挂进商户后台的「充值审核」队列，
+       * **一分钱都不会加**。这里必须换文案，绝不能显示「已到账 + 新余额」，
+       * 更不能广播余额变更事件（会把玩家顶栏的余额刷成过期值）。
+       */
+      if (data.manualReview) {
+        setManualReviewSubmitted(true);
+        setCreditedBalance(null);
+        return;
+      }
+
       const balance = data.balance ?? null;
 
       setCreditedBalance(balance);
@@ -509,6 +562,39 @@ export function PlayerDepositModal({
     }
   }
 
+  async function handleClaimPaid() {
+    if (!created || claiming) {
+      return;
+    }
+
+    setClaiming(true);
+    setError("");
+
+    try {
+      const response = await fetch("/api/deposit/claim-paid", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ orderId: created.orderId }),
+      });
+      const data: TestCallbackResponse = await response
+        .json()
+        .catch(() => ({}) as TestCallbackResponse);
+
+      if (!response.ok || !data.success) {
+        setError(data.error || t("player.deposit.claimPaidFailed"));
+        return;
+      }
+
+      // 只入队、不加钱：不广播余额变更，等商户确认到账后玩家刷新即可看到。
+      setManualReviewSubmitted(true);
+    } catch {
+      setError(t("common.networkError"));
+    } finally {
+      setClaiming(false);
+    }
+  }
+
   const errorBanner = error ? (
     <div
       aria-live="polite"
@@ -517,6 +603,20 @@ export function PlayerDepositModal({
       {error}
     </div>
   ) : null;
+
+  /**
+   * 收款提示文案。
+   *
+   * 静态码 / 银行转账的钱进商户自己的银行账户，系统拿不到机器凭证，
+   * 因此**永不自动上分**：必须提示「付款后由商户人工确认到账」，
+   * 不能承诺「1-3 分钟自动到账」（否则玩家会反复来问「钱呢」）。
+   */
+  const manualReviewGateway = created
+    ? created.requiresManualReview
+    : gatewayRequiresManualReview(selectedGatewayType);
+  const payNoticeText = manualReviewGateway
+    ? t("player.deposit.manualReviewNotice")
+    : t("player.deposit.payNotice");
 
   function copyButton(key: string, value: string) {
     return (
@@ -552,7 +652,7 @@ export function PlayerDepositModal({
               {t("player.deposit.title")}
             </h2>
             <p className="mt-1 text-[11px] leading-5 text-neutral-500">
-              {created ? t("player.deposit.payNotice") : t("player.deposit.subtitle")}
+              {created ? payNoticeText : t("player.deposit.subtitle")}
             </p>
             {playerName ? (
               <p className="mt-0.5 text-[10px] uppercase tracking-[0.16em] text-neutral-600">
@@ -836,7 +936,7 @@ export function PlayerDepositModal({
               )}
 
               <div className="mt-4 rounded-xl border border-[#d4af37]/15 bg-[#d4af37]/[0.06] px-3.5 py-2.5 text-[11px] leading-5 text-[#e8cf8a]">
-                {t("player.deposit.payNotice")}
+                {payNoticeText}
               </div>
 
               {creditedBalance ? (
@@ -852,10 +952,33 @@ export function PlayerDepositModal({
                 </p>
               ) : null}
 
+              {manualReviewSubmitted ? (
+                <p className="mt-3 text-center text-[11px] leading-5 text-[#e8cf8a]">
+                  {t("player.deposit.manualReviewSubmitted")}
+                </p>
+              ) : null}
+
               {errorBanner}
 
               <div className="mt-4 flex gap-2">
-                {created.canSimulateCallback && !creditedBalance ? (
+                {created.requiresManualReview &&
+                !creditedBalance &&
+                !manualReviewSubmitted ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleClaimPaid()}
+                    disabled={claiming}
+                    className="h-10 flex-1 rounded-xl border border-[#d4af37]/35 text-[11px] text-[#f0d27c] transition-colors hover:bg-[#d4af37]/10 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {claiming
+                      ? t("player.deposit.imPaidPending")
+                      : t("player.deposit.imPaid")}
+                  </button>
+                ) : null}
+                {created.canSimulateCallback &&
+                !created.requiresManualReview &&
+                !creditedBalance &&
+                !manualReviewSubmitted ? (
                   <button
                     type="button"
                     onClick={() => void handleSimulate()}
@@ -872,6 +995,7 @@ export function PlayerDepositModal({
                   onClick={() => {
                     setCreated(null);
                     setCreditedBalance(null);
+                    setManualReviewSubmitted(false);
                     setError("");
                   }}
                   className="h-10 flex-1 rounded-xl border border-white/10 text-[11px] text-neutral-400 transition-colors hover:border-[#d4af37]/30 hover:text-neutral-100"
@@ -883,6 +1007,7 @@ export function PlayerDepositModal({
                   onClick={() => {
                     setCreated(null);
                     setCreditedBalance(null);
+                    setManualReviewSubmitted(false);
                     setAmount("");
                     setError("");
                   }}
@@ -1103,7 +1228,7 @@ export function PlayerDepositModal({
               </button>
 
               <p className="mt-3 text-center text-[10px] leading-5 text-neutral-600">
-                {t("player.deposit.payNotice")}
+                {payNoticeText}
               </p>
             </form>
           )}

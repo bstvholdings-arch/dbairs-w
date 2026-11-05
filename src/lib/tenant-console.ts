@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import type { NextRequest } from "next/server";
 
 import { normalizeCurrency } from "./currency";
+import { failDepositOrder, settleDepositOrder } from "./deposit-settlement";
 import { toNumber } from "./format";
 import {
   IMPERSONATION_COOKIE,
@@ -10,6 +11,12 @@ import {
 } from "./impersonation";
 import { isKycStatus, maskIdNumber, normalizeRejectReason } from "./kyc";
 import { tenantKycFileUrl } from "./kyc-storage";
+import {
+  DEPOSIT_MANUAL_REVIEW_PENDING,
+  MANUAL_REVIEW_GATEWAY_TYPES,
+  gatewayRequiresManualReview,
+  type GatewayTypeValue,
+} from "./payment-gateway-constants";
 import { prisma } from "./prisma";
 import {
   getSessionUserFromCookies,
@@ -1024,6 +1031,399 @@ export async function countTenantPendingWithdrawals(
   } catch (error) {
     console.error("统计待审批提现失败:", error);
     return 0;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 充值人工审核（静态码 / 银行转账）
+ *
+ * 资金安全红线：这两类通道的钱直接进商户自己的银行账户，系统拿不到
+ * 「支付商已收款」的机器凭证，因此**永不自动上分**。
+ * 回调 / 玩家点「我已完成支付」只把订单挂进这里的待审队列
+ * （status 仍是 pending + manualReviewStatus=pending），
+ * 商户核对银行流水后点【确认到账】才真正写余额与流水。
+ * ------------------------------------------------------------------ */
+
+/** 待审队列一次最多返回多少条（积压时先看最早的，不给翻页）。 */
+const PENDING_DEPOSIT_LIMIT = 200;
+const RECENT_DEPOSIT_REVIEW_LIMIT = 30;
+
+const DEPOSIT_REVIEW_SELECT = {
+  id: true,
+  orderNo: true,
+  amount: true,
+  currency: true,
+  status: true,
+  manualReviewStatus: true,
+  callbackAmount: true,
+  callbackTxHash: true,
+  callbackReceivedAt: true,
+  createdAt: true,
+  player: { select: { username: true } },
+  gateway: { select: { name: true, gatewayType: true } },
+} satisfies Prisma.DepositOrderSelect;
+
+type DepositReviewRecord = Prisma.DepositOrderGetPayload<{
+  select: typeof DEPOSIT_REVIEW_SELECT;
+}>;
+
+export type TenantDepositReviewRow = {
+  id: string;
+  orderNo: string | null;
+  playerName: string | null;
+  /** 订单金额（= 数据库权威金额，上分只认它） */
+  amount: number;
+  currency: string;
+  gatewayName: string;
+  gatewayType: GatewayTypeValue;
+  /** 支付商回调带回的金额（静态码常常没有，null = 未收到数值） */
+  callbackAmount: number | null;
+  callbackTxHash: string | null;
+  callbackReceivedAt: string | null;
+  createdAt: string;
+  /** pending（等商户确认）/ approved（已到账）/ rejected（已驳回） */
+  manualReviewStatus: string;
+  /**
+   * 玩家侧「已付款」信号是否已收到。
+   * false = 玩家扫码付了钱却关掉页面 / 银行转账看不出备注：
+   * 商户仍可核对银行流水后主动确认，但界面要标出来「无信号，请自行核对」。
+   */
+  signalReceived: boolean;
+};
+
+export type TenantDepositReviewBoard = {
+  /** 本站记账币种（`Tenant.currency`），金额展示一律走 formatDisplayAmount */
+  currency: string;
+  /** 等人工确认的充值单（最早提交的排最前） */
+  pending: TenantDepositReviewRow[];
+  pendingTotalAmount: number;
+  /** 最近已处理的单（只读，留痕用） */
+  recent: TenantDepositReviewRow[];
+};
+
+function mapDepositReviewRow(
+  item: DepositReviewRecord,
+): TenantDepositReviewRow {
+  return {
+    id: item.id,
+    orderNo: item.orderNo,
+    playerName: item.player.username,
+    amount: decimal(item.amount),
+    currency: normalizeCurrency(item.currency),
+    gatewayName: item.gateway.name,
+    gatewayType: item.gateway.gatewayType,
+    callbackAmount:
+      item.callbackAmount === null ? null : decimal(item.callbackAmount),
+    callbackTxHash: item.callbackTxHash,
+    callbackReceivedAt: item.callbackReceivedAt?.toISOString() ?? null,
+    createdAt: item.createdAt.toISOString(),
+    manualReviewStatus: item.manualReviewStatus ?? "",
+    signalReceived: item.manualReviewStatus === DEPOSIT_MANUAL_REVIEW_PENDING,
+  };
+}
+
+/**
+ * 待审队列。
+ *
+ * where 同时带 tenantId 与 gatewayType 白名单：别家的单在这里等价于「不存在」，
+ * 且只捞「人工审核通道」（静态码 / 银行转账）的 pending 单。
+ *
+ * 为什么「没收到付款信号」的单也要列出来：
+ * 玩家扫码付了钱却把弹窗关掉（没点「我已付款」），订单就永远不会自己冒出来 ——
+ * 商户只能对着银行流水一笔笔找。这类单排在队列里但标 `signalReceived=false`，
+ * 由商户自己核对流水后决定确认还是驳回。
+ */
+export async function loadTenantDepositReviewBoard(input: {
+  tenantId: string;
+}): Promise<TenantDepositReviewBoard> {
+  const [tenant, pendingRows, recentRows] = await Promise.all([
+    prisma.tenant.findUnique({
+      where: { id: input.tenantId },
+      select: { currency: true },
+    }),
+    prisma.depositOrder.findMany({
+      where: {
+        tenantId: input.tenantId,
+        status: "pending",
+        gateway: {
+          gatewayType: { in: [...MANUAL_REVIEW_GATEWAY_TYPES] },
+        },
+      },
+      // 有信号的排前面（那是玩家在等钱），无信号的按时间排在后面
+      orderBy: [
+        { manualReviewStatus: { sort: "asc", nulls: "last" } },
+        { createdAt: "asc" },
+      ],
+      take: PENDING_DEPOSIT_LIMIT,
+      select: DEPOSIT_REVIEW_SELECT,
+    }),
+    prisma.depositOrder.findMany({
+      where: {
+        tenantId: input.tenantId,
+        manualReviewStatus: { in: ["approved", "rejected"] },
+      },
+      orderBy: { callbackReceivedAt: { sort: "desc", nulls: "last" } },
+      take: RECENT_DEPOSIT_REVIEW_LIMIT,
+      select: DEPOSIT_REVIEW_SELECT,
+    }),
+  ]);
+
+  return {
+    currency: normalizeCurrency(tenant?.currency),
+    pending: pendingRows.map(mapDepositReviewRow),
+    pendingTotalAmount: pendingRows.reduce(
+      (sum, item) => sum + decimal(item.amount),
+      0,
+    ),
+    recent: recentRows.map(mapDepositReviewRow),
+  };
+}
+
+/**
+ * 侧边栏「充值审核」角标用的待审笔数。
+ *
+ * 口径必须与 loadTenantDepositReviewBoard 完全一致（同一组 where），
+ * 否则角标写着 3、点进去只有 1 —— 商户会以为系统丢了单。
+ * 与提现角标同一纪律：只允许一条走索引的 count，出错返回 0。
+ */
+export async function countTenantPendingDepositReviews(
+  tenantId: string,
+): Promise<number> {
+  try {
+    return await prisma.depositOrder.count({
+      where: {
+        tenantId,
+        status: "pending",
+        gateway: {
+          gatewayType: { in: [...MANUAL_REVIEW_GATEWAY_TYPES] },
+        },
+      },
+    });
+  } catch (error) {
+    console.error("统计待审核充值失败:", error);
+    return 0;
+  }
+}
+
+export type TenantDepositReviewAction = "approve" | "reject";
+
+export type TenantDepositReviewResult =
+  | {
+      ok: true;
+      action: TenantDepositReviewAction;
+      status: "success" | "failed";
+      playerName: string | null;
+      amount: number;
+      currency: string;
+      balance?: string;
+    }
+  | {
+      ok: false;
+      code:
+        | "not_found"
+        | "not_awaiting_review"
+        | "already_credited"
+        | "duplicate_reference"
+        | "not_manual_review_channel";
+      message: string;
+    };
+
+/**
+ * 商户确认 / 驳回一笔待人工审核的充值。
+ *
+ * 这是静态码 / 银行转账**唯一**的上分入口，因此口径必须比回调更严：
+ * - approve = `pending → success`，加 `Player.balance` 并写 `Transaction(type=deposit)`，
+ *   三步复用同一个事务里的 settleDepositOrder（与自动上分完全同一份实现），
+ *   CAS 条件额外带 `manualReviewStatus=pending`：商户连点两次、
+ *   或两个人同时点，都只会加一次钱。
+ * - reject = `pending → failed`，不动余额、不写流水。
+ * - tenantId 只来自会话；别家商户的单号在这里等价于「不存在」，统一 404。
+ * - 上分用的 txHash 优先取支付商回调带回来的交易号（人工核对时能看到），
+ *   没有就用 `manual-<订单id>`；两者都要过 `@@unique([gatewayId, txHash])`，
+ *   同一张银行流水被登记到第二笔订单时直接失败（duplicate_reference），
+ *   绝不「两笔单共用一张流水」。
+ */
+export async function reviewTenantDeposit(input: {
+  tenantId: string;
+  orderId: string;
+  action: TenantDepositReviewAction;
+}): Promise<TenantDepositReviewResult> {
+  const order = await prisma.depositOrder.findFirst({
+    where: { id: input.orderId, tenantId: input.tenantId },
+    select: {
+      id: true,
+      amount: true,
+      currency: true,
+      status: true,
+      manualReviewStatus: true,
+      callbackTxHash: true,
+      player: { select: { username: true } },
+      gateway: { select: { gatewayType: true } },
+    },
+  });
+
+  if (!order) {
+    return { ok: false, code: "not_found", message: "充值订单不存在" };
+  }
+
+  // 自动上分通道（跳转网银 / 动态二维码）不在这条人工链路上：
+  // 它们的钱由支付商回调确认，人工改单会绕开对账，属于另一种工单，这里一律拒绝。
+  if (!gatewayRequiresManualReview(order.gateway.gatewayType)) {
+    return {
+      ok: false,
+      code: "not_manual_review_channel",
+      message: "该通道由支付商自动确认到账，不能人工改单",
+    };
+  }
+
+  if (order.status === "success") {
+    return {
+      ok: false,
+      code: "already_credited",
+      message: "该订单已上分，不能重复确认",
+    };
+  }
+
+  if (order.status !== "pending") {
+    return {
+      ok: false,
+      code: "not_awaiting_review",
+      message: "该订单已关闭，请让玩家重新下单",
+    };
+  }
+
+  /**
+   * CAS 期望值：
+   * - `"pending"` = 已收到玩家 / 支付商的付款信号；
+   * - `null`      = 还没有任何信号（玩家付完就关页面、银行转账看不出备注），
+   *                 商户核对银行流水后主动确认。
+   * 两者都允许，但都必须精确匹配 —— 否则就是「已经处理过了」，不能动钱。
+   */
+  const expectedManualReviewStatus: "pending" | null =
+    order.manualReviewStatus === DEPOSIT_MANUAL_REVIEW_PENDING ? "pending" : null;
+
+  if (
+    order.manualReviewStatus !== null &&
+    order.manualReviewStatus !== DEPOSIT_MANUAL_REVIEW_PENDING
+  ) {
+    return {
+      ok: false,
+      code: "not_awaiting_review",
+      message: "该订单已被处理，请刷新后重试",
+    };
+  }
+
+  const playerName = order.player.username;
+  const currency = normalizeCurrency(order.currency);
+  const amount = decimal(order.amount);
+
+  if (input.action === "reject") {
+    const failed = await failDepositOrder({
+      orderId: order.id,
+      txHash: null,
+      tenantId: input.tenantId,
+      expectManualReviewStatus: expectedManualReviewStatus,
+    });
+
+    switch (failed.kind) {
+      case "failed":
+        return {
+          ok: true,
+          action: input.action,
+          status: "failed",
+          playerName,
+          amount,
+          currency,
+        };
+      case "not-found":
+        return { ok: false, code: "not_found", message: "充值订单不存在" };
+      case "already-success":
+        return {
+          ok: false,
+          code: "already_credited",
+          message: "该订单已上分，不能驳回",
+        };
+      case "already-failed":
+      case "not-awaiting-review":
+        return {
+          ok: false,
+          code: "not_awaiting_review",
+          message: "该订单已被处理，请刷新后重试",
+        };
+      default:
+        return {
+          ok: false,
+          code: "not_awaiting_review",
+          message: "订单状态异常，无法驳回",
+        };
+    }
+  }
+
+  const callbackTxHash = (order.callbackTxHash ?? "").trim();
+  const txHash = callbackTxHash || `manual-${order.id}`;
+
+  try {
+    const settled = await settleDepositOrder({
+      orderId: order.id,
+      txHash,
+      tenantId: input.tenantId,
+      expectManualReviewStatus: expectedManualReviewStatus,
+    });
+
+    switch (settled.kind) {
+      case "credited":
+        return {
+          ok: true,
+          action: input.action,
+          status: "success",
+          playerName,
+          amount,
+          currency,
+          balance: settled.balance,
+        };
+      case "already-success":
+        return {
+          ok: false,
+          code: "already_credited",
+          message: "该订单已上分，不能重复确认",
+        };
+      case "not-found":
+        return { ok: false, code: "not_found", message: "充值订单不存在" };
+      case "already-failed":
+      case "not-awaiting-review":
+        return {
+          ok: false,
+          code: "not_awaiting_review",
+          message: "该订单已被处理，请刷新后重试",
+        };
+      default:
+        return {
+          ok: false,
+          code: "not_awaiting_review",
+          message: "订单状态异常，无法确认到账",
+        };
+    }
+  } catch (error) {
+    // @@unique([gatewayId, txHash])：同一个支付商交易号想入账到第二笔订单，
+    // 典型场景是商户把同一张银行流水确认了两次（两笔单）。
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      console.error("[ALARM][tenant-deposit-review] 交易号重复使用", {
+        orderId: order.id,
+        tenantId: input.tenantId,
+        error: error.message,
+      });
+
+      return {
+        ok: false,
+        code: "duplicate_reference",
+        message: "该支付商交易号已被其他充值订单使用，请核对银行流水后重试",
+      };
+    }
+
+    throw error;
   }
 }
 
