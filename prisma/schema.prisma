@@ -516,6 +516,12 @@ model PaymentGateway {
   walletAddress  String? // USDT 收款钱包地址（TRC20 / ERC20）；非 USDT 网关可为空
   qrCodeImageUrl String? // STATIC_QR 的收款图片（http/https URL 或 data:image base64）
   bankDetails    Json? // BANK_TRANSFER 的银行信息（户名、账号、SWIFT/BIC、IBAN、PayID 等）
+
+  // REDIRECT_URL（网银跳转）时玩家可选的银行列表（银行编码，见 src/lib/payment-gateway-banks.ts）。
+  // - 只在 /tenant/payments 的商户自有通道里维护，玩家收银台据此渲染银行卡片；
+  // - 空数组 = 不做银行选择，玩家直接跳支付商收银台（由支付商页面选银行）；
+  // - 下单时服务端强制校验：玩家提交的银行必须在此列表内，否则 400，绝不信任前端。
+  supportedBanks String[] @default([])
   endpoint       String // REDIRECT_URL / DYNAMIC_QR 的**收款**接口地址（入金用）
   apiKey         String // 回调验签密钥 / 代付请求签名密钥，接口只返回掩码
 

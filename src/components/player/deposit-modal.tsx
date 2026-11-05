@@ -10,6 +10,7 @@ import { resolveBrandName } from "@/lib/brand";
 import { formatCurrency, formatDisplayAmount } from "@/lib/currency";
 import {
   GATEWAY_BANK_FIELD_LABEL_KEYS,
+  GATEWAY_PAYMENT_TYPE_LABEL_KEYS,
   GATEWAY_PROVIDER_LABEL_KEYS,
 } from "@/lib/i18n-keys";
 import type { TFunction } from "@/lib/i18n-types";
@@ -18,6 +19,10 @@ import {
   GATEWAY_BANK_DISPLAY_ORDER,
   type GatewayBankDetails,
 } from "@/lib/payment-gateway-bank";
+import {
+  buildGatewayBankOptions,
+  gatewayBankInitial,
+} from "@/lib/payment-gateway-banks";
 import type { GatewayTypeValue } from "@/lib/payment-gateway-constants";
 import { notifyPlayerWalletChanged } from "@/lib/player-wallet-events";
 
@@ -30,6 +35,17 @@ export type PlayerDepositGateway = {
   walletAddress: string;
   hasQrCodeImage: boolean;
   hasBankDetails: boolean;
+  /**
+   * STATIC_QR 的收款码图片地址（只有 http(s) / 站内路径会下发）。
+   * 有这个值 = 玩家在「输入金额之前」就能看到大图扫码付；
+   * 空串 = 商家用的是 base64 上传图，下单后由 create 响应带回。
+   */
+  staticQrImageUrl?: string;
+  /**
+   * REDIRECT_URL 玩家可选的银行（编码，如 maybank）。
+   * 空数组 = 不做银行选择，直接跳支付商收银台。
+   */
+  supportedBanks?: string[];
 };
 
 type AmountLimits = { min: string; max: string };
@@ -67,6 +83,9 @@ type CreatedDeposit = {
    * 决定「展示银行信息」还是「展示二维码」，不能靠 amount / kind 猜。
    */
   gatewayType: GatewayTypeValue;
+  /** REDIRECT_URL：玩家选的银行编码 / 展示名（其他形态为空串） */
+  selectedBank: string;
+  selectedBankLabel: string;
   instructions: PaymentInstructions;
   canSimulateCallback: boolean;
 };
@@ -75,6 +94,8 @@ type CreateDepositResponse = {
   success?: boolean;
   orderNo?: string;
   gatewayType?: GatewayTypeValue;
+  selectedBank?: string | null;
+  selectedBankLabel?: string | null;
   order?: {
     id: string;
     orderNo?: string;
@@ -175,6 +196,8 @@ export function PlayerDepositModal({
   const [gateways, setGateways] = useState<PlayerDepositGateway[]>([]);
   const [limits, setLimits] = useState<AmountLimits>(DEFAULT_AMOUNT_LIMITS);
   const [gatewayId, setGatewayId] = useState("");
+  // REDIRECT_URL：玩家选中的银行编码（其他形态为空串）
+  const [bank, setBank] = useState("");
   const [amount, setAmount] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [simulating, setSimulating] = useState(false);
@@ -283,11 +306,32 @@ export function PlayerDepositModal({
     gateways.find((gateway) => gateway.id === gatewayId) ?? null;
   const currency = selectedGateway?.currency ?? "USDT";
 
+  /**
+   * 表单形态只看「当前选中通道的 gatewayType」：
+   * - REDIRECT_URL  → 先选银行，再输入金额，提交后整页跳转到支付商；
+   * - STATIC_QR     → 直接怼大图收款码（能拿到远程图就先展示）；
+   * - BANK_TRANSFER → 提交后展示收款银行 / 账号 / 户名 + 一键复制；
+   * - DYNAMIC_QR    → 提交后展示钱包地址 + 动态二维码。
+   * 不允许用币种或 kind 去反推形态。
+   */
+  const selectedGatewayType: GatewayTypeValue =
+    selectedGateway?.gatewayType ?? "STATIC_QR";
+  const isRedirectGateway = selectedGatewayType === "REDIRECT_URL";
+  const isStaticQrGateway = selectedGatewayType === "STATIC_QR";
+  const isBankTransferGateway = selectedGatewayType === "BANK_TRANSFER";
+  const bankOptions = buildGatewayBankOptions(
+    selectedGateway?.supportedBanks ?? [],
+  );
+  // 只有「商户配了银行列表」才需要玩家选银行；空列表 = 支付商页面自己选。
+  const needsBankChoice = isRedirectGateway && bankOptions.length > 0;
+  const staticQrPreview = selectedGateway?.staticQrImageUrl?.trim() ?? "";
+
   // 订单形态只看「下单时选中的通道」（接口回传优先）：银行转账绝不渲染二维码，
   // 静态收款图才渲染图片，跳转支付只给按钮。不要用 kind / 币种去反推。
   const orderGatewayType = created?.gatewayType ?? null;
   const isBankTransferOrder = orderGatewayType === "BANK_TRANSFER";
   const isStaticQrOrder = orderGatewayType === "STATIC_QR";
+  const isRedirectOrder = orderGatewayType === "REDIRECT_URL";
   const bankDetailRows = created?.instructions.bankDetails
     ? bankRows(created.instructions.bankDetails, t)
     : [];
@@ -331,6 +375,12 @@ export function PlayerDepositModal({
       return;
     }
 
+    // 跳转网银且商户配了银行列表：必须先选银行，否则会在支付商页面乱选。
+    if (needsBankChoice && !bank) {
+      setError(t("player.deposit.bankRequired"));
+      return;
+    }
+
     setSubmitting(true);
 
     try {
@@ -339,7 +389,12 @@ export function PlayerDepositModal({
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
         cache: "no-store",
-        body: JSON.stringify({ gatewayId, amount: trimmed }),
+        body: JSON.stringify({
+          gatewayId,
+          amount: trimmed,
+          // bank 只对 REDIRECT_URL 有意义，服务端会再校验一遍白名单。
+          ...(bank ? { bank } : {}),
+        }),
       });
       const data: CreateDepositResponse = await response
         .json()
@@ -357,7 +412,7 @@ export function PlayerDepositModal({
       const instructions = data.paymentInstructions;
       const orderNo = data.order.orderNo ?? data.orderNo ?? data.order.id;
 
-      setCreated({
+      const createdOrder: CreatedDeposit = {
         orderId: data.order.id,
         orderNo,
         amount: data.order.amount,
@@ -369,6 +424,8 @@ export function PlayerDepositModal({
           data.order.gatewayType ??
           selectedGateway?.gatewayType ??
           "STATIC_QR",
+        selectedBank: data.selectedBank ?? "",
+        selectedBankLabel: data.selectedBankLabel ?? "",
         canSimulateCallback: Boolean(data.canSimulateCallback),
         instructions: instructions ?? {
           kind: "FIAT",
@@ -382,8 +439,26 @@ export function PlayerDepositModal({
           qrCodeImageUrl: null,
           paymentUrl: null,
         },
-      });
+      };
+
+      setCreated(createdOrder);
       setCreditedBalance(null);
+
+      /**
+       * 跳转网银（REDIRECT_URL）：订单已落库，拿到支付商收银台地址就整页跳过去。
+       *
+       * - 必须同标签页跳转：手机浏览器会拦截 window.open 弹窗，玩家会以为「点了没反应」；
+       * - 跳转前已经 setCreated，万一被浏览器拦下 / 地址打不开，页面会显示
+       *   「正在跳转…」+ 手动前往按钮，不会卡死在空白界面上。
+       */
+      if (
+        createdOrder.gatewayType === "REDIRECT_URL" &&
+        createdOrder.instructions.paymentUrl
+      ) {
+        // 用 assign() 而不是给 location.href 赋值：这是「发起导航」的语义，
+        // 也能过 react-hooks/immutability（不允许改写组件外变量的属性）。
+        window.location.assign(createdOrder.instructions.paymentUrl);
+      }
     } catch {
       setError(t("common.networkError"));
     } finally {
@@ -588,6 +663,30 @@ export function PlayerDepositModal({
                           orderNo: created.orderNo,
                         })}
                       </p>
+                      {/* 一键复制全部：手机玩家最怕逐行抄账号，客服也最烦对账对错 */}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void copyToClipboard(
+                            "bank-all",
+                            [
+                              ...bankDetailRows.map(
+                                (row) => `${row.label}: ${row.value}`,
+                              ),
+                              `${t("player.deposit.payAmount")}: ${formatMoney(
+                                created.amount,
+                                created.currency,
+                              )}`,
+                              `${t("player.deposit.orderNo")}: ${created.orderNo}`,
+                            ].join("\n"),
+                          )
+                        }
+                        className="mt-3 h-9 w-full rounded-lg border border-[#d4af37]/30 text-[10px] text-[#f0d27c] transition-colors hover:bg-[#d4af37]/10"
+                      >
+                        {copiedKey === "bank-all"
+                          ? t("player.deposit.bankCopiedAll")
+                          : t("player.deposit.bankCopyAll")}
+                      </button>
                     </>
                   ) : (
                     /* 后台配成「银行转账」却没填账号：绝不渲染空白卡片，直接引导找客服 */
@@ -595,6 +694,65 @@ export function PlayerDepositModal({
                       {t("player.deposit.bankMissing")}
                     </p>
                   )}
+                </div>
+              ) : isRedirectOrder ? (
+                /*
+                  跳转网银（REDIRECT_URL）：**绝不渲染二维码**。
+
+                  提交时已经执行 window.location.href，正常情况下玩家看不到这一屏；
+                  它兜住的是「浏览器拦了跳转 / 支付链接打不开」的情况 ——
+                  订单号已经生成，不能让玩家对着空白页发呆。
+                */
+                <div className="mt-3 rounded-xl border border-[#d4af37]/25 bg-[radial-gradient(circle_at_top,rgba(212,175,55,0.12),transparent_65%)] px-4 py-5 text-center">
+                  {created.instructions.paymentUrl ? (
+                    <>
+                      <span
+                        aria-hidden="true"
+                        className="mx-auto block h-7 w-7 animate-spin rounded-full border-2 border-[#d4af37]/25 border-t-[#f0d27c]"
+                      />
+                      <p className="mt-3 text-[11px] leading-5 text-[#f0d27c]">
+                        {created.selectedBankLabel
+                          ? t("player.deposit.redirectingToBank", {
+                              bank: created.selectedBankLabel,
+                            })
+                          : t("player.deposit.redirectingToGateway")}
+                      </p>
+                      <p className="mt-1 text-[10px] leading-4 text-neutral-500">
+                        {t("player.deposit.redirectFallback")}
+                      </p>
+                      <a
+                        href={created.instructions.paymentUrl}
+                        className="mt-3 flex h-10 items-center justify-center rounded-xl bg-gradient-to-r from-[#b8912f] via-[#f0d27c] to-[#b8912f] text-xs font-bold text-[#171105] shadow-[0_14px_36px_-14px_rgba(212,175,55,0.9)]"
+                      >
+                        {t("player.deposit.paymentUrl")} ↗
+                      </a>
+                    </>
+                  ) : (
+                    <p className="text-[11px] leading-5 text-[#e8cf8a]">
+                      {t("player.deposit.redirectNoUrl")}
+                    </p>
+                  )}
+                </div>
+              ) : isStaticQrOrder ? (
+                /* 静态收款码：大图直出（手机银行扫一扫），不掺其他通道信息 */
+                <div className="mt-3 rounded-xl border border-[#d4af37]/20 bg-black/40 px-4 py-4 text-center">
+                  <p className="text-[11px] font-semibold text-[#f0d27c]">
+                    {t("player.deposit.staticQrHint")}
+                  </p>
+                  <div className="mt-3">
+                    <PaymentQrImage
+                      src={created.instructions.qrCodeImageUrl}
+                      alt={t("player.deposit.staticQrHint")}
+                      missingText={t("player.deposit.qrMissing")}
+                      frameClassName="mx-auto flex w-fit justify-center rounded-xl bg-white p-2.5"
+                      imageClassName="h-56 w-56 rounded-lg object-contain"
+                    />
+                  </div>
+                  <p className="mt-3 text-[10px] leading-4 text-neutral-500">
+                    {t("player.deposit.staticQrNote", {
+                      amount: formatMoney(created.amount, created.currency),
+                    })}
+                  </p>
                 </div>
               ) : created.instructions.kind === "CRYPTO" ? (
                 <div className="mt-3 rounded-xl border border-[#d4af37]/20 bg-black/40 px-4 py-3">
@@ -636,28 +794,33 @@ export function PlayerDepositModal({
               ) : (
                 <div className="mt-3 space-y-3">
                   {/*
-                    静态收款图（TNG / DuitNow…）：走 PaymentQrImage 统一兜底 ——
-                    URL 为空或图 404 / 被墙时显示黑金占位框，绝不出现浏览器裂图。
-                    跳转支付（REDIRECT_URL）没有二维码，只给按钮。
+                    动态二维码（非 USDT 支付商，例如 DuitNow 动态码）：
+                    优先用接口下发的二维码内容现场生成；只有拿不到内容时才退回收款图。
+                    兜底图走 PaymentQrImage —— 图 404 / 被墙时显示占位框，绝不裂图。
                   */}
-                  {isStaticQrOrder ||
-                  created.instructions.qrCodeImageUrl ||
-                  !created.instructions.paymentUrl ? (
-                    <div className="rounded-xl border border-[#d4af37]/20 bg-black/40 px-4 py-3 text-center">
+                  <div className="rounded-xl border border-[#d4af37]/20 bg-black/40 px-4 py-3 text-center">
+                    {created.instructions.qrCodeData ? (
+                      <>
+                        <div className="flex justify-center rounded-lg bg-white p-2.5">
+                          <QRCodeSVG
+                            value={created.instructions.qrCodeData}
+                            size={148}
+                          />
+                        </div>
+                        <p className="mt-2 text-[10px] leading-4 text-neutral-600">
+                          {t("player.deposit.scanHint")}
+                        </p>
+                      </>
+                    ) : (
                       <PaymentQrImage
                         src={created.instructions.qrCodeImageUrl}
-                        alt={t("player.deposit.staticQrHint")}
+                        alt={t("player.deposit.qrMissing")}
                         missingText={t("player.deposit.qrMissing")}
-                        frameClassName="flex justify-center rounded-lg bg-white p-2"
+                        frameClassName="mx-auto flex w-fit justify-center rounded-lg bg-white p-2"
                         imageClassName="max-h-56 w-auto rounded-lg object-contain"
                       />
-                      {isStaticQrOrder ? (
-                        <p className="mt-2 text-[10px] text-neutral-600">
-                          {t("player.deposit.staticQrHint")}
-                        </p>
-                      ) : null}
-                    </div>
-                  ) : null}
+                    )}
+                  </div>
 
                   {created.instructions.paymentUrl ? (
                     <a
@@ -731,28 +894,124 @@ export function PlayerDepositModal({
             </>
           ) : (
             <form onSubmit={handleSubmit}>
-              <label className="block">
-                <span className="text-[10px] uppercase tracking-[0.16em] text-neutral-600">
-                  {t("player.deposit.gatewayLabel")}
-                </span>
-                <select
-                  value={gatewayId}
-                  onChange={(event) => setGatewayId(event.target.value)}
-                  className={inputClass}
-                >
-                  {gateways.map((gateway) => (
-                    <option
-                      key={gateway.id}
-                      value={gateway.id}
-                      className="bg-[#0a0a0a]"
-                    >
-                      {gateway.name} ·{" "}
-                      {providerLabel(gateway.providerType, t)} ·{" "}
-                      {gateway.currency}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              {/*
+                通道选择：
+                - 只有 1 条通道 → **不渲染下拉框**，直接一张通道卡片（玩家没有可选项，
+                  下拉框只会白占一行还把二维码挤下去）；
+                - 多条通道 → 保留下拉框，切换时清空已选银行（银行列表是通道级的）。
+              */}
+              {gateways.length > 1 ? (
+                <label className="block">
+                  <span className="text-[10px] uppercase tracking-[0.16em] text-neutral-600">
+                    {t("player.deposit.gatewayLabel")}
+                  </span>
+                  <select
+                    value={gatewayId}
+                    onChange={(event) => {
+                      setGatewayId(event.target.value);
+                      setBank("");
+                    }}
+                    className={inputClass}
+                  >
+                    {gateways.map((gateway) => (
+                      <option
+                        key={gateway.id}
+                        value={gateway.id}
+                        className="bg-[#0a0a0a]"
+                      >
+                        {gateway.name} ·{" "}
+                        {providerLabel(gateway.providerType, t)} ·{" "}
+                        {gateway.currency}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : selectedGateway ? (
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-[#d4af37]/20 bg-[#d4af37]/[0.05] px-3.5 py-2.5">
+                  <div className="min-w-0">
+                    <p className="truncate text-[11px] font-semibold text-[#f0d27c]">
+                      {selectedGateway.name}
+                    </p>
+                    <p className="mt-0.5 text-[10px] text-neutral-500">
+                      {providerLabel(selectedGateway.providerType, t)} ·{" "}
+                      {selectedGateway.currency}
+                    </p>
+                  </div>
+                  <span className="shrink-0 rounded-full border border-[#d4af37]/30 px-2 py-0.5 text-[9px] tracking-[0.12em] text-[#f0d27c]">
+                    {t(GATEWAY_PAYMENT_TYPE_LABEL_KEYS[selectedGatewayType])}
+                  </span>
+                </div>
+              ) : null}
+
+              {/*
+                跳转网银（REDIRECT_URL）：先选银行，再输入金额。
+                银行列表来自商户配置（gateway.supportedBanks），前端只渲染，
+                提交后服务端会再校验一次白名单 —— 前端可绕过，服务端不可绕过。
+              */}
+              {isRedirectGateway ? (
+                needsBankChoice ? (
+                  <fieldset className="mt-4">
+                    <legend className="text-[10px] uppercase tracking-[0.16em] text-neutral-600">
+                      {t("player.deposit.bankSelectTitle")}
+                    </legend>
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      {bankOptions.map((option) => {
+                        const active = bank === option.code;
+
+                        return (
+                          <label
+                            key={option.code}
+                            className={`flex cursor-pointer items-center gap-2 rounded-xl border px-2.5 py-2 transition-colors ${
+                              active
+                                ? "border-[#d4af37]/60 bg-[#d4af37]/[0.12] text-[#f0d27c]"
+                                : "border-white/[0.08] bg-white/[0.02] text-neutral-300 hover:border-[#d4af37]/25"
+                            }`}
+                          >
+                            {/* 真实 radio：键盘 Tab + 方向键可用，视觉上用卡片代替小圆点 */}
+                            <input
+                              type="radio"
+                              name="deposit-bank"
+                              value={option.code}
+                              checked={active}
+                              onChange={() => setBank(option.code)}
+                              className="sr-only"
+                            />
+                            <span
+                              aria-hidden="true"
+                              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border text-[11px] font-bold ${
+                                active
+                                  ? "border-[#d4af37]/50 bg-[#d4af37]/15 text-[#f0d27c]"
+                                  : "border-white/10 bg-black/40 text-neutral-400"
+                              }`}
+                            >
+                              {gatewayBankInitial(option.code)}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate text-[11px]">
+                              {option.label}
+                            </span>
+                            {active ? (
+                              <span
+                                aria-hidden="true"
+                                className="shrink-0 text-[10px] text-[#f0d27c]"
+                              >
+                                ✓
+                              </span>
+                            ) : null}
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <p className="mt-2 text-[10px] leading-4 text-neutral-600">
+                      {t("player.deposit.bankSelectHint")}
+                    </p>
+                  </fieldset>
+                ) : (
+                  /* 商户没配银行列表：交给支付商收银台自己选，别让玩家空等 */
+                  <p className="mt-4 rounded-xl border border-[#d4af37]/15 bg-[#d4af37]/[0.05] px-3.5 py-2.5 text-[10px] leading-4 text-[#e8cf8a]">
+                    {t("player.deposit.bankAutoHint")}
+                  </p>
+                )
+              ) : null}
 
               <label className="mt-4 block">
                 <span className="flex items-center justify-between gap-2 text-[10px] uppercase tracking-[0.16em] text-neutral-600">
@@ -795,6 +1054,40 @@ export function PlayerDepositModal({
                 ))}
               </div>
 
+              {/*
+                STATIC_QR：商户配了远程收款图时，不用等下单就把大图怼上来，
+                玩家扫码即付；图走 PaymentQrImage（404 / 被墙显示占位框）。
+              */}
+              {isStaticQrGateway && staticQrPreview ? (
+                <div className="mt-4 rounded-xl border border-[#d4af37]/20 bg-black/40 px-4 py-3.5 text-center">
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-neutral-600">
+                    {t("player.deposit.staticQrPreview")}
+                  </p>
+                  <div className="mt-2">
+                    <PaymentQrImage
+                      src={staticQrPreview}
+                      alt={t("player.deposit.staticQrHint")}
+                      missingText={t("player.deposit.qrMissing")}
+                      frameClassName="mx-auto flex w-fit justify-center rounded-xl bg-white p-2.5"
+                      imageClassName="h-52 w-52 rounded-lg object-contain"
+                    />
+                  </div>
+                  <p className="mt-2 text-[11px] font-semibold text-[#f0d27c]">
+                    {t("player.deposit.staticQrHint")}
+                  </p>
+                  <p className="mt-1 text-[10px] leading-4 text-neutral-600">
+                    {t("player.deposit.staticQrPreviewNote")}
+                  </p>
+                </div>
+              ) : null}
+
+              {/* BANK_TRANSFER：提交后才给收款账户，先告诉玩家会拿到什么 */}
+              {isBankTransferGateway ? (
+                <p className="mt-4 rounded-xl border border-[#d4af37]/15 bg-[#d4af37]/[0.05] px-3.5 py-2.5 text-[10px] leading-4 text-[#e8cf8a]">
+                  {t("player.deposit.bankTransferIntro")}
+                </p>
+              ) : null}
+
               {errorBanner}
 
               <button
@@ -804,7 +1097,9 @@ export function PlayerDepositModal({
               >
                 {submitting
                   ? t("player.deposit.submitting")
-                  : t("player.deposit.submit")}
+                  : isRedirectGateway
+                    ? t("player.deposit.redirectSubmit")
+                    : t("player.deposit.submit")}
               </button>
 
               <p className="mt-3 text-center text-[10px] leading-5 text-neutral-600">

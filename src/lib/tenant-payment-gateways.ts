@@ -5,6 +5,7 @@ import {
   normalizeGatewayBankDetails,
   type GatewayBankDetails,
 } from "./payment-gateway-bank";
+import { normalizeSupportedBanks } from "./payment-gateway-banks";
 import type {
   GatewayReviewStatusValue,
   GatewayTypeValue,
@@ -23,6 +24,7 @@ export const tenantGatewaySelect = {
   endpoint: true,
   payoutEndpoint: true,
   apiKey: true,
+  supportedBanks: true,
   payinSellRate: true,
   payoutSellRate: true,
   settlementSellRate: true,
@@ -58,6 +60,8 @@ export type TenantOwnGateway = {
   qrCodeImageUrl: string;
   endpoint: string;
   bankDetails: GatewayBankDetails;
+  /** REDIRECT_URL 通道下玩家可选的银行（归一化编码）；空数组 = 不做银行选择 */
+  supportedBanks: string[];
   configurationSummary: string;
   configurationSummaryData: TenantGatewayConfigurationSummary;
   apiKeyPreview: string;
@@ -129,8 +133,15 @@ function gatewayConfigurationSummary(gateway: TenantGatewayRecord) {
 
       return `${bank} · ${account} · ${gateway.currency}`;
     }
-    case "REDIRECT_URL":
-      return `跳转支付 · ${endpointHost(gateway.endpoint) || "待补充接口"}`;
+    case "REDIRECT_URL": {
+      const host = endpointHost(gateway.endpoint) || "待补充接口";
+      const bankCount = normalizeSupportedBanks(gateway.supportedBanks).length;
+
+      // 有银行列表时玩家会先选银行（收银台渲染银行卡片），后台一眼能看出来。
+      return bankCount > 0
+        ? `跳转支付 · ${host} · ${bankCount} 家银行`
+        : `跳转支付 · ${host}`;
+    }
     case "DYNAMIC_QR":
       if (isUsdtProviderType(gateway.providerType)) {
         return `USDT 钱包 · ${maskTail(gateway.walletAddress ?? "", 6)}`;
@@ -207,6 +218,10 @@ export function serializeTenantOwnGateway(
     qrCodeImageUrl: gateway.qrCodeImageUrl ?? "",
     endpoint: gateway.endpoint,
     bankDetails: normalizeGatewayBankDetails(gateway.bankDetails),
+    supportedBanks:
+      gateway.gatewayType === "REDIRECT_URL"
+        ? normalizeSupportedBanks(gateway.supportedBanks)
+        : [],
     configurationSummary: gatewayConfigurationSummary(gateway),
     configurationSummaryData: gatewayConfigurationSummaryData(gateway),
     apiKeyPreview: gateway.apiKey ? `••••${gateway.apiKey.slice(-4)}` : "",

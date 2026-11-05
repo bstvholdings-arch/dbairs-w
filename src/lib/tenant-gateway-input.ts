@@ -13,6 +13,10 @@ import {
 import { normalizeGatewayBankDetails } from "./payment-gateway-bank";
 import type { GatewayBankDetails } from "./payment-gateway-bank";
 import {
+  normalizeSupportedBanks,
+  validateSupportedBanks,
+} from "./payment-gateway-banks";
+import {
   defaultGatewayCurrencyForProvider,
   defaultGatewayTypeForProvider,
   isGatewayType,
@@ -44,6 +48,11 @@ export type TenantGatewayInput = {
   endpoint: string;
   apiKey: string;
   bankDetails: GatewayBankDetails;
+  /**
+   * REDIRECT_URL 通道下玩家可选的银行（归一化后的编码，如 maybank）。
+   * 空数组 = 不做银行选择，玩家直接跳支付商收银台。
+   */
+  supportedBanks: string[];
 };
 
 export type TenantGatewayInputResult =
@@ -117,6 +126,17 @@ export function parseTenantGatewayInput(
 
   // 密钥留空 = 沿用旧密钥（编辑场景）；新增场景留空则由完整性校验拦下。
   const apiKey = normalizeGatewayApiKey(input.apiKey) || apiKeyFallback;
+  // 银行选择只对「跳转网银」有意义：静态码 / 银行转账 / 动态码存了也是死数据。
+  const supportedBanks =
+    gatewayType === "REDIRECT_URL"
+      ? normalizeSupportedBanks(input.supportedBanks)
+      : [];
+  const banksError = validateSupportedBanks(supportedBanks);
+
+  if (banksError) {
+    return reject(400, banksError);
+  }
+
   const bankDetails =
     gatewayType === "BANK_TRANSFER"
       ? normalizeGatewayBankDetails(input.bankDetails)
@@ -148,6 +168,7 @@ export function parseTenantGatewayInput(
       endpoint,
       apiKey,
       bankDetails,
+      supportedBanks,
     },
   };
 }
@@ -175,5 +196,9 @@ export function tenantGatewayWriteData(value: TenantGatewayInput) {
         : Prisma.DbNull,
     endpoint: value.endpoint,
     apiKey: value.apiKey,
+    // 非 REDIRECT_URL 一律清空：换过形态后残留的银行列表会让玩家看到
+    // 一个「选了也没用」的选择框。
+    supportedBanks:
+      value.gatewayType === "REDIRECT_URL" ? value.supportedBanks : [],
   };
 }

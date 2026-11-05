@@ -275,7 +275,7 @@ DEFAULT_TENANT=winvora
 | 接口 | 说明 |
 | --- | --- |
 | `POST /api/deposit/create` | 统一下单：校验玩家身份（玩家 Cookie / 商户代下单）、金额区间与网关可用性，落库 `DepositOrder(status=pending)`，返回 `orderNo` 与 `paymentInstructions` |
-| `GET /api/deposit/gateways` | 收银台下拉数据：**只返回当前登录玩家所属商户（tenantId）自己配置的通道**（`isActive` + `ownerId = tenantId` + 校验通过），附 `merchantConfigured` 与 `amountLimits`；平台公用通道（`ownerId=null`）一律不返回 |
+| `GET /api/deposit/gateways` | 收银台下拉数据：**只返回当前登录玩家所属商户（tenantId）自己配置的通道**（`isActive` + `ownerId = tenantId` + 校验通过），附 `merchantConfigured` 与 `amountLimits`；平台公用通道（`ownerId=null`）一律不返回。按形态额外下发：`REDIRECT_URL` 的 `supportedBanks`（银行编码）、`STATIC_QR` 的 `staticQrImageUrl`（仅 http(s) / 站内路径，base64 大图留到下单后） |
 | `POST /api/deposit/callback/[gatewayCode]` | **真实支付商回调主入口**：`x-signature` 验签 → 按 `orderNo` 回查 → 状态幂等 → 金额核对 → 事务上分 |
 | `POST /api/deposit/callback` | 旧版回调（按本系统订单主键 `orderId`，供历史联调脚本使用），与新接口共用同一份上分实现 |
 | `POST /api/deposit/test-callback` | 前端「我已完成支付（测试）」，仅非生产环境 / `DEPOSIT_ALLOW_TEST_CALLBACK=true` 开放，复用正式状态机 |
@@ -288,8 +288,14 @@ DEFAULT_TENANT=winvora
   2. 防重放：订单已 `success` 直接 `replayed:true` 返回，绝不重复加钱；`failed` 拒绝再入账；`DepositOrder @@unique([gatewayId, txHash])` 挡住「同一交易号刷多单」；
   3. 金额核对：回调 `amount` 必须与数据库订单金额一致（Decimal 比较），不一致打印 `[ALARM][deposit-callback]` 结构化日志并拒绝入账。
 - **上分事务**（`src/lib/deposit-settlement.ts`）：`updateMany({ where: { id, status: "pending" } })` 条件更新抢状态 → `Player.balance` 原子 increment → 写 `Transaction(type=deposit)` → 首充返佣，任一步失败整体回滚。
-- **前端弹窗**：`src/components/player/deposit-modal.tsx`（大厅黑金风格，金额 + 网关下拉 → 展示 USDT 地址/一键复制/二维码或法币银行账号，提示「1-3 分钟内自动到账」）。
-- **表结构增量**：`prisma/deposit-order-no.sql`（幂等，补 `DepositOrder.orderNo` + 唯一索引）；`npx prisma db push` 正常时也可直接用 schema。
+- **前端弹窗**：`src/components/player/deposit-modal.tsx`（大厅黑金风格）。**界面按 `gatewayType` 分形态渲染**，不是「一律二维码 + 银行信息堆一起」：
+  - `STATIC_QR` → 直接大图收款码 + 「请使用手机银行扫码支付」（商户配了远程图时**下单前**就展示，省掉一次点击）；
+  - `REDIRECT_URL` → 先渲染银行卡片（Maybank / CIMB / Public Bank…，来自 `gateway.supportedBanks`）→ 输入金额 → 下单 → `window.location.assign(paymentUrl)` 整页跳转到支付商，**任何情况下都不渲染二维码**；
+  - `BANK_TRANSFER` → 展示收款银行 / 户名 / 账号 + 逐行复制 + 一键复制全部，**任何情况下都不渲染二维码**；
+  - `DYNAMIC_QR` → USDT 钱包地址 + 现场生成二维码，非 USDT 支付商则用接口下发的二维码内容。
+  - 只有 1 条通道时**不渲染下拉框**（直接显示通道卡片 + 形态标签），多条通道才出下拉框。
+- **银行白名单（REDIRECT_URL）**：`PaymentGateway.supportedBanks String[]`，唯一写入口是 `/tenant/payments` 的通道表单（内置银行勾选 + 「其他银行」手工补充，上限 20 家），归一化 / 校验 / 展示统一走 `src/lib/payment-gateway-banks.ts`。下单时 `POST /api/deposit/create` 用 `resolveDepositBankSelection()` 强制校验：列表非空却没选银行 / 选了不在列表里的银行一律 400，通过后把 `bank=<code>` 拼到支付商跳转地址上。列表为空 = 不做银行选择，交给支付商收银台。
+- **表结构增量**：`prisma/deposit-order-no.sql`（幂等，补 `DepositOrder.orderNo` + 唯一索引）、`prisma/gateway-supported-banks.sql`（幂等，补 `PaymentGateway.supportedBanks`）；`npx prisma db push` 正常时也可直接用 schema。
 
 回调示例（`gatewayCode` 支持网关 `id`、`providerType` 或网关名称）：
 

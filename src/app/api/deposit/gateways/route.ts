@@ -1,6 +1,8 @@
 import { connection, type NextRequest } from "next/server";
 
 import { normalizeGatewayBankDetails } from "@/lib/payment-gateway-bank";
+import { normalizeSupportedBanks } from "@/lib/payment-gateway-banks";
+import { isInlineGatewayQrCodeImage } from "@/lib/payment-gateway-qr";
 import {
   depositAmountLimitLabels,
   isUsdtProviderType,
@@ -32,6 +34,14 @@ function jsonError(message: string, status: number) {
  *
  * 列表不返回二维码原图 / 银行账号明细，避免 base64 图片或敏感信息把响应撑大；
  * 真正图片与银行信息在创建订单后由 create 接口返回。
+ *
+ * 唯一的例外是 STATIC_QR 的**远程图片地址**（staticQrImageUrl）：
+ * 商户上传的收款码要让玩家在「输入金额之前」就看到大图（扫码即付），
+ * 所以 http(s) / 站内路径的图片地址直接下发；data:image base64 仍然不下发
+ * （单张可达 1.8MB，会把网关列表接口拖成慢请求），这种情况玩家在下单后看到图。
+ *
+ * REDIRECT_URL 通道额外下发 supportedBanks（银行编码列表）：
+ * 前端据此渲染银行卡片，玩家必须选一家才能下单。
  */
 export async function GET(request: NextRequest) {
   await connection();
@@ -70,6 +80,7 @@ export async function GET(request: NextRequest) {
         endpoint: true,
         apiKey: true,
         bankDetails: true,
+        supportedBanks: true,
       },
     });
 
@@ -112,6 +123,24 @@ export async function GET(request: NextRequest) {
               : "",
           hasQrCodeImage: gateway.gatewayType === "STATIC_QR",
           hasBankDetails: gateway.gatewayType === "BANK_TRANSFER",
+          /**
+           * STATIC_QR：允许在「下单前」就把收款码大图怼到玩家脸上。
+           * 只放行远程 / 站内路径；data:image 留给下单后的 create 响应。
+           */
+          staticQrImageUrl:
+            gateway.gatewayType === "STATIC_QR" &&
+            qrCodeImageUrl &&
+            !isInlineGatewayQrCodeImage(qrCodeImageUrl)
+              ? qrCodeImageUrl
+              : "",
+          /**
+           * REDIRECT_URL：玩家可选的银行（编码）。空数组 = 不做银行选择，
+           * 前端直接跳支付商收银台，由支付商页面选银行。
+           */
+          supportedBanks:
+            gateway.gatewayType === "REDIRECT_URL"
+              ? normalizeSupportedBanks(gateway.supportedBanks)
+              : [],
         },
       ];
     });

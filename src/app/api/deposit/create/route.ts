@@ -8,6 +8,10 @@ import {
 } from "@/lib/deposit-order";
 import { normalizeGatewayBankDetails } from "@/lib/payment-gateway-bank";
 import {
+  gatewayBankLabel,
+  resolveDepositBankSelection,
+} from "@/lib/payment-gateway-banks";
+import {
   buildUsdtQrPayload,
   depositAmountLimitLabels,
   depositTestCallbackAllowed,
@@ -45,12 +49,14 @@ function jsonError(message: string, status: number) {
  * 玩家发起充值。
  * POST /api/deposit/create
  *
- * Body: { gatewayId, amount, playerId? }
+ * Body: { gatewayId, amount, playerId?, bank? }
  * - amount 推荐使用字符串，避免 JSON number 丢失 6 位小数精度。
  * - amount 区间默认 10 ~ 50,000，可用 DEPOSIT_MIN_AMOUNT / DEPOSIT_MAX_AMOUNT 覆盖；
  *   校验在 src/lib/payment-gateway.ts 的 parseDepositAmount 里统一完成。
  * - currency 一律以网关配置为准（gateway.currency），不再信任客户端传入值。
  * - 订单金额只以服务端解析后的 Decimal 入库，后续回调也只信任订单金额。
+ * - bank 只对 REDIRECT_URL 有意义：必须落在网关配置的 supportedBanks 内，
+ *   服务端会把它拼到支付商跳转地址上（bank=<code>），非法值直接 400。
  * - 返回 orderNo（DEP_<毫秒时间戳>_<6 位随机>）与 paymentInstructions（CRYPTO 钱包地址 / FIAT 银行信息）。
  */
 export async function POST(request: NextRequest) {
@@ -138,6 +144,7 @@ export async function POST(request: NextRequest) {
         isActive: true,
         isPlatformGateway: true,
         ownerId: true,
+        supportedBanks: true,
       },
     });
 
@@ -195,6 +202,23 @@ export async function POST(request: NextRequest) {
 
     if (configurationError) {
       return jsonError(`支付网关配置异常：${configurationError}`, 409);
+    }
+
+    /**
+     * 银行选择（只对 REDIRECT_URL 生效）。
+     *
+     * 玩家提交的 bank 一律不可信：必须落在商户配置的银行列表里。
+     * 列表为空 = 该通道不做银行选择，即使前端塞了 bank 也丢弃，
+     * 避免把脏参数拼进支付商的跳转地址。
+     */
+    const bankSelection = resolveDepositBankSelection({
+      gatewayType,
+      supportedBanks: gateway.supportedBanks,
+      requestedBank: input.bank,
+    });
+
+    if (!bankSelection.ok) {
+      return jsonError(bankSelection.error, 400);
     }
 
     let gatewayEndpoint: URL | null = null;
@@ -264,6 +288,12 @@ export async function POST(request: NextRequest) {
       paymentUrl.searchParams.set("amount", amountText);
       paymentUrl.searchParams.set("currency", order.currency);
       paymentUrl.searchParams.set("gateway", gateway.id);
+
+      // 玩家选的银行原样传给支付商：多数网银收银台靠这个参数直达对应银行页，
+      // 省掉玩家在支付商页面上再选一次（选错了就付到别家去）。
+      if (bankSelection.bank) {
+        paymentUrl.searchParams.set("bank", bankSelection.bank);
+      }
     }
 
     // 动态二维码：USDT 编码钱包地址；其他支付商编码带订单参数的支付链接。
@@ -317,6 +347,11 @@ export async function POST(request: NextRequest) {
         gatewayKind,
         currency: order.currency,
         amount: amountText,
+        // 玩家选中的银行（REDIRECT_URL 才有值）：前端据此提示「正在跳转到 XX 支付」。
+        selectedBank: bankSelection.bank || null,
+        selectedBankLabel: bankSelection.bank
+          ? gatewayBankLabel(bankSelection.bank)
+          : null,
         amountLimits: depositAmountLimitLabels(),
         paymentInstructions,
         walletAddress:

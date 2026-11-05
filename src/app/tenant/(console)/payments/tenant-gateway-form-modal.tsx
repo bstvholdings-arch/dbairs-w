@@ -32,6 +32,12 @@ import {
   type GatewayProviderType,
   type GatewayTypeValue,
 } from "@/lib/payment-gateway-constants";
+import {
+  GATEWAY_BANK_CATALOG,
+  gatewayBankLabel,
+  MAX_SUPPORTED_BANKS,
+  normalizeSupportedBanks,
+} from "@/lib/payment-gateway-banks";
 import { normalizeGatewayQrCodeImageUrl } from "@/lib/payment-gateway-qr";
 import type { TenantOwnGateway } from "@/lib/tenant-payment-gateways";
 
@@ -48,6 +54,10 @@ type TenantGatewayFormValues = {
   bankDetails: GatewayBankDetails;
   endpoint: string;
   apiKey: string;
+  /** REDIRECT_URL：勾选的内置银行（编码）。目录外的银行走 customBanksText。 */
+  supportedBanks: string[];
+  /** REDIRECT_URL：目录外银行（原样文本，提交前统一归一化成编码） */
+  customBanksText: string;
 };
 
 type TenantGatewaySaveResponse = {
@@ -154,6 +164,19 @@ function validateForm(form: TenantGatewayFormValues, t: TFunction) {
     return t("gateway.validation.apiKeyMax");
   }
 
+  if (form.gatewayType === "REDIRECT_URL") {
+    const banks = normalizeSupportedBanks([
+      ...form.supportedBanks,
+      ...normalizeSupportedBanks(form.customBanksText),
+    ]);
+
+    if (banks.length > MAX_SUPPORTED_BANKS) {
+      return t("tenantGateway.validation.banksMax", {
+        max: String(MAX_SUPPORTED_BANKS),
+      });
+    }
+  }
+
   return "";
 }
 
@@ -184,6 +207,13 @@ export function TenantGatewayFormModal({
     endpoint: gateway?.endpoint ?? "",
     // 编辑时不回填密钥明文：留空 = 保持原有 API Secret 不变。
     apiKey: "",
+    // 编辑时回填银行：目录内的进勾选框，目录外的（商户自己填的）进文本框。
+    supportedBanks: (gateway?.supportedBanks ?? []).filter((code) =>
+      GATEWAY_BANK_CATALOG.some((bank) => bank.code === code),
+    ),
+    customBanksText: (gateway?.supportedBanks ?? [])
+      .filter((code) => !GATEWAY_BANK_CATALOG.some((bank) => bank.code === code))
+      .join(", "),
   });
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -232,6 +262,27 @@ export function TenantGatewayFormModal({
     }));
   }
 
+  /**
+   * 勾选 / 取消内置银行。
+   * 到达上限后静默不勾 —— 弹窗里已经有计数提示，不需要再弹一次错误。
+   */
+  function toggleSupportedBank(code: string) {
+    setForm((previous) => {
+      const selected = previous.supportedBanks.includes(code);
+
+      if (!selected && previous.supportedBanks.length >= MAX_SUPPORTED_BANKS) {
+        return previous;
+      }
+
+      return {
+        ...previous,
+        supportedBanks: selected
+          ? previous.supportedBanks.filter((item) => item !== code)
+          : [...previous.supportedBanks, code],
+      };
+    });
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
@@ -275,6 +326,15 @@ export function TenantGatewayFormModal({
             endpoint: isEndpointGateway ? form.endpoint.trim() : "",
             // 留空表示沿用原密钥，由服务端保留旧值。
             apiKey: isEndpointGateway ? form.apiKey.trim() : "",
+            // 银行列表只对「跳转网银」有意义：内置勾选 + 目录外手工补充。
+            // 统一再过一次 normalize：手工补充的 "Maybank" 会和勾选重复，必须去重。
+            supportedBanks:
+              form.gatewayType === "REDIRECT_URL"
+                ? normalizeSupportedBanks([
+                    ...form.supportedBanks,
+                    ...normalizeSupportedBanks(form.customBanksText),
+                  ])
+                : null,
           }),
         },
       );
@@ -299,6 +359,15 @@ export function TenantGatewayFormModal({
       setSubmitting(false);
     }
   }
+
+  /**
+   * 玩家最终会看到的银行列表（内置勾选 + 目录外补充，去重后）。
+   * 上报与计数都用它，避免「勾了 Maybank 又手填 Maybank」算成 2 家。
+   */
+  const supportedBanksPreview = normalizeSupportedBanks([
+    ...form.supportedBanks,
+    ...normalizeSupportedBanks(form.customBanksText),
+  ]);
 
   return (
     <div
@@ -600,6 +669,90 @@ export function TenantGatewayFormModal({
                   </span>
                 </label>
               </>
+            ) : null}
+
+            {/*
+              REDIRECT_URL（跳转网银）：玩家收银台会先让玩家选银行。
+              - 勾选内置银行 = 玩家看到银行卡片，选完直接跳到该银行支付页；
+              - 一个都不勾 = 不做银行选择，把选银行的事交给支付商收银台；
+              - 目录外的银行用「其他银行」补充，存库时统一归一化成编码。
+            */}
+            {form.gatewayType === "REDIRECT_URL" ? (
+              <div className="rounded-xl border border-[#d4af37]/15 bg-[#d4af37]/[0.03] p-3.5">
+                <div className="flex items-start justify-between gap-3">
+                  <span className="text-[10px] uppercase tracking-[0.16em] text-neutral-600">
+                    {t("tenantGateway.form.supportedBanks")}
+                  </span>
+                  <span className="shrink-0 font-mono text-[10px] text-neutral-500">
+                    {supportedBanksPreview.length} / {MAX_SUPPORTED_BANKS}
+                  </span>
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {GATEWAY_BANK_CATALOG.map((bank) => {
+                    const checked = form.supportedBanks.includes(bank.code);
+                    const disabled =
+                      !checked &&
+                      supportedBanksPreview.length >= MAX_SUPPORTED_BANKS;
+
+                    return (
+                      <label
+                        key={bank.code}
+                        className={`flex cursor-pointer items-center gap-2 rounded-lg border px-2 py-1.5 text-[11px] transition-colors ${
+                          checked
+                            ? "border-[#d4af37]/50 bg-[#d4af37]/[0.12] text-[#f0d27c]"
+                            : "border-white/[0.08] bg-black/30 text-neutral-300 hover:border-[#d4af37]/25"
+                        } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={disabled}
+                          onChange={() => toggleSupportedBank(bank.code)}
+                          className="h-3.5 w-3.5 accent-[#d4af37]"
+                        />
+                        <span className="min-w-0 flex-1 truncate">
+                          {bank.label}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+
+                <label className="mt-3 block">
+                  <span className="text-[10px] uppercase tracking-[0.16em] text-neutral-600">
+                    {t("tenantGateway.form.supportedBanksCustom")}
+                  </span>
+                  <input
+                    value={form.customBanksText}
+                    onChange={(event) =>
+                      updateField("customBanksText", event.target.value)
+                    }
+                    spellCheck={false}
+                    autoComplete="off"
+                    placeholder="RHB Islamic, Bank Muamalat"
+                    className={inputClass}
+                  />
+                  <span className="mt-1.5 block text-[10px] leading-5 text-neutral-600">
+                    {t("tenantGateway.form.supportedBanksCustomHint")}
+                  </span>
+                </label>
+
+                <span className="mt-2 block text-[10px] leading-5 text-neutral-600">
+                  {t("tenantGateway.form.supportedBanksHint")}
+                </span>
+                {supportedBanksPreview.length > 0 ? (
+                  <span className="mt-1 block text-[10px] leading-5 text-[#e8cf8a]">
+                    {t("tenantGateway.form.supportedBanksPreview", {
+                      count: String(supportedBanksPreview.length),
+                    })}
+                    {": "}
+                    {supportedBanksPreview
+                      .map((code) => gatewayBankLabel(code))
+                      .join(" · ")}
+                  </span>
+                ) : null}
+              </div>
             ) : null}
 
             {error ? (

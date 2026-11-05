@@ -24,6 +24,7 @@ const gatewayEditSelect = {
   bankDetails: true,
   endpoint: true,
   apiKey: true,
+  supportedBanks: true,
   isActive: true,
   isPlatformGateway: true,
   reviewStatus: true,
@@ -100,6 +101,9 @@ export async function PATCH(request: NextRequest, context: GatewayRouteContext) 
         : (existing.walletAddress ?? ""),
       qrCodeImageUrl: existing.qrCodeImageUrl ?? "",
       bankDetails: normalizeGatewayBankDetails(existing.bankDetails),
+      // 商户在 /tenant/payments 维护的银行列表必须原样带回去：
+      // tenantGatewayWriteData 是「整对象覆盖」，漏传就等于把玩家的银行卡片清空。
+      supportedBanks: existing.supportedBanks,
       endpoint: hasOwn(input, "endpoint") ? input.endpoint : existing.endpoint,
       // 空串 / 缺省 = 不修改密钥，但仍用旧密钥参与校验。
       apiKey: typeof input.apiKey === "string" ? input.apiKey : "",

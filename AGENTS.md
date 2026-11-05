@@ -132,6 +132,18 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - **配置读侧 fail-closed**：`normalizeAutoPayoutConfig()` 遇到 `null` / 脏数据 / 非数字一律回落「关闭 + 默认限额」；商户提交非法值（负数、超上限、开关打开但限额 0）直接 400 拒绝，不猜。老租户升级后 = 全部人工，行为不变。
 - 增量 SQL：`prisma/auto-payout.sql`（幂等，`npm run db:sql prisma/auto-payout.sql`），改完记得 `npx prisma generate`。
 
+### 11. 前台充值弹窗：一套组件 + 四种 `gatewayType` 分支，不许「一律二维码」
+
+- **唯一组件是 `src/components/player/deposit-modal.tsx`**，形态判定只看「当前选中通道的 `gatewayType`」（下单后只看接口回传的 `gatewayType`），**禁止**用币种 / `gatewayKind` / 是否有金额去反推形态，也**禁止**为某个形态复制一份弹窗。
+- **STATIC_QR**：只渲染大图收款码 + 「请使用手机银行扫码支付」；商户配的是远程图片（http(s) / 站内路径）时**下单前**就展示（`/api/deposit/gateways` 下发 `staticQrImageUrl`），base64 大图不下发列表、下单后再展示（避免把列表接口撑成 MB 级）。
+- **REDIRECT_URL**：**先选银行 → 输入金额 → 下单 → `window.location.assign(paymentUrl)` 整页跳转**，并且**任何情况下都不渲染二维码**。必须同标签页跳转（手机浏览器拦 `window.open` 弹窗，玩家会以为「点了没反应」）；跳转前后都要能兜住「浏览器拦了 / 链接打不开」——已经 `setCreated`，页面显示「正在跳转…」+ 手动前往按钮。
+- **BANK_TRANSFER**：只渲染收款银行 / 户名 / 账号 + 逐行【复制】+ 一键复制全部，**任何情况下都不渲染二维码**。
+- **DYNAMIC_QR**：USDT 钱包地址 + 现场生成二维码；非 USDT 支付商优先用接口下发的 `qrCodeData` 生成。
+- **只有 1 条通道时不渲染 `<select>`**（直接显示通道卡片 + 形态标签）；多条通道才出下拉框，切换通道要清空已选银行（银行列表是通道级的）。
+- **银行列表只有一个事实来源**：`PaymentGateway.supportedBanks String[]` + `src/lib/payment-gateway-banks.ts`（`normalizeSupportedBanks` / `gatewayBankLabel` / `resolveDepositBankSelection`）。商户在 `/tenant/payments` 勾选内置银行或手填目录外银行（上限 20 家），玩家端只渲染，**服务端 `POST /api/deposit/create` 必须再校验一遍白名单**（没选 / 不在列表 → 400），通过后把 `bank=<code>` 拼到支付商跳转地址上。列表为空 = 不做银行选择，交给支付商收银台。
+- **`tenantGatewayWriteData` 是整对象覆盖**：任何新增 / 既有调用方（`POST|PUT /api/tenant/gateways`、超管 `PATCH /api/admin/integrations/gateways/[id]`）都必须把 `supportedBanks` 带上，否则等于把商户配好的银行卡片清空；非 `REDIRECT_URL` 形态一律写 `[]`。
+- 增量 SQL：`prisma/gateway-supported-banks.sql`（幂等），改完 `npx prisma generate` 并**重启 dev server**（旧的内存客户端看不到新字段）。
+
 
 
 
