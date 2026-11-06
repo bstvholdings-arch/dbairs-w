@@ -120,6 +120,16 @@ model Tenant {
   // 脏数据 / 老租户缺字段一律回落 "left"（见 src/lib/storefront.ts）。
   logoPosition String @default("left")
 
+  // Telegram Bot 多群组接入：该商户**专属** TG 群的 chat_id。
+  // - 全平台只跑 1 个 Bot，群的身份**只由 chat_id 决定**：命中这一列 = 这个群属于该商户，
+  //   会话上下文强制锁定为该 tenantId（见 src/lib/telegram/bindings.ts）；
+  // - 群 id 是负数（-100…），统一按字符串存，避免 JS number 精度问题；
+  // - 一个商户只能绑 1 个群，一个群也只能属于 1 个商户（@unique 兜住），
+  //   否则「A 商户的群看到 B 商户数据」就是配置一条 SQL 的事；
+  // - 未绑定（NULL）= 该商户没有 TG 群，陌生人群一律回复「未授权群组」。
+  // 增量 SQL（幂等）：prisma/telegram-bot.sql
+  telegramChatId String? @unique
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -145,6 +155,8 @@ model Tenant {
   bonusCampaigns BonusCampaign[]
   bonusClaims    PlayerBonusClaim[]
   rebatePayouts  RebatePayout[]
+
+  telegramChatSessions TelegramChatSession[]
 }
 
 // 2. 套餐表 (Plan - 标准版/高阶版配置)
@@ -373,6 +385,15 @@ model AdminUser {
   resetToken       String?   @unique // 一次性找回密码 Token（UUID），使用后立即清空
   resetTokenExpiry DateTime? // Token 过期时间（默认 30 分钟）
   role             AdminRole @default(support)
+
+  // Telegram Bot 多群组接入：平台**内部群**的 chat_id（销冠 / 技术 / 财务 / 审计 / 导师都在这里值班）。
+  // - 只允许挂在平台账号上：解析时必须同时满足 tenantId = NULL 且 role = super_admin，
+  //   否则当「未授权群组」处理（见 src/lib/telegram/bindings.ts 的 resolveTelegramChatBinding）；
+  // - 与 Tenant.telegramChatId 互斥（两个查询先后命中，群 id 全局唯一）；
+  // - 未绑定（NULL）= 平台内部群尚未登记。
+  // 增量 SQL（幂等）：prisma/telegram-bot.sql
+  telegramChatId   String?   @unique
+
   createdAt        DateTime  @default(now())
 
   reviewedKycs PlayerKyc[] @relation("KycReviewer")
@@ -654,12 +675,16 @@ model AiChatLog {
   tenant    Tenant?     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   playerId  String?
   player    Player?     @relation(fields: [playerId], references: [id], onDelete: SetNull)
+  // Telegram 群会话归属（chat_id）：群聊历史必须按「同一个群 + 同一位助手」隔离，
+  // 否则平台内部群的 /finance 会读到后台 AI 控制台的财务对话。
+  telegramChatId String?
   createdAt DateTime    @default(now())
 
   @@index([agentType, createdAt])
   @@index([leadId, createdAt])
   @@index([tenantId, createdAt])
   @@index([playerId, createdAt])
+  @@index([telegramChatId, agentType, createdAt])
 }
 
 // 15. 客户线索 / 招商战败分析 (LeadRecord)
@@ -956,4 +981,31 @@ model RebatePayout {
   @@index([tenantId, periodStart])
   @@index([createdAt])
 }
+
+// 25. Telegram 群会话状态 (TelegramChatSession)
+// 一个 chat_id 一条：记录「这个群当前由哪位助手接待」+ 上下文起点 + 幂等水位。
+//
+// - 群身份不在这里判断：权限唯一来源是 Tenant.telegramChatId / AdminUser.telegramChatId，
+//   本表只是**状态缓存**（scope 仅用于展示与兜底校验）；
+// - agentType：群内发送 /tech、/finance 等指令时只改这一列，不碰任何业务配置；
+//   读侧一律过 normalizeTelegramChatAgent()，脏数据 / 越权取值回落「综合客服」；
+// - contextStartedAt：/reset 时刷新，读历史只取该时间之后的 AiChatLog；
+// - lastUpdateId：Telegram 没收到 200 会重投同一个 update，靠 updateMany 的 CAS
+//   （lastUpdateId IS NULL 或 < 本次）挡住重复调用模型，避免一条群消息被回答两次；
+// - lastMessageAt：运维排查用（最后一次有效处理时间）。
+model TelegramChatSession {
+  chatId           String   @id
+  scope            String   @default("tenant") // tenant | platform（仅展示 / 兜底，不是权限来源）
+  tenantId         String?
+  tenant           Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  agentType        String   @default("support")
+  contextStartedAt DateTime @default(now())
+  lastUpdateId     BigInt?
+  lastMessageAt    DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([tenantId])
+}
+
 

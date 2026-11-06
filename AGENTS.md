@@ -185,3 +185,20 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - **整对象覆盖的坑**：`tenantGatewayWriteData` 覆盖式写入，`PUT /api/tenant/gateways/[id]` 与超管 `PATCH /api/admin/integrations/gateways/[id]` 在 body 缺省 `feeRate` 时**必须沿用库里的旧值**（与 `supportedBanks` / `apiKey` 同一兜底口径），否则一次排障就等于把商户的对账费率清零。
 - 增量 SQL：`prisma/gateway-fee-rate.sql`（幂等）。执行顺序：`npx prisma db push`（三个 `NOT NULL DEFAULT 0` 新列，纯加成）→ `npm run db:sql prisma/gateway-fee-rate.sql`（回填历史单的 `actualReceived`）→ `npx prisma generate` → **重启 dev server**（旧的内存客户端看不到新字段）。
 
+### 15. Telegram Bot：一个 Bot 服务多群，群身份只认 `chat_id`
+
+- **全平台只跑 1 个 Bot**（产品决策），同一份代码同时接待多个商户群与平台内部群。因此「这个群是谁的」**只能**由 `chat_id` 决定：命中 `Tenant.telegramChatId`（`@unique`）= 该商户专属群，命中 `AdminUser.telegramChatId` = 平台内部群。**禁止**用 Bot 用户名、群名关键词、消息里自报的商户名、`?tenant=`、Cookie 去推断归属。
+- **平台内部群的三重校验缺一不可**：`AdminUser.telegramChatId` 命中 + `tenantId IS NULL` + `role = super_admin`，任一不满足按「未授权群组」处理（`src/lib/telegram/bindings.ts`）。商户账号误绑的群绝不能降级成「半个平台权限」。
+- **未授权就什么都不做**：只回固定话术 `TELEGRAM_UNAUTHORIZED_REPLY`，**不查任何业务表、不落会话 / 日志、不调用模型**。停用租户（`Tenant.status !== "active"`）同样按未授权处理，不得给停用站继续值班。
+- **助手白名单按群分**：商户群只有 `support` / `tech` / `finance`；平台内部群再加 `sales` / `audit` / `strategist`。唯一来源是 `src/lib/telegram/constants.ts` 的 `TENANT_TELEGRAM_AGENTS` / `PLATFORM_TELEGRAM_AGENTS`，**禁止**在路由或组件里另写一份 if。商户群发 `/sales` 必须被拒绝；库里残留的越权 `agentType` 读侧一律过 `normalizeTelegramChatAgent()` 回落综合客服。
+- **只复用一套 AI 下游**：群消息走 `src/lib/telegram/agent.ts`，它调用的是后台同一套 Agent 配置 / FAQ 召回 / 模型调用 / 只读工具白名单 / 本地兜底。**禁止**为群聊复制一份 prompt 或工具实现。群聊**只下发只读工具**（`isReadonlyToolName` 过滤），写工具（改线索战败原因）在群里没有上下文，一律不下发。
+- **上下文按「群 + 助手」隔离**：`AiChatLog.telegramChatId` + `agentType` + `TelegramChatSession.contextStartedAt` 三段过滤。平台内部群的 `/finance` 不许读到后台 AI 控制台的财务对话，反之亦然。`/reset` 只把上下文起点推到此刻，**不删历史**（审计要能回溯）。
+- **幂等写库、不写内存**：`TelegramChatSession.lastUpdateId` 用 `updateMany({ where: { chatId, OR: [{ lastUpdateId: null }, { lastUpdateId: { lt } }] } })` 做数据库层 CAS，抢到的那条才调模型。Telegram 没收到 200 会重投同一条 update，**禁止**「先查再改」或内存去重（多实例直接失效）。
+- **Webhook 三条硬规则**：① 缺 `TELEGRAM_WEBHOOK_SECRET` 时 **fail-closed**（503，一条回调都不接），绝不允许「没配密钥就放行」；② secret 校验用 `timingSafeEqual` 比对 header 明文，不先 parse 再 stringify；③ 事件处理完**必须尽快 200**（业务异常也在内部消化 → 回一句「请稍后重试」），否则 Telegram 会持续重投。
+- **发送侧**：只用 `sendTelegramMessage()`（纯文本、不带 `parse_mode`、超长截断到 4000 字），**禁止**在日志里打印带 `TELEGRAM_BOT_TOKEN` 的 URL，只记录 HTTP 状态码与 TG 的 `description`。
+- **绑定是运维操作**：写入口只有 SQL（`UPDATE "Tenant" SET "telegramChatId" …` / `UPDATE "AdminUser" SET "telegramChatId" …`），不在代码里做「自动认领群」。将来要开后台入口，必须遵守第 4.2 / 13 条的同一权限口径（只有超管能写）。
+- **环境变量**：`TELEGRAM_BOT_TOKEN`、`TELEGRAM_WEBHOOK_SECRET`（必填）、`TELEGRAM_API_BASE_URL`（可选）。密钥只进 `.env` / 部署平台，**禁止**提交到仓库或写进前端可读变量。
+- **迁移**：`prisma/telegram-bot.sql`（幂等）→ `npm run db:sql prisma/telegram-bot.sql` → `npx prisma generate` → **重启 dev server**（旧的内存客户端看不到新列 / 新表，Webhook 会 500）。
+- **回归**：`npm run telegram:check`（`scripts/check-telegram-routing.ts`，35 项）直接断言路由决策、助手白名单、Update 解析、secret 鉴权与「未登记群 → 未授权」。改过 `src/lib/telegram/*` 或 `Tenant.telegramChatId` 口径后必须跑一遍；它不联网、不调模型、不需要 Bot Token，只做一条只读查库，所以**不**并入 `npm run check`（无库环境会假红）。
+
+

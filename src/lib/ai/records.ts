@@ -370,6 +370,12 @@ export async function createChatLog(input: {
   tenantId?: string | null;
   /** 已登录玩家 id；访客为 null（仍然归属 tenantId） */
   playerId?: string | null;
+  /**
+   * Telegram 群会话的 chat_id。
+   * 群聊历史按「同一个群 + 同一位助手」隔离（见 src/lib/telegram/agent.ts）：
+   * 平台内部群的 /finance 不能读到后台 AI 控制台的财务对话，反过来也一样。
+   */
+  telegramChatId?: string | null;
 }): Promise<SerializedAiChatLog> {
   const content = redactSensitiveContent(input.content);
 
@@ -385,6 +391,7 @@ export async function createChatLog(input: {
       leadId: input.leadId ?? null,
       tenantId: input.tenantId ?? null,
       playerId: input.playerId ?? null,
+      telegramChatId: input.telegramChatId ?? null,
     },
     select: {
       id: true,
@@ -406,6 +413,12 @@ export async function loadRecentChatLogs(
     take?: number;
     /** 只读取该时间之后的消息，用于「新对话」而不删除历史日志。 */
     since?: Date;
+    /**
+     * 只读取某个 Telegram 群的消息。
+     * 传了就天然排除了后台 AI 控制台的历史（那边的 telegramChatId 为空），
+     * 群聊上下文因此严格按「同一个群 + 同一位助手」隔离。
+     */
+    telegramChatId?: string;
   } = {},
 ): Promise<SerializedAiChatLog[]> {
   const logs = await prisma.aiChatLog.findMany({
@@ -413,6 +426,9 @@ export async function loadRecentChatLogs(
       ...(input.agentType ? { agentType: input.agentType } : {}),
       ...(input.leadId ? { leadId: input.leadId } : {}),
       ...(input.since ? { createdAt: { gte: input.since } } : {}),
+      ...(input.telegramChatId
+        ? { telegramChatId: input.telegramChatId }
+        : {}),
     },
     orderBy: { createdAt: "desc" },
     take: Math.min(Math.max(input.take ?? 30, 1), 200),

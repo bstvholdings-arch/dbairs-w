@@ -468,6 +468,84 @@ curl -X POST "https://<host>/api/deposit/callback/usdt_trc20" \
 - **接口守卫统一**：`/api/tenant/*` 全部走 `guardTenantApi`（支付网关 3 个接口也已改造，同时支持超管代登录）；页面菜单、proxy、路由内复核共用 `src/lib/rbac.ts` 一套矩阵。
 - **回归测试**：`npm run ai:isolation:check`（`scripts/check-ai-isolation.ts`）直接断言上面三道闸门 + 脱敏 + 工具下发，共 19 项，任一项失败即退出码 1。只读、不调模型、不需要 API Key，只依赖 `DATABASE_URL`（需 ≥2 个租户，否则直接失败而不是跳过）。改过 `src/lib/ai/tools.ts` 或任何 `where` 条件后跑一遍——红了就是漏风了。刻意**不**并入 `npm run check`：它要连库，塞进去会让无库环境（CI / 新克隆）假红。
 
+### Telegram Bot 多群组接入（Webhook + `/命令` 多助手路由）
+
+全平台只跑 **1 个 Bot**，同时服务多个商户群 + 平台内部群。群聊里直接问技术 / 财务 / 运营问题，
+由对应的 AI 助手在群里值班；`/tech`、`/finance` 这类指令切换接待的助手。
+
+| 文件 | 职责 |
+| --- | --- |
+| `src/app/api/telegram/webhook/route.ts` | Webhook 入口（`POST`，只接受 Telegram 回调；`GET` 仅探活） |
+| `src/lib/telegram/dispatch.ts` | 编排：验签 → 解析 → 认群 → 幂等 → 路由 → 回复 |
+| `src/lib/telegram/bindings.ts` | **认群**（`chat_id` → 商户 / 平台）+ 会话状态读写 |
+| `src/lib/telegram/routing.ts` | 指令解析与路由决策（纯函数，脚本可断言） |
+| `src/lib/telegram/agent.ts` | 调用 AI 助手（复用后台 AI 管线的同一套下游） |
+| `src/lib/telegram/prompt.ts` | 把「商户群 / 平台群」作用域追加进 System Prompt |
+| `src/lib/telegram/bot-api.ts` | `sendMessage`（只发纯文本，不打印带 token 的 URL） |
+| `src/lib/telegram/constants.ts` / `types.ts` | 助手白名单、默认助手、文案、Update 解析 |
+
+- **群身份只认 `chat_id`**：`Tenant.telegramChatId` = 商户专属群（`@unique`，数据范围强制锁定该 `tenantId`）；
+  `AdminUser.telegramChatId` = 平台内部群（必须同时满足 `tenantId IS NULL` 且 `role = super_admin`）。
+  两边都没命中 → 只回「⛔ 未授权群组，请联系平台客服。」，**不查任何业务表、不调用模型**。
+- **助手白名单**：商户群 `support`（默认）/ `tech` / `finance`；平台内部群再加 `sales` / `audit` / `strategist`。
+  在商户群发 `/sales` 会被拒绝（不能靠一条指令越权拿到平台助手）。
+- **上下文隔离**：`AiChatLog.telegramChatId` + `agentType` + `TelegramChatSession.contextStartedAt`
+  三段过滤，群聊历史与后台 AI 控制台互不可见，`/reset` 只移动上下文起点（不删历史，审计可回溯）。
+- **幂等**：`TelegramChatSession.lastUpdateId` 用 `updateMany` 做 CAS（`IS NULL OR < 本次`）。
+  Telegram 没收到 200 会重投，同一条群消息只会被回答一次，绝不重复扣模型额度。
+- **群聊只读**：群消息没有线索上下文，写工具（`save_lead_failure_reason`）一律不下发；
+  实时数据仍靠只读工具在租户作用域内查（见上一节）。
+
+环境变量（缺 `TELEGRAM_WEBHOOK_SECRET` 时接口 fail-closed 返回 503，一条回调都不接）：
+
+```bash
+TELEGRAM_BOT_TOKEN=123456:ABC...        # BotFather 给的 token
+TELEGRAM_WEBHOOK_SECRET=换成随机串        # setWebhook 的 secret_token，必须一致
+# TELEGRAM_API_BASE_URL=                 # 可选，本机联调指到 mock 时用
+```
+
+一次性接线（**绑定是运维操作，不在代码里做**）：
+
+```bash
+# 1) 表结构（幂等，可重复执行）
+npm run db:sql prisma/telegram-bot.sql
+npx prisma generate   # 不跑这一步旧的内存客户端看不到新列，Webhook 直接 500
+
+# 2) 把群绑到商户（群 id 为负数，从 @getmyid_bot / getUpdates 里拿）
+#    UPDATE "Tenant" SET "telegramChatId" = '-1001234567890' WHERE subdomain = 'abc';
+
+# 3) 把平台内部群绑到超管（必须是 tenantId 为 NULL 的 super_admin）
+#    UPDATE "AdminUser" SET "telegramChatId" = '-1009876543210'
+#     WHERE role = 'super_admin' AND "tenantId" IS NULL LIMIT 1;
+
+# 4) 注册回调
+curl "https://api.telegram.org/bot<TOKEN>/setWebhook" \
+  -d "url=https://<域名>/api/telegram/webhook" \
+  -d "secret_token=<TELEGRAM_WEBHOOK_SECRET>" \
+  -d 'allowed_updates=["message"]'
+
+# 5) 群里发 /help 自检
+```
+
+群内指令：
+
+| 指令 | 作用 |
+| --- | --- |
+| 直接发消息 | 由当前助手接待（默认综合客服），不用加指令 |
+| `/support` `/tech` `/finance` | 切换助手（平台内部群另有 `/sales` `/audit` `/strategist`） |
+| `/agent` | 查看当前接待的助手与本群可用列表 |
+| `/reset` | 清空当前助手的群聊上下文（只移动起点） |
+| `/help` | 帮助 |
+
+> 群里指令带 `@BotName` 后缀（`/tech@DbaBot`）也能识别；未知指令回帮助而不是静默丢弃。
+> 绑定前请确认 `Tenant.status = 'active'`：停用站点命中 `telegramChatId` 也按「未授权」处理。
+
+回归测试（只读，不联网、不需要 Bot Token，共 35 项）：
+
+```bash
+npm run telegram:check
+```
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

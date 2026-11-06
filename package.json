@@ -11,6 +11,7 @@
     "check": "tsc --noEmit && eslint . && node scripts/check-i18n.mjs",
     "db:check": "tsx scripts/check-db.ts",
     "ai:isolation:check": "tsx scripts/check-ai-isolation.ts",
+    "telegram:check": "tsx scripts/check-telegram-routing.ts",
     "db:sql": "tsx scripts/apply-sql.ts",
     "tenant:admin": "tsx scripts/create-tenant-admin.ts",
     "rebate:settle": "tsx scripts/rebate-settlement.ts",
