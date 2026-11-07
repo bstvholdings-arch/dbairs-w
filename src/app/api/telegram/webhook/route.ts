@@ -23,15 +23,15 @@ import { handleTelegramWebhook } from "@/lib/telegram/dispatch";
  *   4. 群里发 /help 自检。
  *
  * 三条硬规则：
- * - **必须 `await connection()`**：Next 16 开了 cacheComponents，Webhook 是纯请求期执行，
- *   也不允许写 `export const dynamic = "force-dynamic"`（构建直接报错）；
+ * - **必须 `await connection()`**：Next 16 开了 cacheComponents，Webhook 是纯请求期执行；
+ *   同理**不允许**写 `export const dynamic = "force-dynamic"` 或 `export const runtime = "nodejs"`
+ *   —— 两者都会让 `next build` 直接失败（route segment config 与 cacheComponents 不兼容），
+ *   而 Route Handler 本来默认就是 Node.js runtime，不需要声明；
  * - **只读原始字符串**：secret 校验用 header 里的明文比对（timingSafeEqual），
  *   绝不先 parse 再 stringify；
  * - **永远尽快 200**：Telegram 收不到 200 会重投同一条 update，
  *   所以业务异常的兜底也在 handleTelegramWebhook 内部消化（回一句「请稍后重试」）。
  */
-
-export const runtime = "nodejs";
 
 function jsonResponse(body: Record<string, unknown>, status: number): Response {
   return jsonNoStore(body, status);

@@ -546,6 +546,44 @@ curl "https://api.telegram.org/bot<TOKEN>/setWebhook" \
 npm run telegram:check
 ```
 
+## 3D 场景（Three.js）
+
+- 依赖：`three` + `@react-three/fiber`（React 19 专用 v9）+ `@react-three/drei`，类型走 `@types/three`（dev）。
+- 素材目录：**只放** `public/assets/3d/`（`models/` `textures/` `env/`），命名与体积预算见 `public/assets/3d/README.md`。
+- 前台唯一入口（都是懒加载，`next/dynamic({ ssr: false })`，首屏不下载 3D 引擎）：
+
+```tsx
+import { ModelViewer } from "@/components/three/model-viewer";
+
+// 相对素材根目录：自动补成 /assets/3d/models/ui/coin-stack.glb
+<ModelViewer
+  src="models/ui/coin-stack.glb"
+  className="aspect-square w-full"
+  fallback={<div className="text-xs text-white/60">3D 素材准备中</div>}
+/>
+```
+
+```tsx
+import { SceneCanvas } from "@/components/three/scene-canvas";
+
+// 自定义场景：灯光 / 多模型 / 交互自己组装
+<SceneCanvas className="h-64 w-full">
+  <ambientLight intensity={0.8} />
+  <directionalLight position={[4, 6, 6]} intensity={1.6} />
+</SceneCanvas>
+```
+
+- 路径解析只有一份：`src/lib/three-assets.ts`（`resolveThreeAssetUrl` / `isThreeModelPath` / `THREE_ASSET_LIMITS`）。
+  `javascript:` / `data:` / `//host/x.glb` / 带 `..` 的路径一律判为非法，**不会**创建 WebGL 上下文。
+- 进入视口才挂载；系统开「减弱动态效果」时自动降级为静态一帧；模型 404 / 损坏由内置错误边界兜住。
+- 容器**必须自带高度**（`aspect-square` / `h-64` 等），否则画布高度为 0。
+- 自检页：**`http://localhost:3000/demo/three`**（不需要登录、不需要 `?tenant=`）。左块是纯代码立方体（不加载素材，
+  空白=容器高度 / WebGL 问题），右块用 `ModelViewer` 加载 `public/assets/3d/models/ui/demo-cube.glb`
+  （空白=素材路径 / 文件问题）。该路径登记在 `src/proxy.ts` 的 `PUBLIC_PREVIEW_PATHS`（常量 `THREE_DEMO_PATH`）里，
+  否则未登录访问会被登录校验重定向到 `/login`。
+- 磁盘：`npm` 缓存由 `.npmrc` 指向项目内 `.npm-cache/`；安装前请先
+  `$env:TEMP='D:\dbairs-w\.npm-tmp'; $env:TMP=$env:TEMP`（C 盘空间紧张，详见 AGENTS.md 第 16 条）。
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

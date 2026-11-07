@@ -52,3 +52,8 @@ next-env.d.ts
 # 一次性排障 / 联调脚本与产物（tmp-*.ts、.tmp-*.mjs、tmp-eslint.json 等）
 tmp-*
 .tmp-*
+
+# npm 缓存 / 临时解包目录（磁盘红线：只能留在 D 盘项目内，禁止落系统盘）
+/.npm-cache/
+/.npm-tmp/
+

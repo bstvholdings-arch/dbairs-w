@@ -89,7 +89,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - `/api/tenant/*` 一律用 `guardTenantApi`（`src/lib/tenant-console.ts`）：未登录 401、非商户账号 403、支持超管代登录；`tenantId` 取自 `gate.scope.tenantId`，**禁止**手写 `session.role !== "tenant_admin"` 那套重复逻辑。
 - `/api/admin/*` 用 `guardPermission(request, permission)` 或 `getSuperAdminFromRequest`；玩家侧接口用 `getPlayerSessionFromRequest`；AI 数据工具用 `AiToolScope`。
 - 任何接口都不得把前端传入的 `tenantId` 当作数据归属，它只能被当作「筛选条件」或「被校验的对象」。
-- Next 16 已开 `cacheComponents`：**不能**写 `export const dynamic = "force-dynamic"`（构建直接报错），需要请求期执行的路由在开头 `await connection()`。
+- Next 16 已开 `cacheComponents`：**不能**写 `export const dynamic = "force-dynamic"`，也**不能**写 `export const runtime = "nodejs"`（route segment config 与 cacheComponents 不兼容，`next build` 直接报错；Route Handler 默认就是 Node.js runtime），需要请求期执行的路由在开头 `await connection()`。
 
 ### 7. 前台租户上下文：只认 `?tenant=` / 域名 / 会话 / 代登录票据，找不到就 404
 
@@ -201,4 +201,21 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - **迁移**：`prisma/telegram-bot.sql`（幂等）→ `npm run db:sql prisma/telegram-bot.sql` → `npx prisma generate` → **重启 dev server**（旧的内存客户端看不到新列 / 新表，Webhook 会 500）。
 - **回归**：`npm run telegram:check`（`scripts/check-telegram-routing.ts`，35 项）直接断言路由决策、助手白名单、Update 解析、secret 鉴权与「未登记群 → 未授权」。改过 `src/lib/telegram/*` 或 `Tenant.telegramChatId` 口径后必须跑一遍；它不联网、不调模型、不需要 Bot Token，只做一条只读查库，所以**不**并入 `npm run check`（无库环境会假红）。
 
+
+
+### 16. 3D 场景（Three.js）：素材只落 D 盘 `public/assets/3d`，引擎必须懒加载
+
+- **磁盘红线（本机 C 盘剩余不足 8GB）**：模型 / 贴图 / 环境图 / npm 依赖 / npm 缓存 / 临时解包目录**只能**在 `D:\dbairs-w\` 内。
+  - npm 缓存由项目 `.npmrc` 的 `cache=.npm-cache` 强制指向项目内（刻意用相对路径，Linux / Vercel 上也只会落在项目内，不会出现 Windows 绝对路径非法的问题）；`.npm-cache/` / `.npm-tmp/` 已在 `.gitignore`。
+  - npm 11 起 `.npmrc` 里的 `tmp` 是未知配置（会打 warn），临时解包目录只能靠环境变量：安装前执行 `$env:TEMP='D:\dbairs-w\.npm-tmp'; $env:TMP=$env:TEMP`。
+  - **禁止**把下载的模型先丢桌面 / `Downloads` / `%TEMP%` 再引用：一律直接下载或 `Move-Item` 到 `public/assets/3d/`（C 盘不允许出现任何本项目的大文件）。
+- **素材路径唯一出处**：`src/lib/three-assets.ts` 的 `resolveThreeAssetUrl()`。组件里**禁止**写死 `"/assets/3d/xxx.glb"`（将来迁 CDN 只改这一处）；脏值（`javascript:` / `data:` / `//host/x.glb` / 带 `..`）一律返回 `null`，调用方按「没有模型」处理 —— 这些值最终会进 `useGLTF(<url>)`。
+- **引擎只能懒加载**：`three` / `@react-three/fiber` / `@react-three/drei` 只能经 `src/components/three/scene-canvas.tsx`（`next/dynamic({ ssr: false })`）与 `model-viewer.tsx` 进入页面。**禁止**在页面或业务组件里静态 `import { Canvas } from "@react-three/fiber"` / `useGLTF(...)`：那会把 3D 引擎（压缩前 ~600KB）压进首屏 bundle，直接拖垮大厅 LCP（与第 4 条「前台排版流不许乱」同一口径）。
+- **drei 单独一层**：只有 `model-stage.tsx` 可以 import `@react-three/drei`（体积比 three 还大），它同样只允许被动态加载；页面永远只 import `ModelViewer` / `SceneCanvas` 这两个轻量入口。
+- **容器必须自带高度**（`aspect-square` / `h-64` / `min-h-[320px]`）：WebGL 画布高度为 0 的表现就是「页面什么都没有」，不报错也不报警。
+- **减弱动态效果**：`prefers-reduced-motion` 下 `SceneCanvas` 自动把 `frameloop` 降级为 `"demand"`（只画静态一帧），与 `globals.css` 里各动画的降级口径一致，业务组件不要自己再判断一次。
+- **模型坏了页面不能崩**：`ModelViewer` 内置错误边界，`.glb` 404 / 损坏时渲染 `fallback`（封面图或首字母占位）；`useGLTF` 的抛错不允许冒到大厅。
+- **体积预算**：模型 ≤ 8MB、单张贴图 ≤ 4MB、单场景合计 ≤ 24MB。超了先 Draco / meshopt 压缩、降贴图分辨率，再考虑拆场景；仍超标就走对象存储 + CDN（用 `resolveThreeAssetUrl()` 的 `https://` 直链分支），**不要把超大文件提交进仓库**（`public/` 是部署资产，会进部署包）。
+- **素材授权**：只允许可商用素材（Poly Haven / Quaternius / Kenney 等 CC0，或已购授权），每新增一个文件都要在 `public/assets/3d/README.md` 的来源表补一行，便于后续审计。
+- **联调页 `/demo/three` 是唯一自检入口**（`src/app/demo/three/`）：左块 `SceneCanvas` + 纯 JSX 图元（不加载任何素材，空白=容器高度/WebGL 问题），右块 `ModelViewer` 加载 `models/ui/demo-cube.glb`（空白=素材路径/文件问题）。它**不需要登录、不需要 `?tenant=`、不查库**，靠 `src/proxy.ts` 的 `PUBLIC_PREVIEW_PATHS`（常量 `THREE_DEMO_PATH`）放行 —— 新增同类公开预览 / 联调页只能往这份白名单加一个常量，**禁止**用 `/demo/*` 前缀通配（等于开匿名入口），`tmp-*` 一次性脚本也**不登记**（用完即删）；忘了登记的表现就是「页面明明存在，未登录访问却被重定向到 `/login`」。
 

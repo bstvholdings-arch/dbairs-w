@@ -10,6 +10,7 @@ import {
   IMPERSONATION_COOKIE,
   verifyImpersonationTicket,
 } from "@/lib/impersonation";
+import { THREE_DEMO_PATH } from "@/lib/three-assets";
 import {
   homePathForRole,
   isAdminPagePath,
@@ -60,6 +61,26 @@ function redirectToRoleHome(request: NextRequest, role: string, permission: stri
 function isPublicDemoPath(pathname: string, base: string) {
   return pathname === base || pathname.startsWith(`${base}/`);
 }
+
+/**
+ * 不需要登录就能访问的「预览 / 联调」页面白名单。
+ *
+ * 准入标准只有一条：**页面本身不查库、不读会话、不写任何数据**，
+ * 只渲染前端组件（卖站时要把效果直接发给还没有账号的准客户看）。
+ * 新增一条 = 在下面加一个常量，不要另开 if 分支、也不要为某个路径写前缀通配
+ * （`/demo/*` 通配会把将来任何挂在 /demo 下的页面一起放行，那等于开了匿名入口）。
+ *
+ * 注意：`tmp-*` 这类一次性排障页**不**进白名单。它们本来就是用完即删的
+ * （见 AGENTS.md 第 3 条），留在白名单里只会变成一条永久匿名入口。
+ */
+const PUBLIC_PREVIEW_PATHS = [
+  // 主题背景色预览：AI 销冠卖站时发给客户看 15 套配色
+  THEME_BACKGROUND_PREVIEW_PATH,
+  // 旧的 /demo/game-card-styles：老链接不能 404
+  LEGACY_GAME_CARD_STYLE_PREVIEW_PATH,
+  // 3D 联调页（/demo/three）：确认 three / WebGL 基座是通的
+  THREE_DEMO_PATH,
+] as const;
 
 // Next.js 16 起，middleware 文件约定已更名为 proxy。
 // 该文件是路由拦截入口：登录态、角色分区与 RBAC 权限矩阵（src/lib/rbac.ts）。
@@ -214,11 +235,9 @@ export function proxy(request: NextRequest) {
   // 主题背景色预览页（/demo/theme-backgrounds）：AI 销冠卖站时直接发给
   // 还没有任何账号的准客户看效果，必须公开可访问。
   // 旧的 /demo/game-card-styles 只做跳转（客户手里的老链接不能 404）。
-  // 这类页面只渲染真实 GameCard，不查库、不写库、不读会话。
-  if (
-    isPublicDemoPath(pathname, THEME_BACKGROUND_PREVIEW_PATH) ||
-    isPublicDemoPath(pathname, LEGACY_GAME_CARD_STYLE_PREVIEW_PATH)
-  ) {
+  // 3D 联调页（/demo/three）同理：只渲染本地组件，不查库、不读会话。
+  // 这类页面只渲染前端组件，不查库、不写库、不读会话（完整清单见 PUBLIC_PREVIEW_PATHS）。
+  if (PUBLIC_PREVIEW_PATHS.some((base) => isPublicDemoPath(pathname, base))) {
     return NextResponse.next();
   }
 
